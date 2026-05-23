@@ -19,6 +19,8 @@ with the orchestrator.
   sprawling one is not.
 - **Match the surrounding code.** Follow the existing style, naming, and idioms of
   the file you are editing. Read neighbouring code before adding to it.
+- **For Python, use `uv`:** `uv add` for dependencies, `uv run` to run code and
+  tests (`uv run python ...`, `uv run pytest`). No bare `pip` or `python -m venv`.
 - **Verify your own work before reporting done.** Build it, run the relevant
   tests, exercise the change. `done:` means you have seen it work, not that it
   should work.

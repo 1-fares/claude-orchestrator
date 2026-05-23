@@ -67,6 +67,11 @@ file and goal are given by absolute path. The orchestrator (bus name
   (spawn, teardown, validation, file moves, formatting, parsing, status checks),
   call a script in [`bin/`](./bin) or write one; do not spend an LLM turn on it.
   Reserve LLM cycles for design, code, debugging, and review.
+- **Python uses `uv`.** For any Python work, use `uv`: `uv init` for a new
+  project, `uv add <pkg>` (and `uv add --dev <pkg>`) for dependencies, and
+  `uv run <cmd>` to run anything (e.g. `uv run pytest`, `uv run python app.py`).
+  Do not use bare `pip`, `python -m venv`, or a global interpreter. Verify
+  commands run under `uv run` so dependencies resolve.
 
 If the user's global instructions are also loaded, they take precedence; this
 file is the portable version of the same discipline.

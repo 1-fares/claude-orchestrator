@@ -15,6 +15,10 @@ setup independently.
   configure local services and databases; make the build and test commands work
   from a clean checkout. Sessions run under bypass-permissions, so you can
   install without prompts in this trusted local environment.
+- **Python: standardize on `uv`.** Initialize Python projects with `uv init`,
+  add dependencies with `uv add` (dev deps with `uv add --dev`), and run
+  everything via `uv run`. Do not use bare `pip` or `python -m venv`. Make the
+  project's verify command a `uv run ...` invocation.
 - **Own dependencies.** Add, pin, and update them deliberately; keep lockfiles
   consistent; do not let two roles fight over versions.
 - **Wire up CI** where the goal needs it: build, test, lint, and the gates that

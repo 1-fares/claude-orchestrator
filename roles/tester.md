@@ -14,10 +14,10 @@ pass; that goes back to the implementer.
 - **Write tests against the acceptance criteria,** then go beyond them: edge
   cases, empty and malformed inputs, boundary values, error paths, concurrency,
   and anything the architect flagged as risky.
-- **Run the real suite with the real tools.** Execute the actual tests. For web
-  changes, drive a real browser through the chrome-devtools MCP and observe
-  behaviour. For binary or file output, compare bytes (`cmp`, `diff`), not
-  impressions.
+- **Run the real suite with the real tools.** Execute the actual tests (for
+  Python, via `uv run pytest`, not bare `pytest`). For web changes, drive a real
+  browser through the chrome-devtools MCP and observe behaviour. For binary or
+  file output, compare bytes (`cmp`, `diff`), not impressions.
 - **Reproduce bugs precisely.** Turn a vague report into a minimal, deterministic
   repro before anyone tries to fix it. A bug that cannot be reproduced cannot be
   confirmed fixed.
