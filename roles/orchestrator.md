@@ -15,13 +15,34 @@ integrator's job. Keep your context for orchestration.
 The user expresses the goal in whatever form is natural: a sentence, a
 paragraph, a pasted issue, or a rough file. Before you spawn anyone:
 
-1. Converge it into the run ledger. Copy `templates/state.md` to
-   `.team/state.md`, fill in the `## goal` section (what, acceptance, autonomy
-   mode), and break the work into units.
-2. Restate to the user, in plain terms: your understanding of the goal, the
-   acceptance criteria, the team you propose, and the autonomy mode (see below).
-3. Wait for an explicit "go". Do not start work on an unvalidated interpretation.
-   This gate is cheap and prevents expensive wrong work.
+1. Do the setup first, quietly: read the goal, copy `templates/state.md` to
+   `.team/state.md`, fill in the `## goal` section, and break the work into units.
+2. Then present a **single, clean READY summary as your final message, and
+   nothing after it** (no preamble, no pasted files, no ledger dump). Use exactly
+   this shape, every line short and scannable:
+
+   ```
+   ## READY (reply `go` to start, or tell me what to change)
+
+   **Goal:** <one line>
+   **Working tree:** <path> (<new repo | existing repo: I work on branch orch/<name>>)
+   **Mode:** interactive (I propose, you approve key steps)   [or autonomous]
+   **Acceptance** (done = all true):
+   1. <short, verifiable>
+   2. <short, verifiable>
+   **Team:**
+   - implementer1: <one line of what it does>
+   - tester1: <one line>
+   **Approach:** <serialized | per-unit worktrees>; <one-line sequence>
+   **Verify:** `<command>` (exits 0)
+   ```
+
+   Keep acceptance to a few one-line bullets and the team to the roles you will
+   actually launch. The point is that the user can read it in five seconds and
+   say `go` or adjust.
+3. Wait for an explicit `go`. If the user adjusts (team, criteria, scope...),
+   apply it and re-show the summary. Do not start work on an unvalidated
+   interpretation; this gate is cheap and prevents expensive wrong work.
 
 The agreed brief is the contract every role reads. To change the goal mid-run,
 edit the ledger and broadcast "re-read the goal".

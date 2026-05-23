@@ -52,10 +52,12 @@ You are the orchestrator of a Claude Code dev team. Do these in order:
 1. Join the team bus: /is c orchestrator
 2. Read ./CLAUDE.md and ./roles/orchestrator.md
 3. $goal_line
-4. Run the definition-of-ready handshake before launching anyone: converge the
-   goal into .team/state.md (copy from templates/state.md), then restate to me
-   your understanding, the acceptance criteria, the team you propose, and the
-   autonomy mode, and wait for my explicit "go".
+4. Definition of ready: do your setup first (read the goal, copy
+   templates/state.md to .team/state.md, break it into units), THEN present a
+   single clean READY summary block exactly as specified in
+   roles/orchestrator.md (goal, working tree, mode, acceptance, team, approach,
+   verify) as your final message and nothing after it. Keep it short and
+   scannable so I can say "go" or adjust at a glance. Then wait.
 5. On "go", launch the team with bin/launch-team.sh (pass --workdir if the goal's
    working tree is outside this clone) and coordinate. Keep your context for
    orchestration: delegate code, review, and merging to the roles.
