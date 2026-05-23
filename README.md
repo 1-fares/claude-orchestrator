@@ -175,7 +175,9 @@ partial, or out-of-scope work is never dropped: it becomes a new ledger unit.
 ```bash
 bin/run.sh                         # the one command: asks the goal (and the
                                    #   target on first run), starts, drops you in
-bin/run.sh "add a --json flag to the export command"   # repeat run, goal inline
+bin/run.sh ~/projects/app          # give the target path up front, then ask the goal
+bin/run.sh ~/projects/app "add a --json flag"   # target + goal in one line
+bin/run.sh "add a --json flag"     # repeat run, goal inline (uses the saved target)
 # watch / intervene / end (from another terminal):
 bin/team-status.sh                 # one-glance dashboard
 bin/team-broadcast.sh 'pause: hold on'     # intervene out-of-band

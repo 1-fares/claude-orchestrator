@@ -5,24 +5,70 @@
 # project.conf), so repeat runs only ask for the goal.
 #
 # Usage:
-#   bin/run.sh                  # interactive (asks the goal)
-#   bin/run.sh "what to build"  # inline goal, uses the saved target
-#   bin/run.sh --retarget       # change which project this clone drives
+#   bin/run.sh                          # interactive (asks target on first run, then goal)
+#   bin/run.sh "what to build"          # inline goal, uses the saved target
+#   bin/run.sh ~/projects/app           # set the target (a path), then ask the goal
+#   bin/run.sh ~/projects/app "what"    # target + inline goal
+#   bin/run.sh --dir PATH ["what"]      # explicit target form
+#   bin/run.sh --retarget               # forget the saved target
 #
-# First run in a clone also asks which code to work on:
-#   - a path to an EXISTING project (used as-is), or
-#   - a NEW path (created as a git repo), or
-#   - blank to build inside this clone (greenfield).
+# Target resolution (a given path, or the first-run prompt):
+#   - existing git repo      -> used as-is
+#   - a path that does not exist -> created as a new git repo
+#   - existing non-git dir   -> offered a `git init` (the team needs git)
 
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 conf="$repo/project.conf"
 
-[ "${1:-}" = "--retarget" ] && { rm -f "$conf"; shift; echo "Target cleared; will ask again."; }
+dir_arg=""; retarget=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dir|-C) dir_arg="${2:-}"; [ -n "$dir_arg" ] || { echo "--dir needs a path" >&2; exit 2; }; shift 2 ;;
+    --retarget) retarget=1; shift ;;
+    --) shift; break ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+# A bare first argument that looks like a path is the target; otherwise it's the goal.
+if [ -z "$dir_arg" ] && [ -n "${1:-}" ]; then
+  case "$1" in
+    /*|~|"~/"*|./*|../*) dir_arg="$1"; shift ;;
+    *) [ -e "$1" ] && { dir_arg="$1"; shift; } ;;
+  esac
+fi
 want_arg="${1:-}"
+[ "$retarget" = 1 ] && rm -f "$conf"
 
-# 0. Active run? offer to reset (so a leftover session never blocks a new run).
+# resolve_target <path>: sets WORKDIR + EXISTING, or returns non-zero with a message.
+resolve_target() {
+  local wd="$1"
+  case "$wd" in "~") wd="$HOME" ;; "~/"*) wd="$HOME/${wd#\~/}" ;; esac
+  if [ -e "$wd" ] && [ ! -d "$wd" ]; then echo "not a directory: $wd" >&2; return 2; fi
+  if [ -d "$wd/.git" ]; then
+    WORKDIR="$(cd "$wd" && pwd)"; EXISTING=1; echo "Using existing repo: $WORKDIR"
+  elif [ -d "$wd" ] && [ -n "$(ls -A "$wd" 2>/dev/null)" ]; then
+    if [ -t 0 ]; then
+      read -rp "$wd is not a git repo. Init git there so the team can use it? [y/N] " g
+      case "$g" in
+        y|Y) ( cd "$wd" && git init -q && { git add -A 2>/dev/null || true
+                 git commit -qm "init (orchestrator)" 2>/dev/null \
+                   || git -c user.email=orchestrator@local -c user.name=orchestrator commit -qm init --allow-empty; } )
+             WORKDIR="$(cd "$wd" && pwd)"; EXISTING=1 ;;
+        *) echo "Cannot proceed without git (scope checks and worktrees need it)." >&2; return 1 ;;
+      esac
+    else
+      echo "$wd is not a git repo and there is no terminal to confirm. git init it first." >&2; return 2
+    fi
+  else
+    "$repo/bin/new-project.sh" "$wd" >/dev/null || { echo "could not create repo at $wd" >&2; return 2; }
+    WORKDIR="$(cd "$wd" && pwd)"; EXISTING=0; echo "Created new repo: $WORKDIR"
+  fi
+}
+
+# 0. Active run? offer to reset.
 if command tmux -L "$TEAM_TMUX" has-session -t "$TEAM_SESSION" 2>/dev/null; then
   if [ -t 0 ]; then
     read -rp "A team session is already running. Reset it and start fresh? [y/N] " a
@@ -32,34 +78,21 @@ if command tmux -L "$TEAM_TMUX" has-session -t "$TEAM_SESSION" 2>/dev/null; then
   fi
 fi
 
-# 1. Target project: ask once per clone, then remember.
+# 1. Target: from --dir/path arg, else saved, else ask.
 WORKDIR=""; EXISTING=0
 [ -f "$conf" ] && . "$conf"
-if [ -z "${WORKDIR:-}" ]; then
+if [ -n "$dir_arg" ]; then
+  resolve_target "$dir_arg" || exit $?
+  { printf 'WORKDIR=%q\n' "$WORKDIR"; printf 'EXISTING=%q\n' "$EXISTING"; } > "$conf"
+  echo "(Saved as this clone's target; future runs reuse it. Change with --dir or --retarget.)"
+elif [ -z "${WORKDIR:-}" ]; then
   echo "First run in this clone. Which code should the team work on?"
   echo "  - path to an EXISTING project, or a NEW path to create,"
   echo "  - or leave blank to build inside this clone (greenfield)."
   read -rp "Path: " wd
-  if [ -z "$wd" ]; then
-    WORKDIR="$repo"
-  else
-    case "$wd" in "~") wd="$HOME" ;; "~/"*) wd="$HOME/${wd#\~/}" ;; esac
-    if [ -d "$wd/.git" ]; then
-      WORKDIR="$(cd "$wd" && pwd)"; EXISTING=1; echo "Using existing repo: $WORKDIR"
-    elif [ -e "$wd" ]; then
-      read -rp "$wd exists but is not a git repo. Init git there so the team can use it? [y/N] " g
-      case "$g" in
-        y|Y) ( cd "$wd" && git init -q && { git add -A 2>/dev/null || true; git commit -qm "init (orchestrator)" 2>/dev/null \
-                || git -c user.email=orchestrator@local -c user.name=orchestrator commit -qm init --allow-empty; } )
-             WORKDIR="$(cd "$wd" && pwd)"; EXISTING=1 ;;
-        *) echo "Cannot proceed without git (scope checks and worktrees need it)." >&2; exit 1 ;;
-      esac
-    else
-      "$repo/bin/new-project.sh" "$wd" >/dev/null; WORKDIR="$(cd "$wd" && pwd)"; echo "Created new repo: $WORKDIR"
-    fi
-  fi
+  if [ -z "$wd" ]; then WORKDIR="$repo"; EXISTING=0; else resolve_target "$wd" || exit $?; fi
   { printf 'WORKDIR=%q\n' "$WORKDIR"; printf 'EXISTING=%q\n' "$EXISTING"; } > "$conf"
-  echo "(Saved this clone's target to project.conf; future runs skip this. Change it with: bin/run.sh --retarget)"
+  echo "(Saved target to project.conf; future runs skip this.)"
 else
   echo "Target: $WORKDIR"
 fi
@@ -88,5 +121,5 @@ echo "goal: goals/$gname.md"
 
 # 4. Start the team and drop into the orchestrator.
 "$repo/bin/start-orchestrator.sh" "goals/$gname.md" >/dev/null
-echo "Team session started. You will land in the orchestrator; Ctrl-b <n> switches to roles; say 'go'."
+echo "Team session started. You will land in the orchestrator; Ctrl-b/your-prefix <n> for roles; say 'go'."
 if [ -t 1 ]; then sleep 1; exec "$repo/bin/attach.sh"; else echo "Attach with: bin/attach.sh"; fi
