@@ -177,10 +177,12 @@ EOF
   # tmux setsid's each pane, so pane_pid is the group leader (claude after exec),
   # and its children (MCP servers) share the group.
   # All team tmux runs on the dedicated socket (see team-env.sh). Add a window to
-  # the team session if it exists, else create it detached.
+  # the team session if it exists, else create it detached. The -d on new-window
+  # keeps the current window (the orchestrator) focused, so spawning roles does
+  # not yank an attached operator into each new role window.
   local info pid wid
   if tmux has-session -t "$session" 2>/dev/null; then
-    info="$(tmux new-window -t "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
+    info="$(tmux new-window -d -t "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
   else
     info="$(tmux new-session -d -s "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
   fi

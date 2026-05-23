@@ -4,3 +4,6 @@
 
 # Per-clone target config written by bin/run.sh (local, not for the template).
 project.conf
+
+# Generated team tmux config (per-clone, imports your prefix; not for the template).
+team.tmux.conf
