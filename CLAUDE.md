@@ -86,6 +86,8 @@ file is the portable version of the same discipline.
   `bin/team-logs.sh`: per-role history from the bus.
 - `bin/verify-unit.sh`, `bin/check-scope.sh`: the gates. `bin/team-env.sh`:
   per-clone bus port + tmux session (sourced by the others).
+- `bin/preflight-deploy.sh`, `bin/panic.sh`, `bin/watchdog.sh`, `bin/worktree.sh`,
+  `bin/trust-workdir.sh` (pre-accept the workspace-trust prompt for a dir).
 
 This is a template, cloned once per project (see [README.md](./README.md)
 "Distribution"), not a shared home for every project's goals. Implementation is

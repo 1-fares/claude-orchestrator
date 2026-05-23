@@ -31,6 +31,11 @@ if [ -n "$goal" ]; then
 fi
 
 mkdir -p "$repo/.team"
+
+# Pre-trust the clone so the detached orchestrator does not block, invisibly, on
+# Claude Code's workspace-trust prompt before you attach.
+"$repo/bin/trust-workdir.sh" "$repo" >/dev/null 2>&1 || true
+
 pf="$repo/.team/orchestrator.prompt"
 cat >"$pf" <<EOF
 You are the orchestrator of a Claude Code dev team. Do these in order:

@@ -194,7 +194,11 @@ least integrated:
    `bin/launch-team.sh [--workdir DIR] <goal> <role>...` to add a window per role,
    each seeded to join the bus, read its role file and the goal, and report
    ready. Sessions are interactive (not `-p`, which would exit after one
-   response) and start with `--dangerously-skip-permissions`.
+   response) and start with `--dangerously-skip-permissions`. The launchers
+   pre-accept Claude Code's workspace-trust prompt for the clone and any external
+   `--workdir` (`bin/trust-workdir.sh`, an atomic edit to `~/.claude.json` with a
+   `.bak`), since that prompt is only auto-skipped in non-interactive mode and
+   would otherwise block a role at startup.
 2. **Manual tabs.** Open a terminal per role, `claude --dangerously-skip-permissions`,
    `/is c <role>`, point it at its role file and the goal. The fallback when tmux
    is not in use.

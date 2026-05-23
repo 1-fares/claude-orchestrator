@@ -88,6 +88,25 @@ model_for() {
 
 mkdir -p "$repo/.team"
 
+# Pre-trust the working tree so interactive roles don't stop at Claude Code's
+# workspace-trust prompt (auto-skipped only in -p mode, which roles can't use).
+if ! python3 - "$workdir_abs" <<'PY' 2>/dev/null
+import json, os, sys
+abs = sys.argv[1]
+try:
+    d = json.load(open(os.path.expanduser("~/.claude.json")))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if d.get("projects", {}).get(abs, {}).get("hasTrustDialogAccepted") else 1)
+PY
+then
+  if "$repo/bin/trust-workdir.sh" "$workdir_abs" >/dev/null 2>&1; then
+    echo "pre-trusted workdir: $workdir_abs"
+  else
+    echo "note: could not pre-trust $workdir_abs; roles may show a one-time trust prompt"
+  fi
+fi
+
 # Reap dead entries from a previous run so teardown never group-kills a recycled
 # pid; keep live entries so a second launch can add roles to a running team.
 if [ -f "$repo/.team/active" ]; then
