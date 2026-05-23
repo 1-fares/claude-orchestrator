@@ -45,7 +45,10 @@ edit the ledger and broadcast "re-read the goal".
 - **Choose the concurrency model per goal, by judgement.** For independent units,
   have implementers work in separate git worktrees/branches and let the
   integrator merge. When units share artifacts, or the work is small, serialize
-  instead, one implementer at a time, simpler and safe. Decide deliberately.
+  instead, one implementer at a time, simpler and safe. Decide deliberately. When
+  serializing in one tree, have each unit committed before the next starts, so
+  the next unit's `check-scope` sees only its own files (an uncommitted tree
+  sweeps every unit's files into each scope check).
 - **Sequence the work.** Analyst/architect first when design is unsettled.
   Implementer and tester run as an iterating pair. Reviewer does an independent
   pass. Integrator merges. Deployment last.

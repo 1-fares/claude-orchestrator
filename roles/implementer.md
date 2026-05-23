@@ -29,6 +29,8 @@ with the orchestrator.
   `tasks/<unit>.md`.
 - Work in the worktree/branch the orchestrator assigns you (if it chose
   worktrees). Stay within the brief's `scope:`; never touch `off-limits:` paths.
+  When serialized in a shared tree, commit your unit once it is done and green,
+  so the next unit's scope check starts clean.
 - Coordinate with your tester as an iterating pair: you implement, they probe,
   you fix. Their accumulated edge cases make each round sharper.
 - Before reporting done, run the gates yourself: `$ORCH_HOME/bin/check-scope.sh
