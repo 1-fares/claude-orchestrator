@@ -15,10 +15,19 @@ goal="${1:-}"
 command -v tmux   >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 command -v claude >/dev/null || { echo "claude not on PATH" >&2; exit 1; }
 
-if tmux has-session -t "$TEAM_SESSION" 2>/dev/null && \
-   tmux list-windows -t "$TEAM_SESSION" -F '#{window_name}' | grep -qx orchestrator; then
-  echo "orchestrator already running in tmux session '$TEAM_SESSION'."
-  echo "Attach with:  tmux attach -t $TEAM_SESSION"
+if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
+  wins="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_name}' 2>/dev/null | paste -sd, -)"
+  created="$(tmux display-message -p -t "$TEAM_SESSION" '#{t:session_created}' 2>/dev/null || true)"
+  echo "A team session '$TEAM_SESSION' already exists for this clone."
+  echo "  windows: $wins"
+  [ -n "$created" ] && echo "  created: $created"
+  echo
+  echo "The orchestrator is long-lived. To continue, attach and give it your new"
+  echo "goal (it will wind down the previous run's roles as needed):"
+  echo "  tmux attach -t $TEAM_SESSION"
+  echo
+  echo "To start completely fresh instead (ends the current run, clears state):"
+  echo "  bin/reset.sh   &&   bin/start-orchestrator.sh ${goal:+$goal}"
   exit 0
 fi
 

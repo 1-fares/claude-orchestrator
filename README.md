@@ -173,16 +173,22 @@ partial, or out-of-scope work is never dropped: it becomes a new ledger unit.
 ## Quickstart
 
 ```bash
-bin/new-goal.sh my-feature                 # scaffold goals/my-feature.md
-$EDITOR goals/my-feature.md
-bin/start-orchestrator.sh goals/my-feature.md
-tmux attach -t "$(. bin/team-env.sh; echo $TEAM_SESSION)"   # watch + drive
+bin/new-project.sh ~/my-project    # only for a brand-new external target repo
+bin/new-goal.sh                    # a few questions -> goals/<name>.md
+bin/start-orchestrator.sh goals/<name>.md
+tmux attach -t "$(. bin/team-env.sh; echo $TEAM_SESSION)"   # attach, then say 'go'
 # the orchestrator runs bin/launch-team.sh for the rest of the team
-bin/team-status.sh                         # one-glance dashboard
+bin/team-status.sh                 # one-glance dashboard
 bin/team-broadcast.sh 'pause: hold on'     # intervene out-of-band
-bin/stop-team.sh                           # tear down (leaves the orchestrator)
-bin/panic.sh                               # emergency: stop everything
+bin/stop-team.sh                   # end the roles, keep the orchestrator
+bin/reset.sh                       # clean slate for a new run (ends all, clears .team)
+bin/panic.sh                       # emergency: stop everything
 ```
+
+The orchestrator is long-lived: give the same session new goals over time, or
+`bin/reset.sh` for a clean slate. You only describe the goal in `new-goal.sh`; the
+orchestrator proposes the acceptance criteria, scope, team, and verify command at
+its definition-of-ready gate and confirms before any work starts.
 
 ## Launching the team
 
