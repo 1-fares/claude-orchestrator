@@ -131,9 +131,13 @@ start_one() {
   cat >"$pf" <<EOF
 You are "$role" on an orchestrated Claude Code dev team.
 Your working tree (the code you operate on) is: $workdir_abs
+The team's scripts, templates, task briefs, and .team/ artifacts live at
+\$ORCH_HOME ($repo), exported in your env. Run gates as \$ORCH_HOME/bin/... and
+write team artifacts under \$ORCH_HOME/.team/. Your own code changes go in the
+working tree above.
 Do these in order:
 1. Join the bus:   /is c $role
-2. Read these files: $repo/CLAUDE.md, $rolefile_abs, and the goal at $goal_abs
+2. Read these files: \$ORCH_HOME/CLAUDE.md, $rolefile_abs, and the goal at $goal_abs
 3. Report ready:   /is s orchestrator 'status: $role ready'
 4. Then act on instructions that arrive over the bus. Report progress and
    completion with /is, using status:/done:/question:/answer: prefixes. Stay
@@ -141,6 +145,7 @@ Do these in order:
 EOF
 
   launch="cd $(printf %q "$workdir_abs")"
+  launch="$launch && export ORCH_HOME=$(printf %q "$repo")"
   [ -n "${INTER_SESSION_PORT:-}" ] && \
     launch="$launch && export INTER_SESSION_PORT=$(printf %q "$INTER_SESSION_PORT")"
   [ -n "${INTER_SESSION_IDLE_MINUTES:-}" ] && \

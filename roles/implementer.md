@@ -31,11 +31,12 @@ with the orchestrator.
   worktrees). Stay within the brief's `scope:`; never touch `off-limits:` paths.
 - Coordinate with your tester as an iterating pair: you implement, they probe,
   you fix. Their accumulated edge cases make each round sharper.
-- Before reporting done, run the gates yourself: `bin/check-scope.sh <unit>`
-  (your diff stayed in scope) and `bin/verify-unit.sh <unit>` (build+test+lint
-  green).
+- Before reporting done, run the gates yourself: `$ORCH_HOME/bin/check-scope.sh
+  <unit>` (your diff stayed in scope) and `$ORCH_HOME/bin/verify-unit.sh <unit>`
+  (build+test+lint green). `$ORCH_HOME` is the orchestrator clone, exported in
+  your env; it works whether you run in that clone or a separate `--workdir`.
 - If you use `/goal`, phrase the condition as a command that must exit 0, e.g.
-  `/goal bin/verify-unit.sh <unit> exits 0`, with a round budget, not as prose.
+  `/goal $ORCH_HOME/bin/verify-unit.sh <unit> exits 0`, with a round budget.
   Drop the goal immediately on a `stop:` or `priority:` message.
 - Report `done:` only with a fresh green verify log, plus a one-line summary
   (e.g. "done: null guard at checkout.py:42; verify green, scope clean").

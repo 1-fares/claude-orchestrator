@@ -45,6 +45,12 @@ file and goal are given by absolute path. The orchestrator (bus name
   periodic actions.
 - **Never drop work.** Partial, rejected, or out-of-scope work is reported back
   so the orchestrator files it as a new ledger unit.
+- **`$ORCH_HOME` locates the team's files.** The orchestrator clone is exported
+  as `$ORCH_HOME` in every role session. Run gates
+  (`$ORCH_HOME/bin/verify-unit.sh`, `$ORCH_HOME/bin/check-scope.sh`) and write
+  team artifacts (`$ORCH_HOME/.team/...`) by that path; it resolves whether you
+  run in the clone (greenfield) or a separate `--workdir` tree. Your own code
+  changes go in your working tree (your cwd).
 
 ## Working agreement (binding on every role)
 

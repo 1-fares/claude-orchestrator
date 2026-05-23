@@ -45,7 +45,7 @@ You are the orchestrator of a Claude Code dev team. Do these in order:
    context for orchestration: delegate code, review, and merging to the roles.
 EOF
 
-launch="cd $(printf %q "$repo") && export INTER_SESSION_PORT=$(printf %q "$TEAM_PORT") && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
+launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT") && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
 
 if [ -n "${TMUX:-}" ] && [ "$(tmux display-message -p '#{session_name}')" = "$TEAM_SESSION" ]; then
   tmux new-window -n orchestrator "bash -lc $(printf %q "$launch")"
