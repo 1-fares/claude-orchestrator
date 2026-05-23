@@ -175,20 +175,25 @@ partial, or out-of-scope work is never dropped: it becomes a new ledger unit.
 ```bash
 bin/new-project.sh ~/my-project    # only for a brand-new external target repo
 bin/new-goal.sh                    # a few questions -> goals/<name>.md
-bin/start-orchestrator.sh goals/<name>.md
-tmux attach -t "$(. bin/team-env.sh; echo $TEAM_SESSION)"   # attach, then say 'go'
-# the orchestrator runs bin/launch-team.sh for the rest of the team
-bin/team-status.sh                 # one-glance dashboard
+bin/start-orchestrator.sh goals/<name>.md   # runs IN this terminal; say 'go'
+# the orchestrator spawns the roles into tmux; watch them with:
+bin/team-status.sh                 # one-glance dashboard (run in another terminal)
 bin/team-broadcast.sh 'pause: hold on'     # intervene out-of-band
-bin/stop-team.sh                   # end the roles, keep the orchestrator
+bin/stop-team.sh                   # end the roles
 bin/reset.sh                       # clean slate for a new run (ends all, clears .team)
 bin/panic.sh                       # emergency: stop everything
 ```
 
-The orchestrator is long-lived: give the same session new goals over time, or
-`bin/reset.sh` for a clean slate. You only describe the goal in `new-goal.sh`; the
-orchestrator proposes the acceptance criteria, scope, team, and verify command at
-its definition-of-ready gate and confirms before any work starts.
+The orchestrator runs in your own terminal (no tmux attach to fumble); only the
+worker roles go to tmux, watch them with `bin/team-status.sh` or attach with
+`bin/attach.sh`. The team runs on a dedicated tmux socket (`-L orchestrator`, no
+user config) so it is isolated from your default tmux server and its plugins;
+tmux-resurrect/continuum on the default server would otherwise auto-restore the
+team's windows as stale shells after a teardown. Run `bin/reset.sh` between runs.
+You only describe the goal in `new-goal.sh`; the orchestrator
+proposes the acceptance criteria, scope, team, and verify command at its
+definition-of-ready gate and confirms before any work starts. (`--tmux` runs the
+orchestrator inside the team tmux session instead, if you prefer one session.)
 
 ## Launching the team
 

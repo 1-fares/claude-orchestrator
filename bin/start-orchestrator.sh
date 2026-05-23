@@ -1,34 +1,37 @@
 #!/usr/bin/env bash
-# start-orchestrator.sh: one-command first run. Establishes this team's tmux
-# session, puts the orchestrator in window 0, joins the team bus, and seeds it
-# with the definition-of-ready handshake. The orchestrator then launches the
-# rest of the team with bin/launch-team.sh.
+# start-orchestrator.sh: start the orchestrator.
 #
-# Usage: bin/start-orchestrator.sh [goal-file]
+# Default: runs the orchestrator in YOUR current terminal (foreground), so there
+# is no tmux attach to fumble. The orchestrator spawns the worker roles into a
+# tmux session you can watch separately (bin/team-status.sh, or
+# tmux attach -t <TEAM_SESSION>). When the orchestrator exits, you are back at
+# your shell.
+#
+# --tmux: instead run the orchestrator itself inside the team tmux session
+#         (window 0) and print the attach command. Useful if you want everything,
+#         orchestrator and roles, as windows in one tmux session.
+#
+# Usage: bin/start-orchestrator.sh [--tmux] [goal-file]
 
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 flags="--dangerously-skip-permissions"
-goal="${1:-}"
-command -v tmux   >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 command -v claude >/dev/null || { echo "claude not on PATH" >&2; exit 1; }
 
-if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
+mode=foreground
+[ "${1:-}" = "--tmux" ] && { mode=tmux; shift; }
+goal="${1:-}"
+
+# A previous run's roles still in tmux? Warn before starting another.
+if command -v tmux >/dev/null && tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
   wins="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_name}' 2>/dev/null | paste -sd, -)"
-  created="$(tmux display-message -p -t "$TEAM_SESSION" '#{t:session_created}' 2>/dev/null || true)"
-  echo "A team session '$TEAM_SESSION' already exists for this clone."
-  echo "  windows: $wins"
-  [ -n "$created" ] && echo "  created: $created"
-  echo
-  echo "The orchestrator is long-lived. To continue, attach and give it your new"
-  echo "goal (it will wind down the previous run's roles as needed):"
-  echo "  tmux attach -t $TEAM_SESSION"
-  echo
-  echo "To start completely fresh instead (ends the current run, clears state):"
-  echo "  bin/reset.sh   &&   bin/start-orchestrator.sh ${goal:+$goal}"
-  exit 0
+  echo "Note: a team tmux session '$TEAM_SESSION' already exists (windows: $wins)."
+  echo "If that is a previous run, reset first so it does not get confusing:"
+  echo "  bin/reset.sh"
+  echo "Then re-run this. (Continuing would add to that session.)"
+  exit 1
 fi
 
 goal_line="No goal file was given; ask me for the goal."
@@ -40,9 +43,7 @@ if [ -n "$goal" ]; then
 fi
 
 mkdir -p "$repo/.team"
-
-# Pre-trust the clone so the detached orchestrator does not block, invisibly, on
-# Claude Code's workspace-trust prompt before you attach.
+# Pre-trust the clone so the orchestrator does not stop at the workspace-trust prompt.
 "$repo/bin/trust-workdir.sh" "$repo" >/dev/null 2>&1 || true
 
 pf="$repo/.team/orchestrator.prompt"
@@ -55,17 +56,24 @@ You are the orchestrator of a Claude Code dev team. Do these in order:
    goal into .team/state.md (copy from templates/state.md), then restate to me
    your understanding, the acceptance criteria, the team you propose, and the
    autonomy mode, and wait for my explicit "go".
-5. On "go", launch the team with bin/launch-team.sh and coordinate. Keep your
-   context for orchestration: delegate code, review, and merging to the roles.
+5. On "go", launch the team with bin/launch-team.sh (pass --workdir if the goal's
+   working tree is outside this clone) and coordinate. Keep your context for
+   orchestration: delegate code, review, and merging to the roles.
 EOF
 
-launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT") && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
+export ORCH_HOME="$repo" INTER_SESSION_PORT="$TEAM_PORT"
 
-if [ -n "${TMUX:-}" ] && [ "$(tmux display-message -p '#{session_name}')" = "$TEAM_SESSION" ]; then
-  tmux new-window -n orchestrator "bash -lc $(printf %q "$launch")"
-  echo "orchestrator started in window 'orchestrator' of '$TEAM_SESSION'."
-else
-  tmux new-session -d -s "$TEAM_SESSION" -n orchestrator "bash -lc $(printf %q "$launch")"
-  echo "orchestrator started in tmux session '$TEAM_SESSION' (bus port $TEAM_PORT)."
-  echo "Attach with:  tmux attach -t $TEAM_SESSION"
+if [ "$mode" = foreground ]; then
+  echo "Starting orchestrator here (bus port $TEAM_PORT). It will spawn roles into"
+  echo "tmux session '$TEAM_SESSION' (watch with: bin/team-status.sh). Exit with /exit."
+  echo
+  cd "$repo"
+  exec claude $flags --model opus "$(cat "$pf")"
 fi
+
+# --tmux mode: orchestrator as window 0 of the team session.
+command -v tmux >/dev/null || { echo "tmux not installed (needed for --tmux)" >&2; exit 1; }
+launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT") && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
+tmux new-session -d -s "$TEAM_SESSION" -n orchestrator "bash -lc $(printf %q "$launch")"
+echo "orchestrator started in tmux session '$TEAM_SESSION' (bus port $TEAM_PORT, socket '$TEAM_TMUX')."
+echo "Attach with:  tmux -L $TEAM_TMUX attach -t $TEAM_SESSION"

@@ -80,11 +80,16 @@ file is the portable version of the same discipline.
 - `bin/new-project.sh`: scaffold a brand-new target repo. `bin/new-goal.sh`: a
   short questionnaire that writes a goal brief (you describe the goal; the
   orchestrator fills in acceptance/scope/team/verify at the ready-gate).
-- `bin/start-orchestrator.sh`: first run; establishes the team's tmux session
-  and seeds the orchestrator (long-lived; reuse it for new goals).
-  `bin/launch-team.sh`: spawn roles (`--workdir` to target external code).
-- `bin/stop-team.sh`: end the roles, keep the orchestrator. `bin/reset.sh`: clean
-  slate (ends everything, clears `.team/`). `bin/panic.sh`: emergency stop.
+- `bin/start-orchestrator.sh`: first run; by default runs the orchestrator in
+  your terminal (foreground) and spawns roles into tmux (`--tmux` puts the
+  orchestrator in tmux too). `bin/launch-team.sh`: spawn roles (`--workdir` to
+  target external code). `bin/attach.sh`: attach to the team tmux session.
+- `bin/stop-team.sh`: end the roles. `bin/reset.sh`: clean slate (ends
+  everything, clears `.team/`). `bin/panic.sh`: emergency stop.
+- The team runs on a dedicated tmux socket (`-L orchestrator`, no user config),
+  isolated from your default tmux server and its plugins (e.g.
+  resurrect/continuum). Use `bin/attach.sh` / `bin/team-status.sh`, not a plain
+  `tmux attach`.
 - `bin/team-status.sh` / `bin/team-watch.sh`: dashboard. `bin/team-broadcast.sh`:
   inject to all roles from outside (honors `pause:`/`resume:`/`priority:`).
   `bin/team-logs.sh`: per-role history from the bus.

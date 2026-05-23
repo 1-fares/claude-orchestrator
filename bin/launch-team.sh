@@ -176,10 +176,10 @@ EOF
   # alone does not stop it; teardown signals the pane's process group by pid.
   # tmux setsid's each pane, so pane_pid is the group leader (claude after exec),
   # and its children (MCP servers) share the group.
+  # All team tmux runs on the dedicated socket (see team-env.sh). Add a window to
+  # the team session if it exists, else create it detached.
   local info pid wid
-  if [ -n "${TMUX:-}" ]; then
-    info="$(tmux new-window -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
-  elif tmux has-session -t "$session" 2>/dev/null; then
+  if tmux has-session -t "$session" 2>/dev/null; then
     info="$(tmux new-window -t "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
   else
     info="$(tmux new-session -d -s "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
@@ -194,8 +194,6 @@ for role in "$@"; do
   sleep 1   # stagger starts to ease the rate limit on a cold team
 done
 
-if [ -z "${TMUX:-}" ]; then
-  echo
-  echo "Team running in detached tmux session '$session'."
-  echo "Attach with:  tmux attach -t $session"
-fi
+echo
+echo "Roles running in tmux session '$session' on the team socket '$TEAM_TMUX'."
+echo "Watch:  bin/team-status.sh    Attach:  tmux -L $TEAM_TMUX attach -t $session"
