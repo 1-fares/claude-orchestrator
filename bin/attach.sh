@@ -9,11 +9,11 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 
-if ! command tmux -L "$TEAM_TMUX" has-session -t "$TEAM_SESSION" 2>/dev/null; then
+if ! tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
   echo "no team session '$TEAM_SESSION' on socket '$TEAM_TMUX'." >&2
-  echo "start one with: bin/start-orchestrator.sh --tmux goals/<name>.md" >&2
-  echo "(or the orchestrator runs in your terminal and only roles are in tmux:" >&2
-  echo " start with bin/start-orchestrator.sh goals/<name>.md, then bin/team-status.sh)" >&2
+  echo "start one with: bin/run.sh   (or bin/start-orchestrator.sh goals/<name>.md)" >&2
   exit 1
 fi
-exec command tmux -L "$TEAM_TMUX" attach -t "$TEAM_SESSION"
+# exec the real tmux binary directly (exec cannot run the `command` builtin, and
+# the tmux() wrapper is a function which exec also cannot run).
+exec "$TEAM_TMUX_BIN" -L "$TEAM_TMUX" attach -t "$TEAM_SESSION"

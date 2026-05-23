@@ -22,11 +22,13 @@ TEAM_SESSION="orch-${_team_hash: -5}"
 : "${INTER_SESSION_PORT:=$((9500 + _team_hash % 400))}"
 TEAM_PORT="$INTER_SESSION_PORT"
 TEAM_TMUX="${TEAM_TMUX:-orchestrator}"
-export TEAM_REPO TEAM_SESSION TEAM_PORT INTER_SESSION_PORT TEAM_TMUX
+# Resolve the real tmux binary now, before the wrapper function shadows the name,
+# so callers can exec it directly (exec cannot run the `command` builtin).
+TEAM_TMUX_BIN="$(command -v tmux 2>/dev/null || echo tmux)"
+export TEAM_REPO TEAM_SESSION TEAM_PORT INTER_SESSION_PORT TEAM_TMUX TEAM_TMUX_BIN
 unset _team_hash
 
 # Route every tmux call in the sourcing script through the team's own socket with
-# no config loaded. `command tmux` avoids recursing into this function. The
-# -f /dev/null applies when this call starts the server; it is ignored once the
-# server is running.
-tmux() { command tmux -L "$TEAM_TMUX" -f /dev/null "$@"; }
+# no config loaded. The -f /dev/null applies when this call starts the server; it
+# is ignored once the server is running.
+tmux() { "$TEAM_TMUX_BIN" -L "$TEAM_TMUX" -f /dev/null "$@"; }
