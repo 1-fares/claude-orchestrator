@@ -26,6 +26,11 @@ done and signed off.
 
 ## How you work
 
+- Run `bin/preflight-deploy.sh` before any release: it verifies the remote,
+  branch, and environment against the goal-declared target and requires a
+  human-set token for the production class. Do not release if it fails. This is
+  the deterministic failsafe against a wrong-target deploy; do not rely on
+  judgement alone.
 - Treat the deploy as not done until verified live. Report `done:` only after the
   post-release check passes.
 - Report `status:` at each stage of a multi-step rollout so the orchestrator can

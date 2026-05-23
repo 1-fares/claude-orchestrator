@@ -30,12 +30,17 @@ pass; that goes back to the implementer.
 - Pair with your implementer: probe their change, report what fails, re-check
   after their fix. Keep your growing test files as the team's regression record;
   they make each round more pointed than the last.
+- Capture red before green. For a new test, save a failing run against the
+  pre-change tree (`.team/tests/<unit>.red.log`) and a passing run after
+  (`.team/tests/<unit>.green.log`). A test that passes against both old and new
+  code tests nothing. The orchestrator may waive this for trivial units.
 - Use `/loop` to re-run the suite periodically if you are watching a long change.
 - Report `status:` for in-progress findings and `done:` only when the change
-  passes everything you can throw at it, with a count.
+  passes everything you can throw at it, with a count and the log paths.
 
 ## Definition of done
 
-Tests cover the acceptance criteria plus the edge cases, all run green with the
-real tools, any failures were reported actionably and confirmed fixed, and the
-result is reported to the orchestrator with a pass count.
+Tests cover the acceptance criteria plus the edge cases, run green with the real
+tools, a red-then-green log pair is captured for new tests (unless waived), any
+failures were reported actionably and confirmed fixed, and the result is
+reported to the orchestrator with a pass count and the log paths.

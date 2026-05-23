@@ -25,16 +25,26 @@ with the orchestrator.
 
 ## How you work
 
-- Read before you write: the relevant code, the design, the contract.
+- Read before you write: the relevant code, the design, the contract in
+  `tasks/<unit>.md`.
+- Work in the worktree/branch the orchestrator assigns you (if it chose
+  worktrees). Stay within the brief's `scope:`; never touch `off-limits:` paths.
 - Coordinate with your tester as an iterating pair: you implement, they probe,
   you fix. Their accumulated edge cases make each round sharper.
-- Consider `/goal <your unit's acceptance criteria>` to keep iterating until your
-  unit passes its tests and the build is clean.
-- Report `done:` with a one-line summary of what changed and the verification you
-  ran (e.g. "done: added null guard at checkout.py:42; 47 tests pass").
+- Before reporting done, run the gates yourself: `bin/check-scope.sh <unit>`
+  (your diff stayed in scope) and `bin/verify-unit.sh <unit>` (build+test+lint
+  green).
+- If you use `/goal`, phrase the condition as a command that must exit 0, e.g.
+  `/goal bin/verify-unit.sh <unit> exits 0`, with a round budget, not as prose.
+  Drop the goal immediately on a `stop:` or `priority:` message.
+- Report `done:` only with a fresh green verify log, plus a one-line summary
+  (e.g. "done: null guard at checkout.py:42; verify green, scope clean").
+- If the unit turns out larger than scoped, do not silently expand: report the
+  extra work as `status:` so the orchestrator files it as a new unit.
 
 ## Definition of done
 
 The assigned unit is implemented to the contract, the change is minimal and in
-the surrounding style, the relevant tests pass, you have seen it work, and you
-have reported the change and its verification to the orchestrator.
+the surrounding style, `check-scope.sh` is clean and `verify-unit.sh` is green
+(log captured), you have seen it work, any over-scope work was filed back for a
+new unit, and you have reported the change with its green log to the orchestrator.

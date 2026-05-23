@@ -24,6 +24,27 @@ file and goal are given by absolute path. The orchestrator (bus name
   anything over a sentence as a file pointer (`/is s <role> --file <path>`).
 - **Stay in your lane.** Do the role's job, not the next role's. Cross-cutting
   decisions go back to the orchestrator.
+- **Honor `pause:` / `resume:` and `stop:` / `priority:`.** On `pause:`, stop
+  work and wait. On `stop:` or `priority:` while under `/goal`, drop the goal and
+  attend to the new instruction.
+
+## Coordination conventions
+
+- **The ledger is the source of truth.** Team state lives in `.team/state.md`
+  (per-unit status, scope, deps, plus a decision-log), not in any one session's
+  context. The orchestrator maintains it; append the why of your decisions.
+- **Handoffs are structured.** Work is assigned as a `tasks/<unit>.md` brief
+  (from `tasks/_TEMPLATE.md`) whose `verify:`, `scope:`, `off-limits:` lines feed
+  the gates.
+- **`done:` means verified.** A completion claim for a code unit is valid only
+  with a fresh green `bin/verify-unit.sh <unit>` log and a clean
+  `bin/check-scope.sh <unit>`. The orchestrator may waive gates for trivial units.
+- **Cadence is a choice, not a default.** Interactive (do a step, report, yield;
+  the `/is` monitor wakes you) is the default. Use `/goal` only with a
+  machine-checkable, exit-0 condition and a round budget. Use `/loop` for
+  periodic actions.
+- **Never drop work.** Partial, rejected, or out-of-scope work is reported back
+  so the orchestrator files it as a new ledger unit.
 
 ## Working agreement (binding on every role)
 
@@ -48,10 +69,12 @@ file is the portable version of the same discipline.
 
 - `roles/<role>.md`: per-role prompt; reused across all goals.
 - `goals/<name>.md`: per-feature brief; the only thing that changes between runs.
+- `tasks/<unit>.md`: per-unit structured handoff (from `tasks/_TEMPLATE.md`).
+- `templates/state.md`: canonical format for the run ledger (`.team/state.md`).
 - `bin/launch-team.sh`: spawn the team in tmux (`--workdir` to target an
-  external codebase).
-- `bin/stop-team.sh`: tear the team down.
-- `bin/new-goal.sh`: scaffold a goal brief from the template.
+  external codebase). `bin/stop-team.sh`: tear it down. `bin/new-goal.sh`:
+  scaffold a goal brief. `bin/verify-unit.sh`, `bin/check-scope.sh`: the gates.
 
 This is a template, cloned once per project (see [README.md](./README.md)
-"Distribution"), not a shared home for every project's goals.
+"Distribution"), not a shared home for every project's goals. Implementation is
+staged; see [STATUS.md](./STATUS.md) for what is built versus pending.

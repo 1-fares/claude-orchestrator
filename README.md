@@ -2,6 +2,12 @@
 
 A pattern for building software with a team of Claude Code sessions.
 
+> Under active revision following a design review. [STATUS.md](./STATUS.md) holds
+> the locked design decisions and what is built versus pending; where this README
+> and STATUS disagree, STATUS is current. The ledger, structured handoffs,
+> verify/scope gates, the integrator role, and cadence modes are landing in
+> stages.
+
 One session, the **orchestrator**, holds the goal and coordinates a set of
 specialised role sessions (architect, implementer, tester, and so on). The
 sessions are independent Claude Code processes on the same machine; they talk

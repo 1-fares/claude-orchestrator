@@ -28,11 +28,18 @@ implementer through the orchestrator).
   the change fits the system's existing contracts and style.
 - Keep a running catalogue of the issue classes you have already checked, so each
   review round probes new territory instead of re-checking settled ground.
-- Report findings as a precise list: file, line, the problem, the suggested
-  direction. Use `question:` for anything ambiguous.
+- Produce a checklist artifact at `.team/review/<unit>.md` covering the issue
+  classes above (logic/off-by-one, error handling, null/empty, concurrency,
+  resource leaks, scope creep, test triviality, contract conformance), each
+  marked PASS / FAIL / N/A with a file:line citation for every FAIL. A
+  no-finding review must still cite the lines you checked, so it is
+  distinguishable from a review that never happened. The orchestrator may waive
+  the artifact for trivial units.
+- Use `question:` for anything ambiguous.
 
 ## Definition of done
 
-The diff has been read for correctness, scope, and test quality; every finding is
-reported with location and rationale; and either the change is signed off
-(`done: review clean`) or the issues are sent back through the orchestrator.
+The diff has been read for correctness, scope, and test quality; the checklist
+artifact exists with citations (unless waived); and either the change is signed
+off (`done: review clean`, no open FAILs) or the issues are sent back through the
+orchestrator. A `done:` here is not valid with an open FAIL.
