@@ -71,9 +71,15 @@ file is the portable version of the same discipline.
 - `goals/<name>.md`: per-feature brief; the only thing that changes between runs.
 - `tasks/<unit>.md`: per-unit structured handoff (from `tasks/_TEMPLATE.md`).
 - `templates/state.md`: canonical format for the run ledger (`.team/state.md`).
-- `bin/launch-team.sh`: spawn the team in tmux (`--workdir` to target an
-  external codebase). `bin/stop-team.sh`: tear it down. `bin/new-goal.sh`:
-  scaffold a goal brief. `bin/verify-unit.sh`, `bin/check-scope.sh`: the gates.
+- `bin/start-orchestrator.sh`: first run; establishes the team's tmux session
+  and seeds the orchestrator. `bin/launch-team.sh`: spawn roles (`--workdir` to
+  target external code). `bin/stop-team.sh`: tear the team down (leaves the
+  orchestrator). `bin/new-goal.sh`: scaffold a goal brief.
+- `bin/team-status.sh` / `bin/team-watch.sh`: dashboard. `bin/team-broadcast.sh`:
+  inject to all roles from outside (honors `pause:`/`resume:`/`priority:`).
+  `bin/team-logs.sh`: per-role history from the bus.
+- `bin/verify-unit.sh`, `bin/check-scope.sh`: the gates. `bin/team-env.sh`:
+  per-clone bus port + tmux session (sourced by the others).
 
 This is a template, cloned once per project (see [README.md](./README.md)
 "Distribution"), not a shared home for every project's goals. Implementation is

@@ -58,10 +58,18 @@ Decisions:
 - **Stage 1 (correctness core)**, done: STATUS, ledger + task-brief templates,
   integrator role, `verify-unit.sh`, `check-scope.sh`, role/prompt edits,
   CLAUDE.md core conventions.
-- **Stage 2 (seamlessness)**, pending: `start-orchestrator.sh`,
-  `team-status.sh` + `team-watch.sh`, `team-broadcast.sh`, per-role logs,
-  `launch-team.sh` changes (per-team session/port, truncate, worktree helper),
-  `stop-team.sh` hardening.
+- **Stage 2 (seamlessness)**, done: `team-env.sh` (per-clone bus port + tmux
+  session), `start-orchestrator.sh`, `team-status.sh`, `team-watch.sh`,
+  `team-broadcast.sh` (out-of-band via tmux send-keys, since external scripts
+  cannot get bus auth), `team-logs.sh` (per-role history from the bus
+  messages.log; `--sync` materializes `.team/log/<role>.log`), `launch-team.sh`
+  (per-team session/port, stale-`.team/active` reap), `stop-team.sh` hardening
+  (graceful pass, pid-is-claude guard, bus-server kill scoped to the team port,
+  orchestrator window preserved). Worktree helper deferred to Stage 3 with the
+  concurrency wiring.
+  Note: per-role logs derive from the bus log (the durable store) rather than a
+  live pane tee, a TUI pane capture is mostly redraw noise; the bus stream is the
+  meaningful, greppable record.
 - **Stage 3 (safety + docs)**, pending: `.claude/settings.json` deny-list,
-  `preflight-deploy.sh`, `panic.sh`, watchdog; full README pass; close the
-  resolved "Open questions".
+  `preflight-deploy.sh`, `panic.sh`, watchdog, `worktree.sh` helper; full README
+  pass; close the resolved "Open questions".

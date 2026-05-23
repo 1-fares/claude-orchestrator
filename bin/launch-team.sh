@@ -40,7 +40,9 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-session="orchestrator-team"
+# shellcheck source=bin/team-env.sh
+. "$repo/bin/team-env.sh"   # sets TEAM_SESSION, TEAM_PORT, INTER_SESSION_PORT
+session="$TEAM_SESSION"
 flags="--dangerously-skip-permissions"
 
 usage() { echo "usage: $0 [--workdir DIR] <goal-file> <role> [<role> ...]" >&2; exit 1; }
@@ -85,6 +87,17 @@ model_for() {
 }
 
 mkdir -p "$repo/.team"
+
+# Reap dead entries from a previous run so teardown never group-kills a recycled
+# pid; keep live entries so a second launch can add roles to a running team.
+if [ -f "$repo/.team/active" ]; then
+  _tmp="$repo/.team/active.$$"; : > "$_tmp"
+  while IFS=$'\t' read -r _pid _wid _role; do
+    [ -n "${_pid:-}" ] && kill -0 "$_pid" 2>/dev/null \
+      && printf '%s\t%s\t%s\n' "$_pid" "$_wid" "$_role" >> "$_tmp"
+  done < "$repo/.team/active"
+  mv "$_tmp" "$repo/.team/active"
+fi
 
 # Validate every role up front so a bad name never leaves a half-spawned team.
 for role in "$@"; do

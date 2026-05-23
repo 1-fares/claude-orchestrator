@@ -1,56 +1,95 @@
 #!/usr/bin/env bash
 # stop-team.sh: deterministically tear down a team launched by launch-team.sh.
 #
-# claude ignores SIGHUP and survives loss of its pty, so killing the tmux window
-# is not enough: a role keeps running after the window closes. Teardown therefore
-# signals each role's process GROUP by the pane pid the launcher recorded (which
-# reaps claude and its MCP child processes), then closes the tmux windows.
+# Order: (1) optional graceful pass, ask each role to stop and save via the pane;
+# (2) SIGTERM each recorded process group; (3) SIGKILL survivors and close their
+# windows; (4) kill this team's /is bus server; (5) verify. The orchestrator
+# window is left alone (use bin/panic.sh to kill everything including it).
 #
-# This is a script, not an LLM step, because teardown across N sessions must be
-# exact and repeatable (see README "Scripts over judgement").
+# claude ignores SIGHUP and survives pty teardown, so we signal the process
+# GROUP by the recorded pane pid (reaps claude + its MCP children), and we verify
+# a pid is still a claude process before killing it, so a stale .team/active
+# never group-kills a recycled, unrelated pid.
 #
-# Usage: bin/stop-team.sh
+# Usage: bin/stop-team.sh [--no-graceful]
 
-set -uo pipefail   # not -e: kill on an already-dead pid returns non-zero
+set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-session="orchestrator-team"
+. "$repo/bin/team-env.sh"
+session="$TEAM_SESSION"
 active="$repo/.team/active"
+graceful=1
+[ "${1:-}" = "--no-graceful" ] && graceful=0
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
+
+is_claude() { ps -p "$1" -o args= 2>/dev/null | grep -q '[c]laude'; }
 
 killed=0
 
 if [ -f "$active" ]; then
-  # Pass 1: SIGTERM each recorded process group.
+  if [ "$graceful" -eq 1 ]; then
+    # Ask roles to stop and save via their pane, then give them a moment.
+    while IFS=$'\t' read -r pid wid role; do
+      [ -n "${wid:-}" ] || continue
+      tmux send-keys -t "$wid" -l "stop: teardown, finish the current write and stop." 2>/dev/null && \
+        tmux send-keys -t "$wid" Enter 2>/dev/null || true
+    done < "$active"
+    sleep 4
+  fi
+
+  # Pass 1: SIGTERM each recorded process group (only if still claude).
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
-    if kill -0 "$pid" 2>/dev/null; then
+    if kill -0 "$pid" 2>/dev/null && is_claude "$pid"; then
       kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-      echo "TERM $role (pid $pid)"
-      killed=1
+      echo "TERM $role (pid $pid)"; killed=1
     fi
   done < "$active"
 
   sleep 2
 
-  # Pass 2: SIGKILL survivors, then close the windows.
+  # Pass 2: SIGKILL survivors, then close windows.
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
-    if kill -0 "$pid" 2>/dev/null; then
+    if kill -0 "$pid" 2>/dev/null && is_claude "$pid"; then
       kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
       echo "KILL $role (pid $pid)"
     fi
     [ -n "${wid:-}" ] && tmux kill-window -t "$wid" 2>/dev/null || true
   done < "$active"
-
-  rm -f "$active"
 fi
 
-# Belt and suspenders: drop the detached session if it still exists.
+# Kill this team's /is bus server (scoped to TEAM_PORT), if we own it.
+srv_pidf="$HOME/.claude/data/inter-session/server.$TEAM_PORT.pid"
+if [ -f "$srv_pidf" ]; then
+  srv_pid="$(cat "$srv_pidf" 2>/dev/null || true)"
+  if [ -n "$srv_pid" ] && kill -0 "$srv_pid" 2>/dev/null && \
+     ps -p "$srv_pid" -o args= 2>/dev/null | grep -q '[s]erver.py'; then
+    kill -TERM "$srv_pid" 2>/dev/null || true
+    echo "stopped /is bus server (pid $srv_pid, port $TEAM_PORT)"; killed=1
+  fi
+fi
+
+# Drop the tmux session only if the orchestrator is not living in it.
 if tmux has-session -t "$session" 2>/dev/null; then
-  tmux kill-session -t "$session" 2>/dev/null || true
-  echo "killed tmux session '$session'"
-  killed=1
+  if tmux list-windows -t "$session" -F '#{window_name}' 2>/dev/null | grep -qx orchestrator; then
+    echo "left tmux session '$session' running (orchestrator window present)"
+  else
+    tmux kill-session -t "$session" 2>/dev/null && echo "killed tmux session '$session'"
+  fi
+fi
+
+# Verify and clear the record.
+if [ -f "$active" ]; then
+  survivors=0
+  while IFS=$'\t' read -r pid wid role; do
+    [ -n "${pid:-}" ] || continue
+    if kill -0 "$pid" 2>/dev/null && is_claude "$pid"; then
+      echo "WARNING: $role (pid $pid) still alive" >&2; survivors=$((survivors+1))
+    fi
+  done < "$active"
+  [ "$survivors" -eq 0 ] && rm -f "$active" && echo "all roles stopped"
 fi
 
 [ "$killed" -eq 1 ] || echo "no running team found"
