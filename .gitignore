@@ -1,3 +1,6 @@
 # Transient runtime state written by bin/launch-team.sh and bin/stop-team.sh:
 # per-role launch prompts and the active-team record (pids, tmux windows).
 .team/
+
+# Per-clone target config written by bin/run.sh (local, not for the template).
+project.conf

@@ -173,29 +173,33 @@ partial, or out-of-scope work is never dropped: it becomes a new ledger unit.
 ## Quickstart
 
 ```bash
-bin/new-project.sh ~/my-project    # only for a brand-new external target repo
-bin/new-goal.sh                    # a few questions -> goals/<name>.md
-bin/start-orchestrator.sh goals/<name>.md   # orchestrator + roles in one tmux session
-bin/attach.sh                      # attach; talk to orchestrator, Ctrl-b <n> for roles; say 'go'
-bin/team-status.sh                 # one-glance dashboard (from another terminal)
+bin/run.sh                         # the one command: asks the goal (and the
+                                   #   target on first run), starts, drops you in
+bin/run.sh "add a --json flag to the export command"   # repeat run, goal inline
+# watch / intervene / end (from another terminal):
+bin/team-status.sh                 # one-glance dashboard
 bin/team-broadcast.sh 'pause: hold on'     # intervene out-of-band
-bin/stop-team.sh                   # end the roles
-bin/reset.sh                       # clean slate for a new run (ends all, clears .team)
+bin/reset.sh                       # clean slate for a new run
 bin/panic.sh                       # emergency: stop everything
 ```
 
+`bin/run.sh` is the entry point. The first run in a clone asks which code to work
+on (a new path it creates, an existing repo it uses, or blank to build inside the
+clone) and remembers it in `project.conf`; later runs only ask for the goal, so a
+repeat run against an existing project is one line. It composes the lower-level
+scripts (`new-project.sh`, `new-goal.sh`, `start-orchestrator.sh`, `attach.sh`),
+which remain available for manual control.
+
 By default the orchestrator and roles share one tmux session (orchestrator =
-window 0, roles = windows 1, 2, ...); `bin/attach.sh` drops you in and `Ctrl-b
-<number>` switches between them. The team runs on a dedicated tmux socket
-(`-L orchestrator`, no user config), isolated from your default tmux server and
-its plugins; tmux-resurrect/continuum on the default server would otherwise
-auto-restore the team's windows as stale shells after a teardown. (Prefer the
-orchestrator in your own terminal with only roles in tmux? Use
-`start-orchestrator.sh --foreground`.) Run `bin/reset.sh` between runs. You only
-describe the goal in `new-goal.sh`; the orchestrator
-proposes the acceptance criteria, scope, team, and verify command at its
-definition-of-ready gate and confirms before any work starts. (`--tmux` runs the
-orchestrator inside the team tmux session instead, if you prefer one session.)
+window 0, roles = windows 1, 2, ...); `bin/run.sh` / `bin/attach.sh` drop you in
+and `Ctrl-b <number>` switches between them. The team runs on a dedicated tmux
+socket (`-L orchestrator`, no user config), isolated from your default tmux
+server and its plugins; tmux-resurrect/continuum on the default server would
+otherwise auto-restore the team's windows as stale shells after a teardown.
+(Prefer the orchestrator in your own terminal with only roles in tmux?
+`start-orchestrator.sh --foreground`.) You only describe the goal; the
+orchestrator proposes the acceptance criteria, scope, team, and verify command at
+its definition-of-ready gate and confirms before any work starts.
 
 ## Launching the team
 

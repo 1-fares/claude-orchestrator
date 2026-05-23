@@ -77,6 +77,9 @@ file is the portable version of the same discipline.
 - `goals/<name>.md`: per-feature brief; the only thing that changes between runs.
 - `tasks/<unit>.md`: per-unit structured handoff (from `tasks/_TEMPLATE.md`).
 - `templates/state.md`: canonical format for the run ledger (`.team/state.md`).
+- `bin/run.sh`: the one-command entry point (asks the goal, and the target on
+  first run; starts the team; attaches). Remembers the target per clone in
+  `project.conf`. Composes the scripts below.
 - `bin/new-project.sh`: scaffold a brand-new target repo. `bin/new-goal.sh`: a
   short questionnaire that writes a goal brief (you describe the goal; the
   orchestrator fills in acceptance/scope/team/verify at the ready-gate).

@@ -52,6 +52,11 @@ edit the ledger and broadcast "re-read the goal".
 - **Sequence the work.** Analyst/architect first when design is unsettled.
   Implementer and tester run as an iterating pair. Reviewer does an independent
   pass. Integrator merges. Deployment last.
+- **Protect an existing repo.** If the working tree is an existing project (not
+  greenfield), have all work done on a new branch or per-unit worktrees off the
+  current HEAD; never commit to the user's checked-out branch. Read that repo's
+  own `CLAUDE.md` and follow its branch and PR conventions; the integrator opens
+  a PR or leaves the branch for the user rather than merging into their main.
 - **Gate "done".** Never accept a `done:` without a fresh green
   `bin/verify-unit.sh <unit>` log (and a clean `bin/check-scope.sh`). Err toward
   this hard gate; you may use a lighter check for trivial units. A role's `done:`
