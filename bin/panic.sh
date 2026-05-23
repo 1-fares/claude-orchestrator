@@ -4,11 +4,12 @@
 # is misbehaving (runaway loop, ping-pong, wrong direction) and you just want it
 # all to stop.
 #
-# It kills the process group of every pane in the team session (claude survives
-# SIGHUP, so killing the session alone is not enough), then any pids recorded in
-# .team/active that are not in the session, then this team's /is bus server.
+# It captures each pane's process tree (claude plus its children), kills it,
+# kills the tmux session, kills any recorded pids and this team's /is bus server,
+# then VERIFIES the session is actually gone and reports the truth (claude
+# ignores gentler signals, so we SIGKILL and check).
 #
-# Usage: bin/panic.sh
+# Run it in the same environment the team runs in (your terminal). Usage: bin/panic.sh
 
 set -uo pipefail
 
@@ -16,19 +17,25 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 
-killed=0
+# Collect a pid and all its descendants.
+descendants() { local p c; for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
 
+killed=0
+tree=""
 if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
-  pids="$(tmux list-panes -s -t "$TEAM_SESSION" -F '#{pane_pid}' 2>/dev/null)"
-  for pp in $pids; do kill -TERM "-$pp" 2>/dev/null || kill -TERM "$pp" 2>/dev/null || true; done
-  sleep 2
-  for pp in $pids; do kill -KILL "-$pp" 2>/dev/null || kill -KILL "$pp" 2>/dev/null || true; done
+  for pp in $(tmux list-panes -s -t "$TEAM_SESSION" -F '#{pane_pid}' 2>/dev/null); do
+    tree="$tree $pp $(descendants "$pp")"
+  done
+  # signal process groups, then kill the session, then SIGKILL the captured tree
+  for p in $tree; do kill -TERM "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true; done
   tmux kill-session -t "$TEAM_SESSION" 2>/dev/null || true
-  echo "panic: killed tmux session '$TEAM_SESSION' and its panes"
+  sleep 1
+  for p in $tree; do kill -KILL "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null || true; done
+  echo "panic: killed tmux session '$TEAM_SESSION' and its process tree"
   killed=1
 fi
 
-# Any recorded pids not in the session (e.g. detached launch).
+# Any recorded pids not in the session (e.g. a detached launch).
 if [ -f "$repo/.team/active" ]; then
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
@@ -40,6 +47,7 @@ if [ -f "$repo/.team/active" ]; then
   rm -f "$repo/.team/active"
 fi
 
+# This team's /is bus server (scoped to TEAM_PORT).
 srv_pidf="$HOME/.claude/data/inter-session/server.$TEAM_PORT.pid"
 if [ -f "$srv_pidf" ]; then
   srv_pid="$(cat "$srv_pidf" 2>/dev/null || true)"
@@ -50,4 +58,18 @@ if [ -f "$srv_pidf" ]; then
   fi
 fi
 
-[ "$killed" -eq 1 ] && echo "panic: done" || echo "panic: nothing was running"
+# Verify and report the truth.
+sleep 1
+if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
+  echo "panic: WARNING session '$TEAM_SESSION' is STILL up. Last resort (kills only" >&2
+  echo "       this server; safe if no other tmux work): tmux kill-server" >&2
+  exit 1
+fi
+survivors=0
+for p in $tree; do kill -0 "$p" 2>/dev/null && survivors=$((survivors+1)); done
+if [ "$survivors" -gt 0 ]; then
+  echo "panic: WARNING $survivors process(es) from the team are still alive" >&2
+  exit 1
+fi
+
+[ "$killed" -eq 1 ] && echo "panic: done, session gone and processes reaped" || echo "panic: nothing was running"
