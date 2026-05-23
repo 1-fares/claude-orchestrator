@@ -60,4 +60,4 @@ ${team:-let the orchestrator decide}
 EOF
 
 echo "wrote $dest"
-echo "next: bin/start-orchestrator.sh goals/$name.md   (attach, then say 'go')"
+echo "next: bin/start-orchestrator.sh goals/$name.md   then   bin/attach.sh   (say 'go')"

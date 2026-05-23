@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # start-orchestrator.sh: start the orchestrator.
 #
-# Default: runs the orchestrator in YOUR current terminal (foreground), so there
-# is no tmux attach to fumble. The orchestrator spawns the worker roles into a
-# tmux session you can watch separately (bin/team-status.sh, or
-# tmux attach -t <TEAM_SESSION>). When the orchestrator exits, you are back at
-# your shell.
+# Default: the orchestrator and all worker roles live as windows in ONE tmux
+# session on the team's dedicated socket. You attach once (bin/attach.sh) and
+# switch between the orchestrator and the roles with Ctrl-b <number>. The
+# dedicated socket keeps this isolated from your default tmux server and its
+# plugins (resurrect/continuum), so old runs do not get auto-restored.
 #
-# --tmux: instead run the orchestrator itself inside the team tmux session
-#         (window 0) and print the attach command. Useful if you want everything,
-#         orchestrator and roles, as windows in one tmux session.
+# --foreground: instead run the orchestrator in YOUR current terminal (no attach)
+#               and put only the roles in tmux. Watch them with bin/team-status.sh
+#               or bin/attach.sh from another terminal.
 #
-# Usage: bin/start-orchestrator.sh [--tmux] [goal-file]
+# Usage: bin/start-orchestrator.sh [--foreground] [goal-file]
 
 set -euo pipefail
 
@@ -20,8 +20,8 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 flags="--dangerously-skip-permissions"
 command -v claude >/dev/null || { echo "claude not on PATH" >&2; exit 1; }
 
-mode=foreground
-[ "${1:-}" = "--tmux" ] && { mode=tmux; shift; }
+mode=tmux
+[ "${1:-}" = "--foreground" ] && { mode=foreground; shift; }
 goal="${1:-}"
 
 # A previous run's roles still in tmux? Warn before starting another.
@@ -71,9 +71,11 @@ if [ "$mode" = foreground ]; then
   exec claude $flags --model opus "$(cat "$pf")"
 fi
 
-# --tmux mode: orchestrator as window 0 of the team session.
-command -v tmux >/dev/null || { echo "tmux not installed (needed for --tmux)" >&2; exit 1; }
+# Default (tmux) mode: orchestrator as window 0 of the team session; roles join
+# as windows 1, 2, ... so Ctrl-b <number> switches between them in one session.
+command -v tmux >/dev/null || { echo "tmux not installed (use --foreground)" >&2; exit 1; }
 launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT") && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
 tmux new-session -d -s "$TEAM_SESSION" -n orchestrator "bash -lc $(printf %q "$launch")"
-echo "orchestrator started in tmux session '$TEAM_SESSION' (bus port $TEAM_PORT, socket '$TEAM_TMUX')."
-echo "Attach with:  tmux -L $TEAM_TMUX attach -t $TEAM_SESSION"
+echo "Orchestrator + roles will share tmux session '$TEAM_SESSION' (bus port $TEAM_PORT)."
+echo "Attach now and talk to the orchestrator (Ctrl-b <number> switches to roles):"
+echo "  bin/attach.sh"

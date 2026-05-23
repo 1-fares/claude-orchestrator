@@ -175,22 +175,24 @@ partial, or out-of-scope work is never dropped: it becomes a new ledger unit.
 ```bash
 bin/new-project.sh ~/my-project    # only for a brand-new external target repo
 bin/new-goal.sh                    # a few questions -> goals/<name>.md
-bin/start-orchestrator.sh goals/<name>.md   # runs IN this terminal; say 'go'
-# the orchestrator spawns the roles into tmux; watch them with:
-bin/team-status.sh                 # one-glance dashboard (run in another terminal)
+bin/start-orchestrator.sh goals/<name>.md   # orchestrator + roles in one tmux session
+bin/attach.sh                      # attach; talk to orchestrator, Ctrl-b <n> for roles; say 'go'
+bin/team-status.sh                 # one-glance dashboard (from another terminal)
 bin/team-broadcast.sh 'pause: hold on'     # intervene out-of-band
 bin/stop-team.sh                   # end the roles
 bin/reset.sh                       # clean slate for a new run (ends all, clears .team)
 bin/panic.sh                       # emergency: stop everything
 ```
 
-The orchestrator runs in your own terminal (no tmux attach to fumble); only the
-worker roles go to tmux, watch them with `bin/team-status.sh` or attach with
-`bin/attach.sh`. The team runs on a dedicated tmux socket (`-L orchestrator`, no
-user config) so it is isolated from your default tmux server and its plugins;
-tmux-resurrect/continuum on the default server would otherwise auto-restore the
-team's windows as stale shells after a teardown. Run `bin/reset.sh` between runs.
-You only describe the goal in `new-goal.sh`; the orchestrator
+By default the orchestrator and roles share one tmux session (orchestrator =
+window 0, roles = windows 1, 2, ...); `bin/attach.sh` drops you in and `Ctrl-b
+<number>` switches between them. The team runs on a dedicated tmux socket
+(`-L orchestrator`, no user config), isolated from your default tmux server and
+its plugins; tmux-resurrect/continuum on the default server would otherwise
+auto-restore the team's windows as stale shells after a teardown. (Prefer the
+orchestrator in your own terminal with only roles in tmux? Use
+`start-orchestrator.sh --foreground`.) Run `bin/reset.sh` between runs. You only
+describe the goal in `new-goal.sh`; the orchestrator
 proposes the acceptance criteria, scope, team, and verify command at its
 definition-of-ready gate and confirms before any work starts. (`--tmux` runs the
 orchestrator inside the team tmux session instead, if you prefer one session.)
