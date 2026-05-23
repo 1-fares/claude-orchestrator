@@ -79,8 +79,9 @@ the bus name is the file name plus an optional digit, so `implementer1` and
 | **DevOps** | `devops` | Build, environments, dependencies, tooling, CI. |
 | **Deployment** | `deployment` | Release, post-release verification, rollback, deploy preflight. |
 
-Extended roles, added when the goal calls for them: **researcher** (spikes),
-**security reviewer** (red-team), **tech writer** (docs).
+Extended roles, added when the goal calls for them: **front-end developer**
+(`frontend<N>`, builds the UI), **researcher** (spikes), **security reviewer**
+(red-team), **tech writer** (docs).
 
 Keep the team as small as the goal allows. On a local subscription run every
 role defaults to the best model (Opus); drop a role to a faster model only for
