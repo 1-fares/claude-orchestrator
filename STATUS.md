@@ -70,6 +70,9 @@ Decisions:
   Note: per-role logs derive from the bus log (the durable store) rather than a
   live pane tee, a TUI pane capture is mostly redraw noise; the bus stream is the
   meaningful, greppable record.
-- **Stage 3 (safety + docs)**, pending: `.claude/settings.json` deny-list,
-  `preflight-deploy.sh`, `panic.sh`, watchdog, `worktree.sh` helper; full README
-  pass; close the resolved "Open questions".
+- **Stage 3 (safety + docs)**, done: `.claude/settings.json` (minimal deny-list,
+  per the chosen scope; verified that `permissions.deny` is enforced even under
+  `--dangerously-skip-permissions`, and that the real force-push pattern blocks),
+  `preflight-deploy.sh`, `panic.sh`, `watchdog.sh`, `worktree.sh`; full README
+  rewrite; resolved "Open questions" closed (handoff schema, integration
+  discipline, shared state, multi-team isolation).
