@@ -30,7 +30,51 @@ use (B4).
 - Keep human gates as asynchronous (notify and wait), do not remove them: the
   orchestrator's clarifying questions were valuable in testing.
 
-**Depends on.** Strengthens and is strengthened by B4.
+**What's already in place that lowers the cost.** Per-run `TEAM_RUN_ID` isolation
+(parallel teams trivially), recovery-aware `bin/run.sh`, orphan-safe
+`bin/cleanup.sh`, the `interactive | autonomous` mode is already a concept in
+`roles/orchestrator.md`, and the orchestrator can be driven programmatically
+(proven during testing).
+
+**Proposed surface.** A single command:
+```
+bin/run.sh --auto "<goal>" [--accept "<exit-0 cmd>"] [--max-rounds N] [--notify <ntfy-url>]
+```
+Launches detached, returns the run-id, prints the attach command for later
+(`TEAM_RUN_ID=<id> bin/attach.sh`). Reuses today's per-run isolation, so several
+auto runs coexist.
+
+**Notify-and-resolve UX (the operator's path back in).** When the orchestrator
+hits a blocker:
+1. It writes a per-run `$TEAM_DIR/PENDING.md` with the question + suggested
+   answers + the exact resolution command.
+2. It sends an `ntfy` push whose body is **enough by itself**: run-id, target,
+   one-line question, and the literal `TEAM_RUN_ID=<id> bin/attach.sh` to paste.
+3. A new helper `bin/inbox.sh` lists every run currently awaiting input (run-id,
+   target, age, question, attach command), so a missed notification is
+   recoverable.
+
+**UX tiers (build in order).**
+1. **MVP:** ntfy body has the question + attach command; operator opens any
+   terminal, pastes the command, answers in-pane. `bin/inbox.sh` is the catch-up.
+2. **Paired with B4:** the notification also includes an SSH-and-attach
+   one-liner, so the operator can answer from a phone terminal app without
+   thinking.
+3. **Later:** reply-over-ntfy (or Telegram/Slack) so a notification button on
+   the phone delivers the answer over the bus; no terminal needed.
+
+**Hard rule.** Autonomous does NOT mean silent: the human gate is asynchronous,
+not removed. The orchestrator's clarifying questions were valuable in testing;
+notify and wait, do not silently decide.
+
+**Safety.** Autonomous + `--dangerously-skip-permissions` is unattended code
+execution; safety rests on the existing gates (verify, per-unit scope baseline,
+branch isolation, integrator merging on `orch/...`) plus off-limits paths in the
+brief plus `bin/panic.sh` as the kill switch. The cleanup side never auto-kills
+(see `bin/cleanup.sh`).
+
+**Depends on.** Strengthens and is strengthened by B4 (notification + reply
+channels are mostly the same problem). Best designed together.
 
 ---
 
