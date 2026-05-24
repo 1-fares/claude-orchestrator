@@ -93,7 +93,11 @@ file is the portable version of the same discipline.
   orchestrator in tmux too). `bin/launch-team.sh`: spawn roles (`--workdir` to
   target external code). `bin/attach.sh`: attach to the team tmux session.
 - `bin/stop-team.sh`: end the roles. `bin/reset.sh`: clean slate (ends
-  everything, clears `.team/`). `bin/panic.sh`: emergency stop.
+  everything, clears `.team/`). `bin/panic.sh`: emergency stop. `bin/cleanup.sh`:
+  recover from a misfire, reaps orphaned role sessions the others miss (a lost
+  tmux session, a launch with no `.team/active`), dry-run by default, `--force`
+  to apply, `--purge` for config/artifacts, `--include-unsigned` for orphans not
+  attributable to this clone.
 - The team runs on a dedicated tmux socket (`-L orchestrator`, no user config),
   isolated from your default tmux server and its plugins (e.g.
   resurrect/continuum). Use `bin/attach.sh` / `bin/team-status.sh`, not a plain
