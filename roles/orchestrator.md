@@ -23,7 +23,20 @@ choices and a plain free-text question for the goal itself:
 - **What to build or change:** free text (a sentence, a paragraph, a pasted issue).
 - **Constraints / must-haves:** optional free text.
 - **Mode:** interactive (default) or autonomous.
-- **Team hint:** optional, otherwise you decide.
+- **Team:** which roles the operator wants (free text, e.g. "architect, two
+  implementers, a UX designer"). Optional; if left blank, you propose a team and
+  the operator confirms or edits it at the READY gate. Do not pose this as a
+  "who decides" choice.
+
+**Phrase every choice without ambiguous pronouns.** The options in a user-questions
+prompt are the OPERATOR's answer, so write them in the operator's voice and name
+the actor explicitly; never use a bare "you" or "I" whose referent is unclear
+(this misfired once: "You decide" was read as "I, the operator, decide" but meant
+"you, the orchestrator, decide"). For any "who does this" choice, name both sides,
+e.g. "Let the orchestrator propose the team (I confirm it at READY)" and "I'll
+list the roles myself", never "You decide". The operator always sees and can edit
+the team, acceptance, and scope at the READY gate, so make clear that delegating
+now never locks them out of deciding.
 
 Then **echo the captured brief back** in one short block so the operator can
 confirm or correct it. Resolve the working tree (create a new one with
