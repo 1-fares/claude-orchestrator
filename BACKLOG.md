@@ -149,6 +149,104 @@ helps B3.
 
 ---
 
+### Detailed plan (2026-05-24): pilot = Swiss legal case-prep (research-assist)
+
+**Headline.** Pilot is Swiss legal case preparation. Generic public-domain
+example: review of a sample employment contract under Swiss CO Art. 319+.
+Multilingual sources (DE/FR/IT), English memo. Citation verification is
+deterministic via fedlex.admin.ch and entscheidsuche.ch. Research corpus is web
+only (GPT Researcher via `gptr-mcp` + WebFetch); no local PDF curation.
+Pragmatic tool depth: pandoc + GPT Researcher + a ~50 LOC Swiss-law-search
+helper. Legal is treated as a worked example of the generic non-code capability,
+not as a structurally fortified special case.
+
+**Honest tension to note.** Prior-art research (and Agent 1 here) ranked legal
+*last* among candidate pilots: Stanford 2025 found even purpose-built legal RAG
+fabricates ~1 in 6; lawyers have been sanctioned for AI fake-citations. The
+operator chose legal anyway; the design below compensates with sharper safety
+(deterministic cite-verification, forbidden-phrase scan, mandatory disclaimers,
+human-review-required framing).
+
+**Pipeline (roles).**
+`case-analyst → legal-researcher → drafter → citation-verifier → editor →
+peer-counsel-reviewer → disclaimer-officer → doc-integrator`. Each role gets
+exactly one kind of mistake to catch (per Agent 3's "single load-bearing job"
+principle).
+
+**Tier-1 gate library** (`bin/gates/`, each well under 100 LOC):
+- `structure.sh` — required sections + word/section counts.
+- `link-live.sh` — `lychee` over cited URLs.
+- `cite-resolve.sh` — every cite has a bibliography entry, every entry is cited.
+- `md-lint.sh` + `office-wellformed.sh` — markdown clean; docx/pptx parses.
+- `llm-judge.sh` — generic LLM-judge helper (rubric.md + artifact → JSON score,
+  K=3 self-consistency for high-stakes gates, audit log under
+  `$TEAM_DIR/audit/<unit>/`, evidence-anchored scoring per RULERS, explicit
+  "insufficient_evidence" option per PaperQA2).
+- `rubric-judge.sh` — thin wrapper on `llm-judge.sh` for per-unit rubric scoring.
+- `cite-support.sh` — LLM-judge that the cited passage actually supports the
+  claim (cornerstone for legal).
+- **`swiss-cite-exists.sh`** (legal-specific) — parse BGE / ATF / Art./Abs./Bst.
+  patterns; verify against fedlex + entscheidsuche.
+- **`no-advice.sh`** (legal-specific) — forbidden-phrase scan (no "you should",
+  no "we conclude", no "the court will rule") + mandatory disclaimer presence.
+
+**Tool stack.**
+- **Pandoc + CSL/BibTeX** — markdown → DOCX/PDF with a Swiss-legal reference
+  template.
+- **GPT Researcher (`gptr-mcp`)** — wired as the legal-researcher's MCP tool; web
+  research over public Swiss sources (fedlex, bger.ch, entscheidsuche.ch).
+- **`bin/tools/swiss-law-lookup.sh`** — tiny wrapper (~50 LOC) over the free
+  entscheidsuche.ch + fedlex.admin.ch search/URL conventions; used by both the
+  researcher and the `swiss-cite-exists` gate.
+- Tier 2 / skip: PaperQA2 (no local PDFs by user choice; revisit if they
+  appear), STORM, Marp/python-pptx (not slides), Elicit/Consensus (paywall).
+
+**Safety / defaults** (refined with operator 2026-05-24; per-goal tunable):
+1. **Disclaimer**: default-on ("DRAFT FOR ATTORNEY REVIEW — NOT LEGAL ADVICE",
+   jurisdiction, date). The goal brief may opt out per memo.
+2. **No conclusions/advice/predictions** is NOT structurally enforced. Drafts
+   may make conclusions, predictions, even advice. The `no-advice.sh` gate
+   exists and any goal can opt into it via its `verify:` line; default is off.
+3. **Cite verification** mandatory at the INTEGRATION step only (not per
+   per-section draft): the integrator runs `swiss-cite-exists` + `cite-support`
+   and rejects the artifact on any unverified cite.
+4. **Peer-counsel-reviewer** optional; the orchestrator chooses per goal.
+5. **Data scope**: no restriction. Goals can take any input the operator
+   chooses (public domain, fictional, confidential). Operator manages
+   confidentiality.
+6. **Off-limits**: same as any goal; no legal-specific operational restrictions.
+   The goal brief sets its own off-limits and scope per the existing
+   `check-scope.sh` mechanism.
+
+The user explicitly traded a structurally-fortified legal mode for a generic
+non-code capability with legal as one worked example. Cite-verification at
+integration + default disclaimer remain the structural safety; the rest moves to
+operator judgement per goal.
+
+**Files to ship in the MVP** (no core changes):
+- `roles/`: `case-analyst.md`, `legal-researcher.md`, `drafter.md`,
+  `citation-verifier.md`, `peer-counsel-reviewer.md`, `disclaimer-officer.md`,
+  `doc-integrator.md` (in existing role-file shape).
+- `bin/gates/`: the 9 gate scripts above.
+- `bin/tools/swiss-law-lookup.sh`.
+- `templates/`: `legal-rubric.md`, `legal-memo-template.md`,
+  `reference-legal.docx` (pandoc reference doc with cover-page disclaimer),
+  `bibliography.csl` (Swiss legal style).
+- `goals/_example-legal-case-prep.md`: the sample pilot goal (sample employment
+  contract under CO 319+).
+- Light additions to `roles/_TEMPLATE.md` (lane-discipline paragraph + non-code
+  gate hint per Agent 3) and a paragraph each in `CLAUDE.md` / `QUICKSTART.md`.
+
+**Expected pilot output.** A ~10-15 page memorandum (DOCX + PDF) on a sample
+Swiss employment-contract review question, multilingual sources cited in English
+prose with original-language quotes for key terms, all gates green, cover-page
+disclaimer, handed to a qualified human lawyer for final review.
+
+**Status.** Plan finalized 2026-05-24 from 4 parallel research agents +
+operator clarifications. Not built yet.
+
+---
+
 ## Prior-art findings (2026-05-24, reference for B2-B5)
 
 ### Strategic headline: Anthropic is building into this space
