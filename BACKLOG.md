@@ -7,29 +7,6 @@ reinvent.
 
 ---
 
-## B1 - Operator self-driving + quickstart  (DONE 2026-05-24)
-
-**Done:** in-session questions + recovery-aware `run.sh` shipped earlier; the
-operator guide + one-page cheat-sheet is now `QUICKSTART.md` at the repo root.
-
-**What.** A documented, smooth path for a human to run a complex task end to end:
-start the orchestrator, have it bring up tmux, switch between role windows,
-monitor them, answer the orchestrator's questions, tear down cleanly.
-
-**Why.** The flow already works (`run.sh`, `attach.sh`, `team-status.sh`,
-prefix+number to switch windows) but is undocumented and only reconstructable
-from the scripts. A first-time operator cannot drive it without a guide.
-
-**Scope / considerations.**
-- A QUICKSTART / operator guide and a one-page cheat-sheet (keys, monitoring
-  commands, how to respond to the READY gate and approval menus).
-- Optional: a legend or status line in the team tmux so windows are self-explaining.
-- Smooth the attach + monitor experience for first-timers.
-
-**Depends on.** Nothing. Smallest item; good first deliverable.
-
----
-
 ## B2 - First-class background / autonomous mode
 
 **What.** A single command that scaffolds, launches, and runs a goal to
@@ -128,20 +105,7 @@ helps B3.
 
 ---
 
-## Cross-cutting - Prior-art research (precedes build)
-
-Before building B1-B5, research whether good solutions already exist and should
-be adopted or integrated rather than reinvented: coding multi-agent frameworks;
-Claude Code native subagents and agent teams; Claude Code official **Routines**
-and remote/cloud agents (scheduling, cloud execution: overlap vs our local
-team pattern); tmux- or Claude-based orchestrators; agent-to-agent messaging
-(A2A, MCP); remote/mobile control of coding agents; non-code multi-agent systems
-(research, writing, slides). Status: done 2026-05-24 (five parallel research
-agents). Findings below.
-
----
-
-## Prior-art findings (2026-05-24)
+## Prior-art findings (2026-05-24, reference for B2-B5)
 
 ### Strategic headline: Anthropic is building into this space
 
