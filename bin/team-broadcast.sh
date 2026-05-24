@@ -15,7 +15,7 @@ set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
-active="$repo/.team/active"
+active="$TEAM_DIR/active"
 msg="${1:?usage: team-broadcast.sh '<message>'}"
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 [ -f "$active" ] || { echo "no roles recorded (.team/active). Nothing to broadcast to." >&2; exit 1; }

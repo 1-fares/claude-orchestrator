@@ -18,7 +18,7 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 session="$TEAM_SESSION"
-active="$repo/.team/active"
+active="$TEAM_DIR/active"
 graceful=1
 [ "${1:-}" = "--no-graceful" ] && graceful=0
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }

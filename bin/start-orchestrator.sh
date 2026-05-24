@@ -42,11 +42,11 @@ if [ -n "$goal" ]; then
   goal_line="Read the goal at $goal_abs."
 fi
 
-mkdir -p "$repo/.team"
+mkdir -p "$TEAM_DIR"
 # Pre-trust the clone so the orchestrator does not stop at the workspace-trust prompt.
 "$repo/bin/trust-workdir.sh" "$repo" >/dev/null 2>&1 || true
 
-pf="$repo/.team/orchestrator.prompt"
+pf="$TEAM_DIR/orchestrator.prompt"
 cat >"$pf" <<EOF
 You are the orchestrator of a Claude Code dev team. Do these in order:
 1. Join the team bus: /is c orchestrator
@@ -64,6 +64,7 @@ You are the orchestrator of a Claude Code dev team. Do these in order:
 EOF
 
 export ORCH_HOME="$repo" INTER_SESSION_PORT="$TEAM_PORT"
+[ -n "${TEAM_RUN_ID:-}" ] && export TEAM_RUN_ID
 
 if [ "$mode" = foreground ]; then
   echo "Starting orchestrator here (bus port $TEAM_PORT). It will spawn roles into"
@@ -76,7 +77,9 @@ fi
 # Default (tmux) mode: orchestrator as window 0 of the team session; roles join
 # as windows 1, 2, ... so Ctrl-b <number> switches between them in one session.
 command -v tmux >/dev/null || { echo "tmux not installed (use --foreground)" >&2; exit 1; }
-launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT") && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
+launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT")"
+[ -n "${TEAM_RUN_ID:-}" ] && launch="$launch TEAM_RUN_ID=$(printf %q "$TEAM_RUN_ID")"
+launch="$launch && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
 tmux new-session -d -s "$TEAM_SESSION" -n orchestrator "bash -lc $(printf %q "$launch")"
 echo "Orchestrator + roles will share tmux session '$TEAM_SESSION' (bus port $TEAM_PORT)."
 echo "Attach now and talk to the orchestrator (Ctrl-b <number> switches to roles):"

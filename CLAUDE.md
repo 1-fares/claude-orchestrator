@@ -109,7 +109,11 @@ file is the portable version of the same discipline.
   inject to all roles from outside (honors `pause:`/`resume:`/`priority:`).
   `bin/team-logs.sh`: per-role history from the bus.
 - `bin/verify-unit.sh`, `bin/check-scope.sh`: the gates. `bin/team-env.sh`:
-  per-clone bus port + tmux session (sourced by the others).
+  per-clone bus port + tmux session, with optional **per-run isolation** when
+  `TEAM_RUN_ID` is set (bin/run.sh allocates one per invocation and spawned
+  children inherit it), so parallel teams in one clone get their own port,
+  session, and state dir (`.team-<run-id>/`) and do not collide on names. No
+  `TEAM_RUN_ID` = today's per-clone behavior (state in `.team/`).
 - `bin/preflight-deploy.sh`, `bin/panic.sh`, `bin/watchdog.sh`, `bin/worktree.sh`,
   `bin/trust-workdir.sh` (pre-accept the workspace-trust prompt for a dir).
 

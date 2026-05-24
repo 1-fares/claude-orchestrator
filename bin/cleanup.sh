@@ -65,13 +65,13 @@ else
 fi
 
 # 2. Pids recorded in .team/active (claude-guarded), if any.
-if [ -f "$repo/.team/active" ]; then
+if [ -f "$TEAM_DIR/active" ]; then
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
     if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then
       tag "reap recorded role '$role' (pid $pid)"; killtree "$pid" $(descendants "$pid")
     fi
-  done < "$repo/.team/active"
+  done < "$TEAM_DIR/active"
 fi
 
 # 3. Orphaned role sessions: a claude process tree running an /is client with no
@@ -133,9 +133,9 @@ for pf in "$HOME/.claude/data/inter-session/"server.*.pid; do
 done
 
 # 5. Run state.
-if [ -d "$repo/.team" ]; then
+if [ -d "$TEAM_DIR" ]; then
   tag "remove .team/ (ledger, prompts, evidence, active)"
-  [ "$DRY" = 0 ] && rm -rf "$repo/.team"
+  [ "$DRY" = 0 ] && rm -rf "$TEAM_DIR"
 fi
 
 # 6. Purge per-clone config and untracked session artifacts (back to committed clone).

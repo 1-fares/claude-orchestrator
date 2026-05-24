@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
-# run.sh: one command to start (or recover) a run.
+# run.sh: one command to start (or attach) a run.
 #
-# Default (no args): start the orchestrator and attach you. The orchestrator then
-# asks you for the working tree and goal IN THE SESSION (visible, recorded,
-# recoverable), so your input is part of the transcript, not a dead shell prompt.
+# Default (no args): allocate a fresh TEAM_RUN_ID, start the orchestrator, and
+# attach. The orchestrator then asks you for the working tree and goal IN THE
+# SESSION (visible, recorded, recoverable), so your input is part of the
+# transcript, not a dead shell prompt.
 #
-# Recovery is built in. On start, run.sh:
-#   - if a run is already live: offers to ATTACH (closing a terminal only detaches,
-#     the team keeps running) or RESTART fresh;
-#   - else, if a previous run left leftovers (a misfire, ctrl-d, orphans): offers
-#     to clean them first via bin/cleanup.sh (which only ever touches THIS clone's
-#     team, never your other Claude sessions).
+# Per-run isolation: each invocation gets its own TEAM_RUN_ID and therefore its
+# own bus port, tmux session, and state dir, so several parallel teams in this
+# clone do not collide. Pre-set TEAM_RUN_ID=<id> to address a specific run.
+#
+# Recovery is built in. On start, run.sh discovers any live runs on the team
+# tmux socket and offers to ATTACH (closing a terminal only detaches; the team
+# keeps running) or start a NEW parallel run.
 #
 # Power / scripted use (skips the in-session questions):
-#   bin/run.sh "what to build"            # inline goal; uses the saved/this-clone target
-#   bin/run.sh ~/projects/app             # set the target, orchestrator asks the goal
+#   bin/run.sh "what to build"            # inline goal, uses saved/this-clone target
+#   bin/run.sh ~/projects/app             # set target; orchestrator asks the goal
 #   bin/run.sh ~/projects/app "what"      # target + inline goal
-#   bin/run.sh --dir PATH ["what"]        # explicit target form
+#   bin/run.sh --dir PATH ["what"]
 #   bin/run.sh --retarget                 # forget the saved target
+#   TEAM_RUN_ID=<id> bin/run.sh ...       # operate on a specific run
 
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Per-run isolation: allocate a unique run-id if not given. Spawned children
+# inherit TEAM_RUN_ID via env so every lifecycle script targets this run.
+: "${TEAM_RUN_ID:=r$(date +%s)$$}"
+export TEAM_RUN_ID
 . "$repo/bin/team-env.sh"
 conf="$repo/project.conf"
 
@@ -34,7 +41,6 @@ while [ $# -gt 0 ]; do
     *) break ;;
   esac
 done
-# A bare first argument that looks like a path is the target; otherwise it's the goal.
 if [ -z "$dir_arg" ] && [ -n "${1:-}" ]; then
   case "$1" in
     /*|~|"~/"*|./*|../*) dir_arg="$1"; shift ;;
@@ -44,7 +50,6 @@ fi
 want_arg="${1:-}"
 [ "$retarget" = 1 ] && rm -f "$conf"
 
-# resolve_target <path>: sets WORKDIR + EXISTING, or returns non-zero with a message.
 resolve_target() {
   local wd="$1"
   case "$wd" in "~") wd="$HOME" ;; "~/"*) wd="$HOME/${wd#\~/}" ;; esac
@@ -70,33 +75,33 @@ resolve_target() {
   fi
 }
 
-# --- 0. Recovery preflight: reattach, restart, or clean leftovers --------------
-if command tmux -L "$TEAM_TMUX" has-session -t "$TEAM_SESSION" 2>/dev/null; then
+# --- 0. Recovery preflight: discover any live runs in this clone --------------
+live=$(command tmux -L "$TEAM_TMUX" list-sessions -F '#{session_name}' 2>/dev/null | grep -E '^orch-' || true)
+if [ -n "$live" ]; then
+  n=$(printf '%s\n' "$live" | wc -l)
   if [ -t 0 ]; then
-    echo "A run is already live in tmux session '$TEAM_SESSION'."
-    echo "  (Closing a terminal only detaches; the team keeps running. Reattach to resume.)"
-    read -rp "[a]ttach / [r]estart fresh / [q]uit? [a] " ans
-    case "${ans:-a}" in
-      r|R) "$repo/bin/cleanup.sh" --force --purge >/dev/null && echo "cleaned; starting fresh." ;;
-      q|Q) exit 0 ;;
-      *)   exec "$repo/bin/attach.sh" ;;
-    esac
-  else
-    echo "A run is already live. attach: bin/attach.sh   restart: bin/cleanup.sh --force && bin/run.sh" >&2; exit 1
-  fi
-else
-  # No live session; check for leftovers from a misfired/ended run.
-  if "$repo/bin/cleanup.sh" 2>/dev/null | grep -q '\[would\]'; then
-    if [ -t 0 ]; then
-      echo "Leftovers from a previous run were found:"
-      "$repo/bin/cleanup.sh" 2>/dev/null | grep -E '\[would\]|LEFT RUNNING|NOTE:' | sed 's/^/  /'
-      read -rp "Clean this clone's leftovers before starting? [Y/n] " c
-      case "${c:-y}" in n|N) : ;; *) "$repo/bin/cleanup.sh" --force --purge >/dev/null && echo "cleaned." ;; esac
+    if [ "$n" -eq 1 ]; then
+      echo "A run is live: $live"
+      echo "  (Closing a terminal only detaches; the team keeps running. Reattach to resume.)"
+      read -rp "[a]ttach / [s]tart a new parallel run / [q]uit? [a] " ans
+      case "${ans:-a}" in
+        s|S) : ;;
+        q|Q) exit 0 ;;
+        *)   exec "$repo/bin/attach.sh" "$live" ;;
+      esac
+    else
+      echo "$n runs are live:"
+      printf '%s\n' "$live" | sed 's/^/  /'
+      read -rp "Session to attach (Enter = start a new parallel run): " sel
+      [ -n "$sel" ] && exec "$repo/bin/attach.sh" "$sel"
     fi
+  else
+    echo "Live run(s):" >&2; printf '%s\n' "$live" | sed 's/^/  /' >&2
+    echo "(Non-interactive; starting a new parallel run as $TEAM_RUN_ID. Attach an existing one with: bin/attach.sh <session>)" >&2
   fi
 fi
 
-# --- 1. Optional target/goal from args (power path; skips the in-session questions)
+# --- 1. Optional target/goal from args (power path; skips in-session questions) -
 WORKDIR=""; EXISTING=0
 [ -f "$conf" ] && . "$conf"
 if [ -n "$dir_arg" ]; then
@@ -114,11 +119,11 @@ if [ -n "$want_arg" ]; then
   echo "goal: $goal_file"
 fi
 
-# --- 2. Launch the orchestrator (it elicits the goal in-session if none given) ---
+# --- 2. Launch the orchestrator (elicits the goal in-session if none given) ---
 "$repo/bin/start-orchestrator.sh" ${goal_file:+"$goal_file"} >/dev/null
 if [ -n "$goal_file" ]; then
-  echo "Orchestrator starting with goal $goal_file."
+  echo "Orchestrator starting (run $TEAM_RUN_ID, session $TEAM_SESSION) with goal $goal_file."
 else
-  echo "Orchestrator starting. It will ask you for the working tree and goal in the session."
+  echo "Orchestrator starting (run $TEAM_RUN_ID, session $TEAM_SESSION). It will ask you for the working tree and goal in the session."
 fi
-if [ -t 1 ]; then sleep 1; exec "$repo/bin/attach.sh"; else echo "Attach with: bin/attach.sh"; fi
+if [ -t 1 ]; then sleep 1; exec "$repo/bin/attach.sh"; else echo "Attach with: TEAM_RUN_ID=$TEAM_RUN_ID bin/attach.sh"; fi

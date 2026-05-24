@@ -86,7 +86,7 @@ model_for() {
   esac
 }
 
-mkdir -p "$repo/.team"
+mkdir -p "$TEAM_DIR"
 
 # Pre-trust the working tree so interactive roles don't stop at Claude Code's
 # workspace-trust prompt (auto-skipped only in -p mode, which roles can't use).
@@ -109,13 +109,13 @@ fi
 
 # Reap dead entries from a previous run so teardown never group-kills a recycled
 # pid; keep live entries so a second launch can add roles to a running team.
-if [ -f "$repo/.team/active" ]; then
-  _tmp="$repo/.team/active.$$"; : > "$_tmp"
+if [ -f "$TEAM_DIR/active" ]; then
+  _tmp="$TEAM_DIR/active.$$"; : > "$_tmp"
   while IFS=$'\t' read -r _pid _wid _role; do
     [ -n "${_pid:-}" ] && kill -0 "$_pid" 2>/dev/null \
       && printf '%s\t%s\t%s\n' "$_pid" "$_wid" "$_role" >> "$_tmp"
-  done < "$repo/.team/active"
-  mv "$_tmp" "$repo/.team/active"
+  done < "$TEAM_DIR/active"
+  mv "$_tmp" "$TEAM_DIR/active"
 fi
 
 # Any role can be specified on the fly. If a role has no roles/<base>.md, create
@@ -164,7 +164,7 @@ start_one() {
 
   # Write the initial prompt to a file; keeps shell quoting simple and the
   # prompt thin (the substance lives in CLAUDE.md, the role file, and the goal).
-  pf="$repo/.team/$role.prompt"
+  pf="$TEAM_DIR/$role.prompt"
   cat >"$pf" <<EOF
 You are "$role" on an orchestrated Claude Code dev team.
 Your working tree (the code you operate on) is: $workdir_abs
@@ -187,6 +187,8 @@ EOF
     launch="$launch && export INTER_SESSION_PORT=$(printf %q "$INTER_SESSION_PORT")"
   [ -n "${INTER_SESSION_IDLE_MINUTES:-}" ] && \
     launch="$launch && export INTER_SESSION_IDLE_MINUTES=$(printf %q "$INTER_SESSION_IDLE_MINUTES")"
+  [ -n "${TEAM_RUN_ID:-}" ] && \
+    launch="$launch && export TEAM_RUN_ID=$(printf %q "$TEAM_RUN_ID")"
   launch="$launch && exec claude $flags $model_flag \"\$(cat $(printf %q "$pf"))\""
 
   # Record pane_pid + window id so stop-team.sh can kill exactly what we spawned.
@@ -205,7 +207,7 @@ EOF
     info="$(tmux new-session -d -s "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
   fi
   pid="${info%% *}"; wid="${info##* }"
-  printf '%s\t%s\t%s\n' "$pid" "$wid" "$role" >> "$repo/.team/active"
+  printf '%s\t%s\t%s\n' "$pid" "$wid" "$role" >> "$TEAM_DIR/active"
   echo "launched $role (pid $pid, role: $rolefile, model: ${model:-default}, workdir: $workdir_abs)"
 }
 

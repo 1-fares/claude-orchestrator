@@ -29,6 +29,7 @@
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$repo/bin/team-env.sh"
 unit="${1:?usage: check-scope.sh <unit> [base-ref]}"
 base="${2:-}"
 brief="$repo/tasks/$unit.md"
@@ -38,7 +39,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not a git tree: $
 # Resolve a per-unit baseline so the changed-set reflects THIS unit's work, not
 # the whole tree. Order: explicit base-ref arg, recorded .team/base/<unit>, the
 # upstream merge-base. A stale/garbage ref is ignored.
-basefile="$repo/.team/base/$unit"
+basefile="$TEAM_DIR/base/$unit"
 [ -n "$base" ] || { [ -f "$basefile" ] && base="$(cat "$basefile" 2>/dev/null || true)"; }
 [ -n "$base" ] || base="$(git merge-base HEAD '@{upstream}' 2>/dev/null || true)"
 [ -n "$base" ] && ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1 && base=""

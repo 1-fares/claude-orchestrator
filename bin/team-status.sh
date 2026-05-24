@@ -10,7 +10,7 @@ set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
-active="$repo/.team/active"
+active="$TEAM_DIR/active"
 msglog="$HOME/.claude/data/inter-session/messages.log"
 
 echo "team: $TEAM_SESSION   bus port: $TEAM_PORT"

@@ -12,7 +12,7 @@ set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
-active="$repo/.team/active"
+active="$TEAM_DIR/active"
 msglog="$HOME/.claude/data/inter-session/messages.log"
 [ -f "$msglog" ] || { echo "no messages.log yet" >&2; exit 0; }
 
@@ -48,8 +48,8 @@ PY
 
 case "${1:-}" in
   --sync)
-    mkdir -p "$repo/.team/log"
-    for r in $(roles_of_team); do render "$r" 100000 > "$repo/.team/log/$r.log"; echo "wrote .team/log/$r.log"; done
+    mkdir -p "$TEAM_DIR/log"
+    for r in $(roles_of_team); do render "$r" 100000 > "$TEAM_DIR/log/$r.log"; echo "wrote .team/log/$r.log"; done
     ;;
   "") render "" 40 ;;
   *)  render "$1" "${2:-40}" ;;

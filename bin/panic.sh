@@ -36,15 +36,15 @@ if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
 fi
 
 # Any recorded pids not in the session (e.g. a detached launch).
-if [ -f "$repo/.team/active" ]; then
+if [ -f "$TEAM_DIR/active" ]; then
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
     if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then
       kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
       echo "panic: killed $role (pid $pid)"; killed=1
     fi
-  done < "$repo/.team/active"
-  rm -f "$repo/.team/active"
+  done < "$TEAM_DIR/active"
+  rm -f "$TEAM_DIR/active"
 fi
 
 # This team's /is bus server (scoped to TEAM_PORT).
