@@ -71,14 +71,14 @@ socket and offers to attach or start a new parallel run.
 The system is domain-neutral. Beyond coding, the team can do research, writing,
 slide content, legal analysis, anything the operator briefs.
 
-- **Reference role library** at `roles/`: generic (`researcher`, `writer`,
-  `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`, `doc-integrator`)
-  and legal specialists (`paralegal`, `lawyer`, `swiss-law-specialist`,
-  `employment-lawyer`, `corporate-lawyer`, `real-estate-lawyer`,
-  `tenancy-lawyer`, `criminal-lawyer`, `contract-lawyer`,
-  `data-protection-lawyer`, `law-researcher`). Name any of them in your team at
-  READY. Any role you name that has no file gets auto-authored by the
-  orchestrator from `roles/_TEMPLATE.md`.
+- **Reference role library** at `roles/`. The curated set codifies the
+  structural pipeline (`researcher`, `writer`, `editor`, `fact-checker`,
+  `copy-editor`, `peer-reviewer`, `doc-integrator`) and three cross-cutting
+  legal references (`paralegal`, `lawyer`, `swiss-law-specialist`). Anything
+  more specific you can name on the fly: `employment-lawyer1`, `tenancy-lawyer1`,
+  `market-analyst1`, `book-editor1`, `course-designer1`, whatever fits the goal.
+  Any role name with no file gets auto-authored by the orchestrator from
+  `roles/_TEMPLATE.md` with a prompt tailored to that role and your goal.
 - **Gate library** at `bin/gates/`: wrap non-binary checks as the unit's
   `verify:` line.
 
