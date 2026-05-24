@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# run.sh: one command to start a run. Sets up the target project (new or
-# existing), writes the goal brief, starts the team in one tmux session, and
-# drops you into the orchestrator. The target is remembered per clone (in
-# project.conf), so repeat runs only ask for the goal.
+# run.sh: one command to start (or recover) a run.
 #
-# Usage:
-#   bin/run.sh                          # interactive (asks target on first run, then goal)
-#   bin/run.sh "what to build"          # inline goal, uses the saved target
-#   bin/run.sh ~/projects/app           # set the target (a path), then ask the goal
-#   bin/run.sh ~/projects/app "what"    # target + inline goal
-#   bin/run.sh --dir PATH ["what"]      # explicit target form
-#   bin/run.sh --retarget               # forget the saved target
+# Default (no args): start the orchestrator and attach you. The orchestrator then
+# asks you for the working tree and goal IN THE SESSION (visible, recorded,
+# recoverable), so your input is part of the transcript, not a dead shell prompt.
 #
-# Target resolution (a given path, or the first-run prompt):
-#   - existing git repo      -> used as-is
-#   - a path that does not exist -> created as a new git repo
-#   - existing non-git dir   -> offered a `git init` (the team needs git)
+# Recovery is built in. On start, run.sh:
+#   - if a run is already live: offers to ATTACH (closing a terminal only detaches,
+#     the team keeps running) or RESTART fresh;
+#   - else, if a previous run left leftovers (a misfire, ctrl-d, orphans): offers
+#     to clean them first via bin/cleanup.sh (which only ever touches THIS clone's
+#     team, never your other Claude sessions).
+#
+# Power / scripted use (skips the in-session questions):
+#   bin/run.sh "what to build"            # inline goal; uses the saved/this-clone target
+#   bin/run.sh ~/projects/app             # set the target, orchestrator asks the goal
+#   bin/run.sh ~/projects/app "what"      # target + inline goal
+#   bin/run.sh --dir PATH ["what"]        # explicit target form
+#   bin/run.sh --retarget                 # forget the saved target
 
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -68,58 +70,55 @@ resolve_target() {
   fi
 }
 
-# 0. Active run? offer to reset.
+# --- 0. Recovery preflight: reattach, restart, or clean leftovers --------------
 if command tmux -L "$TEAM_TMUX" has-session -t "$TEAM_SESSION" 2>/dev/null; then
   if [ -t 0 ]; then
-    read -rp "A team session is already running. Reset it and start fresh? [y/N] " a
-    case "$a" in y|Y) "$repo/bin/reset.sh" >/dev/null ;; *) echo "Kept it. Attach: bin/attach.sh"; exit 0 ;; esac
+    echo "A run is already live in tmux session '$TEAM_SESSION'."
+    echo "  (Closing a terminal only detaches; the team keeps running. Reattach to resume.)"
+    read -rp "[a]ttach / [r]estart fresh / [q]uit? [a] " ans
+    case "${ans:-a}" in
+      r|R) "$repo/bin/cleanup.sh" --force --purge >/dev/null && echo "cleaned; starting fresh." ;;
+      q|Q) exit 0 ;;
+      *)   exec "$repo/bin/attach.sh" ;;
+    esac
   else
-    echo "A team session is already running. attach: bin/attach.sh  reset: bin/reset.sh" >&2; exit 1
+    echo "A run is already live. attach: bin/attach.sh   restart: bin/cleanup.sh --force && bin/run.sh" >&2; exit 1
+  fi
+else
+  # No live session; check for leftovers from a misfired/ended run.
+  if "$repo/bin/cleanup.sh" 2>/dev/null | grep -q '\[would\]'; then
+    if [ -t 0 ]; then
+      echo "Leftovers from a previous run were found:"
+      "$repo/bin/cleanup.sh" 2>/dev/null | grep -E '\[would\]|LEFT RUNNING|NOTE:' | sed 's/^/  /'
+      read -rp "Clean this clone's leftovers before starting? [Y/n] " c
+      case "${c:-y}" in n|N) : ;; *) "$repo/bin/cleanup.sh" --force --purge >/dev/null && echo "cleaned." ;; esac
+    fi
   fi
 fi
 
-# 1. Target: from --dir/path arg, else saved, else ask.
+# --- 1. Optional target/goal from args (power path; skips the in-session questions)
 WORKDIR=""; EXISTING=0
 [ -f "$conf" ] && . "$conf"
 if [ -n "$dir_arg" ]; then
   resolve_target "$dir_arg" || exit $?
   { printf 'WORKDIR=%q\n' "$WORKDIR"; printf 'EXISTING=%q\n' "$EXISTING"; } > "$conf"
-  echo "(Saved as this clone's target; future runs reuse it. Change with --dir or --retarget.)"
-elif [ -z "${WORKDIR:-}" ]; then
-  echo "First run in this clone. Which code should the team work on?"
-  echo "  - path to an EXISTING project, or a NEW path to create,"
-  echo "  - or leave blank to build inside this clone (greenfield)."
-  read -rp "Path: " wd
-  if [ -z "$wd" ]; then WORKDIR="$repo"; EXISTING=0; else resolve_target "$wd" || exit $?; fi
-  { printf 'WORKDIR=%q\n' "$WORKDIR"; printf 'EXISTING=%q\n' "$EXISTING"; } > "$conf"
-  echo "(Saved target to project.conf; future runs skip this.)"
-else
-  echo "Target: $WORKDIR"
+  echo "(Saved as this clone's target; the orchestrator will offer it as the default.)"
 fi
 
-# 2. The goal.
+goal_file=""
 if [ -n "$want_arg" ]; then
-  gname=""; gwant="$want_arg"; gnotes=""; gteam=""
-else
-  read -rp "Short name for this goal (blank = auto): " gname
-  echo "What do you want built or changed? (end with an empty line)"
-  gwant="$(while IFS= read -r l; do [ -z "$l" ] && break; printf '%s\n' "$l"; done)"
-  read -rp "Constraints / must-haves (optional): " gnotes
-  read -rp "Team hint (optional): " gteam
+  gname="goal-$(date +%H%M%S)"
+  wd_arg="${WORKDIR:-}"; [ "$wd_arg" = "$repo" ] && wd_arg=""
+  "$repo/bin/new-goal.sh" --name "$gname" --workdir "$wd_arg" --want "$want_arg" >/dev/null
+  goal_file="goals/$gname.md"
+  echo "goal: $goal_file"
 fi
-[ -n "$gwant" ] || { echo "a goal description is required" >&2; exit 1; }
-gname="$(printf '%s' "${gname:-goal-$(date +%H%M%S)}" | tr ' ' '-')"
-[ -e "$repo/goals/$gname.md" ] && gname="$gname-$(date +%H%M%S)"
 
-# 3. Write the goal brief (blank workdir => this clone). Reuse new-goal.sh.
-wd_arg="$WORKDIR"; [ "$WORKDIR" = "$repo" ] && wd_arg=""
-args=(--name "$gname" --workdir "$wd_arg" --want "$gwant")
-[ -n "$gnotes" ] && args+=(--notes "$gnotes")
-[ -n "$gteam" ]  && args+=(--team "$gteam")
-"$repo/bin/new-goal.sh" "${args[@]}" >/dev/null
-echo "goal: goals/$gname.md"
-
-# 4. Start the team and drop into the orchestrator.
-"$repo/bin/start-orchestrator.sh" "goals/$gname.md" >/dev/null
-echo "Team session started. You will land in the orchestrator; Ctrl-b/your-prefix <n> for roles; say 'go'."
+# --- 2. Launch the orchestrator (it elicits the goal in-session if none given) ---
+"$repo/bin/start-orchestrator.sh" ${goal_file:+"$goal_file"} >/dev/null
+if [ -n "$goal_file" ]; then
+  echo "Orchestrator starting with goal $goal_file."
+else
+  echo "Orchestrator starting. It will ask you for the working tree and goal in the session."
+fi
 if [ -t 1 ]; then sleep 1; exec "$repo/bin/attach.sh"; else echo "Attach with: bin/attach.sh"; fi

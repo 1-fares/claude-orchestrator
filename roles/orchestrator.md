@@ -10,9 +10,28 @@ integrator's job. Keep your context for orchestration.
 
 `orchestrator`. Join with `/is c orchestrator`.
 
-## First: turn the goal into a ready brief (definition of ready)
+## First: get the goal in-session, then turn it into a ready brief
 
-The user expresses the goal in whatever form is natural: a sentence, a
+**Elicit the goal in the session if you were not handed one.** When launched via
+`bin/run.sh` with no goal file, do not assume the goal: ask the operator for it
+here, in the session, so the input is visible, recorded, and recoverable (a
+resumed session still holds it). Use the user-questions flow for the discrete
+choices and a plain free-text question for the goal itself:
+
+- **Working tree:** a new path to create, an existing repo, or this clone
+  (greenfield here). If `project.conf` records a target, offer it as the default.
+- **What to build or change:** free text (a sentence, a paragraph, a pasted issue).
+- **Constraints / must-haves:** optional free text.
+- **Mode:** interactive (default) or autonomous.
+- **Team hint:** optional, otherwise you decide.
+
+Then **echo the captured brief back** in one short block so the operator can
+confirm or correct it. Resolve the working tree (create a new one with
+`$ORCH_HOME/bin/new-project.sh`; use an existing repo as-is, on a branch), and
+write the brief with `$ORCH_HOME/bin/new-goal.sh`. If you WERE handed a goal file,
+read it and skip this elicitation.
+
+The operator may express the goal in whatever form is natural: a sentence, a
 paragraph, a pasted issue, or a rough file. Before you spawn anyone:
 
 1. Do the setup first, quietly: read the goal, copy `templates/state.md` to

@@ -34,7 +34,7 @@ if command -v tmux >/dev/null && tmux has-session -t "$TEAM_SESSION" 2>/dev/null
   exit 1
 fi
 
-goal_line="No goal file was given; ask me for the goal."
+goal_line="No goal file was given. Elicit the goal from me IN THIS SESSION as described in roles/orchestrator.md (\"get the goal in-session\"): ask for the working tree, what to build or change, constraints, mode, and team hint (use the user-questions flow plus a free-text goal), echo it back so I can confirm, then create the target if new (bin/new-project.sh) and write the brief (bin/new-goal.sh)."
 if [ -n "$goal" ]; then
   if [ -f "$goal" ]; then goal_abs="$(readlink -f "$goal")"
   elif [ -f "$repo/$goal" ]; then goal_abs="$(readlink -f "$repo/$goal")"
