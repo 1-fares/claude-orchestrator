@@ -93,8 +93,14 @@ speed. On API-paid remote agents, invert it: bulk on Sonnet, Opus to check. Tune
 
 ### The message bus (`/is`)
 
-Coordination runs on the [`/is` skill](../claude-code-inter-session). Each session
-joins with a role name, then messages flow peer-to-peer:
+Coordination runs on the [`/is` skill](../claude-code-inter-session). `/is` is a
+**separate sibling project**, maintained and used independently of this
+orchestrator, so install it alongside this clone (a sibling directory), not inside
+it. It is a fork of
+[yilunzhang/claude-code-inter-session](https://github.com/yilunzhang/claude-code-inter-session)
+(MIT, original author Yilun Zhang), extended here with file-pointer message
+delivery and a short `/is` invocation. Each session joins with a role name, then
+messages flow peer-to-peer:
 
 ```
 /is c orchestrator
@@ -328,7 +334,10 @@ ledger), multi-team isolation (per-clone bus port and tmux session). Remaining:
 
 ## See also
 
-- [`../claude-code-inter-session`](../claude-code-inter-session): the `/is` bus.
+- [`../claude-code-inter-session`](../claude-code-inter-session): the `/is` bus, a
+  separate sibling project (install alongside this clone, not bundled). Fork of
+  [yilunzhang/claude-code-inter-session](https://github.com/yilunzhang/claude-code-inter-session)
+  (MIT, original author Yilun Zhang).
 - [agent teams](https://code.claude.com/docs/en/agent-teams),
   [routines](https://code.claude.com/docs/en/routines),
   [`/goal`](https://code.claude.com/docs/en/goal),
