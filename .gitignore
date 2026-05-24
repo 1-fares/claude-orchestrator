@@ -1,6 +1,9 @@
 # Transient runtime state written by bin/launch-team.sh and bin/stop-team.sh:
 # per-role launch prompts and the active-team record (pids, tmux windows).
+# `.team/` is the legacy single-team mode; `.team-<run-id>/` is the per-run mode
+# (TEAM_RUN_ID set), so both patterns are ignored.
 .team/
+.team-*/
 
 # Per-clone target config written by bin/run.sh (local, not for the template).
 project.conf
