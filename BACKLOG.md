@@ -7,7 +7,10 @@ reinvent.
 
 ---
 
-## B1 - Operator self-driving + quickstart
+## B1 - Operator self-driving + quickstart  (DONE 2026-05-24)
+
+**Done:** in-session questions + recovery-aware `run.sh` shipped earlier; the
+operator guide + one-page cheat-sheet is now `QUICKSTART.md` at the repo root.
 
 **What.** A documented, smooth path for a human to run a complex task end to end:
 start the orchestrator, have it bring up tmux, switch between role windows,
