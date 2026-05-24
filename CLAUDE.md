@@ -116,6 +116,18 @@ file is the portable version of the same discipline.
   `TEAM_RUN_ID` = today's per-clone behavior (state in `.team/`).
 - `bin/preflight-deploy.sh`, `bin/panic.sh`, `bin/watchdog.sh`, `bin/worktree.sh`,
   `bin/trust-workdir.sh` (pre-accept the workspace-trust prompt for a dir).
+- **Non-code substrate.** `roles/` ships generic non-code roles (`researcher`,
+  `writer`, `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`,
+  `doc-integrator`) and legal-specialist roles (`paralegal`, `lawyer`,
+  `law-researcher`, `swiss-law-specialist`, `employment-lawyer`,
+  `corporate-lawyer`, `real-estate-lawyer`, `tenancy-lawyer`,
+  `criminal-lawyer`, `contract-lawyer`, `data-protection-lawyer`). The
+  orchestrator can also author any role on-the-fly from `roles/_TEMPLATE.md`,
+  so the operator is free to pursue any topic with any role names. A pluggable
+  **gate library** at `bin/gates/` wraps non-binary checks as exit-0 commands
+  for non-code units (`structure`, `link-live`, `cite-resolve`, `md-lint`,
+  `office-wellformed`, `llm-judge`, `rubric-judge`, `cite-support`); a goal's
+  `tasks/<unit>.md` `verify:` line wires one of these.
 
 This is a template, cloned once per project (see [README.md](./README.md)
 "Distribution"), not a shared home for every project's goals. Implementation is

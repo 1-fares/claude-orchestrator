@@ -66,6 +66,41 @@ orphans (claude survives signals). Use `prefix d` to detach, or `bin/stop-team.s
 `run.sh` is itself recovery-aware: on start it detects any live run on the team
 socket and offers to attach or start a new parallel run.
 
+## Non-code work (any topic)
+
+The system is domain-neutral. Beyond coding, the team can do research, writing,
+slide content, legal analysis, anything the operator briefs.
+
+- **Reference role library** at `roles/`: generic (`researcher`, `writer`,
+  `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`, `doc-integrator`)
+  and legal specialists (`paralegal`, `lawyer`, `swiss-law-specialist`,
+  `employment-lawyer`, `corporate-lawyer`, `real-estate-lawyer`,
+  `tenancy-lawyer`, `criminal-lawyer`, `contract-lawyer`,
+  `data-protection-lawyer`, `law-researcher`). Name any of them in your team at
+  READY. Any role you name that has no file gets auto-authored by the
+  orchestrator from `roles/_TEMPLATE.md`.
+- **Gate library** at `bin/gates/`: wrap non-binary checks as the unit's
+  `verify:` line.
+
+  | Gate | What it checks |
+  |---|---|
+  | `structure.sh <art> <rules.yml>` | Required headings + word/section counts |
+  | `link-live.sh <path>` | Every URL in the artifact returns 2xx |
+  | `cite-resolve.sh <art> <bib>` | Every cite has a bibliography entry and vice versa |
+  | `md-lint.sh <path>` | Markdown well-formed (`markdownlint-cli2`) |
+  | `office-wellformed.sh <file>` | `.docx`/`.pptx` opens cleanly and has content |
+  | `llm-judge.sh <art> <rubric.md>` | LLM-judge against a rubric; K-vote, audit log |
+  | `rubric-judge.sh <art> <rubric.md>` | Thin wrapper on `llm-judge` for per-unit rubrics |
+  | `cite-support.sh <art>` | LLM-judge that cited sources support the claims |
+
+  Example `tasks/<unit>.md` `verify:` line:
+  `bash $ORCH_HOME/bin/gates/structure.sh draft.md rules.yml && bash $ORCH_HOME/bin/gates/cite-resolve.sh draft.md refs.md`
+- **Tools.** Pandoc (`pandoc --citeproc --bibliography=refs.bib --csl=style.csl
+  in.md -o out.docx`) for Markdown ↔ DOCX/PDF. GPT Researcher via the
+  `gptr-mcp` MCP server can be wired into a researcher role for web research.
+- **Domain overlays** (Swiss legal cite-verifier, RFP compliance matrix, etc.)
+  are added on demand; not in the substrate.
+
 ## Parallel runs (same clone)
 
 Every `bin/run.sh` invocation gets its own `TEAM_RUN_ID`, so its own bus port,

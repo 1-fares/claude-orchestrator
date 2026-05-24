@@ -24,7 +24,9 @@ below applies to every role.)
   than a sentence as a file pointer over `/is`, not inline.
 - **Stay in your lane.** Do this role's job, not the next role's. Cross-cutting or
   ambiguous decisions go back to the orchestrator as a `question:` rather than a
-  guess.
+  guess. When the orchestrator authors this role from the template, it should
+  name the adjacent roles (the upstream that feeds you, the downstream that
+  consumes your output) and the kinds of work this role explicitly does NOT do.
 - **Match the project's existing conventions** and keep changes surgical and
   within your declared scope. No drive-by edits.
 
@@ -35,9 +37,13 @@ below applies to every role.)
 - Gates before reporting done: always run
   `$ORCH_HOME/bin/check-scope.sh <unit>`; if your unit has an exit-0 verify
   command, run `$ORCH_HOME/bin/verify-unit.sh <unit>` too. For a non-code
-  deliverable (a document, a design, an analysis) the orchestrator may waive the
-  verify gate; capture your evidence (a file, a screenshot) under
-  `$ORCH_HOME/.team/evidence/` instead.
+  deliverable (a document, a design, an analysis), look first at the gate
+  library at `$ORCH_HOME/bin/gates/` (`structure`, `link-live`, `cite-resolve`,
+  `md-lint`, `office-wellformed`, `llm-judge`, `rubric-judge`, `cite-support`);
+  the unit's `verify:` line typically wires one of these. Only when none apply
+  does the verify gate get waived, and you must still capture concrete evidence
+  (the rendered file, a check log, a screenshot) under
+  `$ORCH_HOME/.team/evidence/<unit>/`.
 - Report `done:` only when the unit's acceptance is met and checked, with the
   artifact path and a one-line summary. Then yield; the `/is` monitor wakes you on
   the next message.
