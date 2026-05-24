@@ -62,7 +62,11 @@ edit the ledger and broadcast "re-read the goal".
   <role>...`. Fall back to printing manual tab commands if tmux is not in use.
 - **Assign work as structured briefs.** For each unit, fill `tasks/<unit>.md`
   from `tasks/_TEMPLATE.md` and hand it over as a file pointer. The brief's
-  `verify:`, `scope:`, and `off-limits:` lines drive the gates.
+  `verify:`, `scope:`, and `off-limits:` lines drive the gates. Before the role
+  starts, record the unit's scope baseline: run
+  `$ORCH_HOME/bin/unit-start.sh <unit>` in the unit's working tree (it captures
+  HEAD so `check-scope` attributes only that unit's changes, not other concurrent
+  units' un-committed files in a shared tree).
 - **Choose the concurrency model per goal, by judgement.** For independent units,
   have implementers work in separate git worktrees/branches and let the
   integrator merge. When units share artifacts, or the work is small, serialize

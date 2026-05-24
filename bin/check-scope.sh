@@ -11,9 +11,14 @@
 # (__pycache__, *.pyc, .pytest_cache, node_modules, .mypy_cache, .DS_Store) are
 # ignored.
 #
-# Note on serialized units in one tree: a unit's changed-set is everything not
-# committed, so it sweeps in any other un-committed unit's files. Commit each
-# unit before checking the next, or use per-unit git worktrees.
+# Per-unit attribution: the changed-set reflects THIS unit's work, derived from a
+# baseline ref (the unit's HEAD at assignment, recorded by bin/unit-start.sh into
+# .team/base/<unit>; falls back to an explicit base-ref arg, then the upstream
+# merge-base). With a baseline, only the unit's commits + staged + unstaged
+# changes are checked, so other un-committed units in a shared tree no longer
+# pollute the result. Without any baseline (true greenfield first unit), the
+# changed-set also includes untracked files, which are legitimately this unit's.
+# For parallel units, per-unit git worktrees remain the cleanest isolation.
 #
 # Usage: bin/check-scope.sh <unit> [base-ref]
 #   run from inside the unit's git working tree. base-ref defaults to the
@@ -30,15 +35,35 @@ brief="$repo/tasks/$unit.md"
 [ -f "$brief" ] || { echo "no task brief: tasks/$unit.md" >&2; exit 2; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not a git tree: $PWD" >&2; exit 2; }
 
+# Resolve a per-unit baseline so the changed-set reflects THIS unit's work, not
+# the whole tree. Order: explicit base-ref arg, recorded .team/base/<unit>, the
+# upstream merge-base. A stale/garbage ref is ignored.
+basefile="$repo/.team/base/$unit"
+[ -n "$base" ] || { [ -f "$basefile" ] && base="$(cat "$basefile" 2>/dev/null || true)"; }
 [ -n "$base" ] || base="$(git merge-base HEAD '@{upstream}' 2>/dev/null || true)"
+[ -n "$base" ] && ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1 && base=""
 
-changed="$({
-  [ -n "$base" ] && git diff --name-only "$base"...HEAD
-  git diff --name-only
-  git diff --name-only --cached
-  git ls-files --others --exclude-standard
-} | sort -u | sed '/^$/d' \
-  | grep -Ev '(^|/)(__pycache__|\.pytest_cache|\.mypy_cache|node_modules)(/|$)|\.pyc$|(^|/)\.DS_Store$' || true)"
+ignore='(^|/)(__pycache__|\.pytest_cache|\.mypy_cache|node_modules)(/|$)|\.pyc$|(^|/)\.DS_Store$'
+if [ -n "$base" ]; then
+  # Known baseline: attribute only the unit's committed + staged + unstaged
+  # (tracked) changes. Tree-wide untracked files belong to other concurrent
+  # units and are not attributable here, so they are excluded. This is the fix
+  # for the shared-tree false-positive (another unit's un-committed files were
+  # being charged against this unit).
+  changed="$({
+    git diff --name-only "$base"...HEAD
+    git diff --name-only
+    git diff --name-only --cached
+  } | sort -u | sed '/^$/d' | grep -Ev "$ignore" || true)"
+else
+  # No baseline (true greenfield first unit): everything uncommitted/untracked is
+  # legitimately this unit's, so include untracked files too.
+  changed="$({
+    git diff --name-only
+    git diff --name-only --cached
+    git ls-files --others --exclude-standard
+  } | sort -u | sed '/^$/d' | grep -Ev "$ignore" || true)"
+fi
 
 off="$(grep -m1 '^off-limits:' "$brief" | sed 's/^off-limits:[[:space:]]*//')"
 scope="$(grep -m1 '^scope:' "$brief" | sed 's/^scope:[[:space:]]*//')"
