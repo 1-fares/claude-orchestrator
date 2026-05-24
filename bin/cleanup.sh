@@ -5,12 +5,17 @@
 # out from under the roles), removes stale state, and optionally purges per-clone
 # config back to the committed clone.
 #
-# Safe by default: with no flags it is a DRY RUN (reports what it would do, kills
-# and removes nothing). It only targets THIS clone: its tmux socket/session, the
-# pids in its .team/active, and processes whose environment has ORCH_HOME=<this
-# repo>. It never kills your other Claude sessions and never kills a running /is
-# bus server (those idle-shutdown on their own; only stale pidfiles are removed),
-# so your personal /is use is untouched.
+# SAFETY (hard rules, learned the hard way):
+#   - Dry run unless --force.
+#   - It ONLY kills processes positively attributable to THIS clone's team: the
+#     team tmux session's panes, pids recorded in .team/active, and claude trees
+#     whose environment has ORCH_HOME=<this repo>. It will NOT kill any other
+#     process, EVER, even if it looks orphaned. Other /is sessions on the shared
+#     bus are your own work; they are reported, never touched. (There is
+#     deliberately no flag to kill them: a script cannot tell a busy session from
+#     a stranded one, and a process running a script is ALIVE, not stuck.)
+#   - It never kills a running /is bus server (only removes stale pidfiles whose
+#     pid is already dead), so the shared bus and everything on it is safe.
 #
 # Usage:
 #   bin/cleanup.sh                  # dry run: report orphans + cruft, change nothing
@@ -26,12 +31,11 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/team-env.sh
 . "$repo/bin/team-env.sh"   # TEAM_SESSION, TEAM_TMUX, TEAM_PORT, tmux() wrapper
 
-force=0; purge=0; unsigned_too=0
+force=0; purge=0
 for a in "$@"; do case "$a" in
   --force) force=1 ;;
   --purge) purge=1 ;;
-  --include-unsigned) unsigned_too=1 ;;
-  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
   *) echo "unknown arg: $a (try --help)" >&2; exit 2 ;;
 esac; done
 DRY=1; [ "$force" = 1 ] && DRY=0
@@ -71,11 +75,11 @@ if [ -f "$repo/.team/active" ]; then
 fi
 
 # 3. Orphaned role sessions: a claude process tree running an /is client with no
-#    owning team tmux. "Signed" orphans carry ORCH_HOME=this repo (launched by this
-#    clone's launch-team) and are reaped automatically. "Unsigned" ones (no
-#    ORCH_HOME, e.g. a manual or misfired launch on the default bus) cannot be told
-#    apart from your personal /is sessions, so they are only listed unless you pass
-#    --include-unsigned.
+#    owning team tmux. ONLY "signed" orphans (ORCH_HOME=this repo, i.e. launched by
+#    this clone's launch-team) are reaped, because only those are positively ours.
+#    "Unsigned" /is sessions (no ORCH_HOME, e.g. your own sessions on the shared
+#    default bus) cannot be told apart from live work, so they are REPORTED ONLY
+#    and never killed. There is intentionally no override for this.
 mapfile -t _clients < <(pgrep -f 'skills/is/bin/client.py --name' 2>/dev/null || true)
 declare -A _seen=(); signed=(); unsigned=()
 for cp in "${_clients[@]:-}"; do
@@ -109,15 +113,13 @@ else
   echo "   no signed orphans (launched by this clone's launch-team)"
 fi
 if [ "${#unsigned[@]}" -gt 0 ]; then
-  echo "   unsigned /is sessions (no ORCH_HOME: a misfired launch OR your personal /is):"
+  echo "   NOTE: ${#unsigned[@]} other /is session(s) are running that are NOT this clone's"
+  echo "   team (no ORCH_HOME signature). These are almost certainly YOUR OWN work on the"
+  echo "   shared /is bus. cleanup NEVER touches them. Listed for awareness only:"
   for o in "${unsigned[@]}"; do cl="${o%%:*}"; role="${o#*:}"
-    if [ "$unsigned_too" = 1 ]; then
-      tag "reap UNSIGNED /is session '$role' (--include-unsigned; claude pid $cl + tree)"
-      killtree "$cl" $(descendants "$cl")
-    else
-      echo "        pid $cl  role '$role'  (kept; re-run with --include-unsigned to reap)"
-    fi
+    echo "        pid $cl  role '$role'  (LEFT RUNNING)"
   done
+  echo "   To stop one of these, do it yourself after confirming it is not live work."
 fi
 
 # 4. Stale /is bus pidfiles (dead pids only; never kill a live bus server).
