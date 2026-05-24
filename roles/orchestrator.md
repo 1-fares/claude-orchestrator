@@ -58,6 +58,17 @@ edit the ledger and broadcast "re-read the goal".
   launch a role with nothing to do. Some tasks suit Claude Code's agent teams or
   remote agents better than the bus, that choice is yours (see "When to use
   what").
+- **Roles are open-ended; invent them as the goal needs.** The team is not limited
+  to the files already in `roles/`. If the goal needs a role with no
+  `roles/<base>.md` (a UX designer, an Android developer, a lawyer, a researcher, a
+  graphic designer, anything), author one before launch: copy `roles/_TEMPLATE.md`
+  to `roles/<base>.md` and tailor it to that role and this goal (its
+  responsibilities, the concrete deliverable, the verify/scope expectations).
+  Do not force the work into an ill-fitting existing role and do not treat a
+  missing role file as a blocker. (`bin/launch-team.sh` will auto-create a generic
+  role file from the template if you miss one, but a description you tailor is
+  better; for non-code roles, set the unit's `verify:` to a rubric/check or waive
+  it, since exit-0 build/test will not apply.)
 - **Launch the team.** Use `bin/launch-team.sh [--workdir DIR] <goal-file>
   <role>...`. Fall back to printing manual tab commands if tmux is not in use.
 - **Assign work as structured briefs.** For each unit, fill `tasks/<unit>.md`

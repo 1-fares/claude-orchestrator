@@ -118,13 +118,31 @@ if [ -f "$repo/.team/active" ]; then
   mv "$_tmp" "$repo/.team/active"
 fi
 
+# Any role can be specified on the fly. If a role has no roles/<base>.md, create
+# one from roles/_TEMPLATE.md (a generic, ready-to-use role prompt) so a novel
+# role (ux-designer, android, lawyer, researcher, ...) never dead-ends the launch.
+# The orchestrator is expected to author a tailored role file first for quality;
+# this is the safety net.
+ensure_role_file() {
+  local base="$1" f="$repo/roles/$1.md" tpl="$repo/roles/_TEMPLATE.md"
+  [ -f "$f" ] && return 0
+  if [ -f "$tpl" ]; then
+    sed "s/{{ROLE}}/$base/g" "$tpl" > "$f"
+    echo "auto-created roles/$base.md from _TEMPLATE.md (generic role; refine as needed)" >&2
+  else
+    printf '# Role: %s\n\nYou are the "%s" on an orchestrated Claude Code team. Bring the expertise of a\nprofessional %s to the assigned unit. Read the goal and your task brief first,\ncoordinate over /is (status:/done:/question:/answer:), stay in your lane, keep\nchanges in scope, and report done: with evidence. Run\n$ORCH_HOME/bin/check-scope.sh <unit> before reporting done.\n' \
+      "$base" "$base" "$base" > "$f"
+    echo "auto-created roles/$base.md (no _TEMPLATE.md found; minimal prompt)" >&2
+  fi
+}
+
 # Validate every role up front so a bad name never leaves a half-spawned team.
+# A missing role file is created on the fly (see ensure_role_file), not an error.
 for role in "$@"; do
   printf '%s' "$role" | grep -Eq '^[a-z0-9][a-z0-9-]{0,39}$' \
     || { echo "invalid bus name '$role' (must match ^[a-z0-9][a-z0-9-]{0,39}\$)" >&2; exit 1; }
   b="$(printf '%s' "$role" | sed 's/[0-9]*$//')"
-  [ -f "$repo/roles/$b.md" ] \
-    || { echo "no role file for '$role' (expected roles/$b.md)" >&2; exit 1; }
+  ensure_role_file "$b"
 done
 
 start_one() {
@@ -137,7 +155,7 @@ start_one() {
   fi
   base="$(printf '%s' "$role" | sed 's/[0-9]*$//')"
   rolefile="roles/$base.md"
-  [ -f "$repo/$rolefile" ] || { echo "no role file for '$role' (expected $rolefile)" >&2; return 1; }
+  ensure_role_file "$base"
   rolefile_abs="$repo/$rolefile"
 
   model="$(model_for "$role")"
