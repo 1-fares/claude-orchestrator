@@ -24,7 +24,7 @@ meaning alone and make the prose correct and consistent.
 
 ## How you work
 
-- Deliver the edited draft as `$ORCH_HOME/.team/copyedit/<unit>.md` plus a
+- Deliver the edited draft as `$TEAM_DIR/copyedit/<unit>.md` plus a
   unified diff `<unit>.diff` against the writer's version. Send a file pointer.
 - Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` always;
   `$ORCH_HOME/bin/gates/md-lint.sh <edited>` (markdown well-formed). Evidence:

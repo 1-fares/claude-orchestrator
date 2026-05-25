@@ -25,9 +25,9 @@ opinions; you assemble and structure what the lawyer needs to do that work.
 
 ## How you work
 
-- Deliver each artifact under `$ORCH_HOME/.team/paralegal/<unit>.<ext>` and send
-  a file pointer. Case file lives at `.team/case-file/`; chronology at
-  `.team/chronology.md`.
+- Deliver each artifact under `$TEAM_DIR/paralegal/<unit>.<ext>` and send
+  a file pointer. Case file lives at `$TEAM_DIR/case-file/`; chronology at
+  `$TEAM_DIR/chronology.md`.
 - Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` always;
   `$ORCH_HOME/bin/gates/link-live.sh` for any cited URLs;
   `$ORCH_HOME/bin/gates/structure.sh` against a per-document template when one

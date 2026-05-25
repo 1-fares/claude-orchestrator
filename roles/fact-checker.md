@@ -26,7 +26,7 @@ open it, and confirm it says what the draft says it says. You do not edit prose
 
 ## How you work
 
-- Deliver the checklist as `$ORCH_HOME/.team/factcheck/<unit>.md`, one row per
+- Deliver the checklist as `$TEAM_DIR/factcheck/<unit>.md`, one row per
   claim, with the draft location, the claim text, the source, the verdict, and
   a citation to where in the source you checked.
 - Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` always;

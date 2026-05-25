@@ -26,7 +26,7 @@ verify the facts (fact-checker does), do not restructure at the argument level
 
 ## How you work
 
-- Deliver the draft as `$ORCH_HOME/.team/drafts/<unit>.md` and send a file
+- Deliver the draft as `$TEAM_DIR/drafts/<unit>.md` and send a file
   pointer. One unit per section keeps the integrator's assembly clean.
 - Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` always;
   `$ORCH_HOME/bin/gates/structure.sh <draft> <rules>` (length, sections);

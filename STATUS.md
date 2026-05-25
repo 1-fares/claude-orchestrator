@@ -76,3 +76,16 @@ Decisions:
   `preflight-deploy.sh`, `panic.sh`, `watchdog.sh`, `worktree.sh`; full README
   rewrite; resolved "Open questions" closed (handoff schema, integration
   discipline, shared state, multi-team isolation).
+- **B9 (dynamic team scaling)**, done: `bin/add-role.sh` (grow a live team by one
+  role, operator-chosen soft cap (default 12, custom, or uncapped), no
+  double-spawn, reuse-before-spawn hint,
+  decision-log + roster line, ntfy), `bin/retire-role.sh` (graceful single-role
+  teardown scoped to one role, refuses on in-flight units unless `--force`
+  re-files them as todo, archives health/audit to `retired/`), the shared spawn
+  path factored into `bin/lib/team-spawn.sh` (`start_one` reused by launch and
+  add) and ledger/roster helpers in `bin/lib/roster.sh`, an idempotent
+  api-watchdog start (a repeated launch no longer starts a second watchdog), a
+  `## roster` section in the ledger template, and a "Dynamic team management"
+  section in the orchestrator role. Safety mirrors `cleanup.sh`: operate only on
+  this run's `TEAM_SESSION`, kill only the target role's recorded pid-group +
+  window, pid-is-claude guard before any kill, never touch the bus server.

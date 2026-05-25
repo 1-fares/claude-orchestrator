@@ -23,7 +23,7 @@ catches what the writer-editor-checker chain normalised.
 
 ## How you work
 
-- Deliver the review as `$ORCH_HOME/.team/peer-review/<unit>.md` with one row
+- Deliver the review as `$TEAM_DIR/peer-review/<unit>.md` with one row
   per acceptance criterion (PASS/FAIL/PARTIAL + citation) and a free-form
   "Other findings" section, each finding with a section:paragraph citation.
 - Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` always;

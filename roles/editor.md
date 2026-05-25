@@ -26,7 +26,7 @@ flagging it.
 
 ## How you work
 
-- Deliver the edited draft as `$ORCH_HOME/.team/edit/<unit>.md` plus a brief
+- Deliver the edited draft as `$TEAM_DIR/edit/<unit>.md` plus a brief
   memo `<unit>.notes.md` listing the structural changes and any flagged gaps.
   Send a file pointer.
 - Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` always;

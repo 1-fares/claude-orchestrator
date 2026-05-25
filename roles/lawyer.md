@@ -27,7 +27,7 @@ co-ordinate them and integrate their input.
 
 ## How you work
 
-- Deliver as `$ORCH_HOME/.team/legal/<unit>.md` (memo / opinion / brief). Send
+- Deliver as `$TEAM_DIR/legal/<unit>.md` (memo / opinion / brief). Send
   the orchestrator a file pointer.
 - Use the `law-researcher` (or relevant specialist) for sourcing; do not do all
   the research yourself unless the question is narrow.

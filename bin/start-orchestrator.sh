@@ -53,7 +53,7 @@ You are the orchestrator of a Claude Code dev team. Do these in order:
 2. Read ./CLAUDE.md and ./roles/orchestrator.md
 3. $goal_line
 4. Definition of ready: do your setup first (read the goal, copy
-   templates/state.md to .team/state.md, break it into units), THEN present a
+   templates/state.md to $TEAM_DIR/state.md, break it into units), THEN present a
    single clean READY summary block exactly as specified in
    roles/orchestrator.md (goal, working tree, mode, acceptance, team, approach,
    verify) as your final message and nothing after it. Keep it short and

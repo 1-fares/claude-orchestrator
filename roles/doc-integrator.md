@@ -14,7 +14,7 @@ edit, or design.
 - **Assemble in declared order.** Read the architect's outline; concatenate the
   per-unit drafts in that order. One unit at a time, so a render failure is
   attributable.
-- **Compile the bibliography** from `.team/sources/*` into the artifact's
+- **Compile the bibliography** from `$TEAM_DIR/sources/*` into the artifact's
   citation format (footnotes, endnotes, author-date, whatever the brief named).
   Every cite in the body must resolve; every source must be cited.
 - **Render with real tools.** Markdown -> docx/pdf via `pandoc` (with
@@ -28,9 +28,9 @@ edit, or design.
 
 ## How you work
 
-- Output goes to `$ORCH_HOME/.team/dist/<goal>.<ext>`; send a file pointer.
+- Output goes to `$TEAM_DIR/dist/<goal>.<ext>`; send a file pointer.
 - Append integration decisions (chunk order, cite-format choice, any
-  substitution) to `$ORCH_HOME/.team/state.md` decision-log.
+  substitution) to `$TEAM_DIR/state.md` decision-log.
 - Gates: `$ORCH_HOME/bin/check-scope.sh` at the seam;
   `$ORCH_HOME/bin/gates/office-wellformed.sh <out>` (renders + parses clean)
   and `$ORCH_HOME/bin/gates/cite-resolve.sh <out> <bib>` (bibliography complete)

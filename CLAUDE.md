@@ -30,9 +30,12 @@ file and goal are given by absolute path. The orchestrator (bus name
 
 ## Coordination conventions
 
-- **The ledger is the source of truth.** Team state lives in `.team/state.md`
-  (per-unit status, scope, deps, plus a decision-log), not in any one session's
-  context. The orchestrator maintains it; append the why of your decisions.
+- **The ledger is the source of truth.** Team state lives in `$TEAM_DIR/state.md`
+  (`.team/state.md` in legacy single-team mode, `.team-<run-id>/state.md` per run,
+  so concurrent runs in one clone never share a ledger): per-unit status, scope,
+  deps, plus a decision-log, not in any one session's context. The orchestrator
+  maintains it; append the why of your decisions. Likewise write briefs to
+  `$TEAM_DIR/tasks/<unit>.md` and all role artifacts under `$TEAM_DIR/`.
 - **Handoffs are structured.** Work is assigned as a `tasks/<unit>.md` brief
   (from `tasks/_TEMPLATE.md`) whose `verify:`, `scope:`, `off-limits:` lines feed
   the gates.
@@ -45,12 +48,15 @@ file and goal are given by absolute path. The orchestrator (bus name
   periodic actions.
 - **Never drop work.** Partial, rejected, or out-of-scope work is reported back
   so the orchestrator files it as a new ledger unit.
-- **`$ORCH_HOME` locates the team's files.** The orchestrator clone is exported
-  as `$ORCH_HOME` in every role session. Run gates
-  (`$ORCH_HOME/bin/verify-unit.sh`, `$ORCH_HOME/bin/check-scope.sh`) and write
-  team artifacts (`$ORCH_HOME/.team/...`) by that path; it resolves whether you
-  run in the clone (greenfield) or a separate `--workdir` tree. Your own code
-  changes go in your working tree (your cwd).
+- **`$ORCH_HOME` locates the team's code; `$TEAM_DIR` locates this run's state.**
+  Both are exported in every role session. Run gates
+  (`$ORCH_HOME/bin/verify-unit.sh`, `$ORCH_HOME/bin/check-scope.sh`) from
+  `$ORCH_HOME`, but write all team artifacts (specs, evidence, logs, the ledger,
+  briefs) under `$TEAM_DIR/...`, never `$ORCH_HOME/.team/...` directly: `$TEAM_DIR`
+  is per-run (`.team-<run-id>/`, or `.team/` in legacy single-team mode), so
+  parallel runs in one clone do not overwrite each other's state. `$ORCH_HOME`
+  resolves whether you run in the clone (greenfield) or a separate `--workdir`
+  tree. Your own code changes go in your working tree (your cwd).
 
 ## Working agreement (binding on every role)
 
@@ -63,6 +69,16 @@ file and goal are given by absolute path. The orchestrator (bus name
   means seen to work, not argued to work.
 - **No silent partial work.** Finish what was assigned or report the blocker and
   what you would need. State plainly what is done and what is not.
+- **Push the work branch to origin; it is not gated.** Pushing the team's work or
+  integration branch to `origin` (to back it up, open a PR, or trigger CI) is a
+  routine, operator-authorized step, not a human handoff. Do not finish a unit
+  leaving its branch unpushed and report the push as a "deliberate handoff" or
+  "not done by design", that is the failure this rule exists to stop; push it.
+  This standing authorization is deliberate and overrides the cautious default of
+  pushing only on request. The human gate applies only to: (a) merging into a
+  protected default or production branch, (b) production deploys (see
+  `bin/preflight-deploy.sh`), and (c) destructive pushes (force-push, history
+  rewrite, branch deletion), each of which still warrants a `question:` first.
 - **Scripts over judgement.** Where a task is deterministic and rule-based
   (spawn, teardown, validation, file moves, formatting, parsing, status checks),
   call a script in [`bin/`](./bin) or write one; do not spend an LLM turn on it.
@@ -108,6 +124,16 @@ file is the portable version of the same discipline.
   your terminal (foreground) and spawns roles into tmux (`--tmux` puts the
   orchestrator in tmux too). `bin/launch-team.sh`: spawn roles (`--workdir` to
   target external code). `bin/attach.sh`: attach to the team tmux session.
+- `bin/add-role.sh` / `bin/retire-role.sh`: dynamic team scaling (B9). Add one
+  role to a LIVE team (enforces a soft, operator-chosen team-size cap, default 12,
+  custom, or uncapped, from `$TEAM_DIR/max-team-size` or `MAX_TEAM_SIZE`; refuses
+  double-spawn,
+  reuse-before-spawn hint, decision-log + roster line, ntfy) or retire one role
+  (graceful single-role teardown scoped to that role, refuses if it owns
+  in-flight units unless `--force` re-files them, archives to `retired/`). Both
+  reuse the shared single-role spawn/teardown discipline in `bin/lib/` and the
+  same hard safety scoping as `cleanup.sh`. Prefer a bus `pause:` over retire for
+  a temporarily-idle role.
 - `bin/stop-team.sh`: end the roles. `bin/reset.sh`: clean slate (ends
   everything, clears `.team/`). `bin/panic.sh`: emergency stop. `bin/cleanup.sh`:
   recover from a misfire, reaps orphaned role sessions the others miss (a lost

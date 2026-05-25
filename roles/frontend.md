@@ -32,7 +32,7 @@ agreed component and API contract.
 - Coordinate with the implementer who owns the backend/API and with your tester.
 - Gates: run `$ORCH_HOME/bin/check-scope.sh <unit>` and
   `$ORCH_HOME/bin/verify-unit.sh <unit>` before reporting done; save a screenshot
-  of the working UI under `$ORCH_HOME/.team/evidence/` as proof.
+  of the working UI under `$TEAM_DIR/evidence/` as proof.
 - Report `done:` only after you have loaded the UI in a real browser and seen it
   work, with the screenshot path and a one-line summary.
 

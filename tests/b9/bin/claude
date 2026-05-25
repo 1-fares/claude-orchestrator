@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Test stub for the `claude` CLI, used by the B9 suite via TEAM_ROLE_CMD.
+#
+# Named "claude" on purpose: the teardown safety guard (is_claude) checks that a
+# pid's `ps args` still contains "claude" before signalling it, and this file's
+# path contains "claude", so a stub role is treated exactly like a real one.
+#
+# Behaviours it mimics that the teardown logic depends on:
+#   - Survives SIGHUP (the real CLI ignores it and outlives pty/window teardown,
+#     which is why retire/stop signal the process GROUP, not just the window).
+#   - Spawns a child sharing its process group (stands in for an MCP server), so
+#     a correct group-kill must reap the child too.
+# All CLI args (flags, --model, the prompt) are accepted and ignored.
+
+trap '' HUP
+
+# A child in the same process group, also HUP-proof, standing in for an MCP
+# server. tmux setsid's the pane, so the pane pid is the group leader and this
+# child shares the group; `kill -- -$leader` must take it down.
+( trap '' HUP; exec sleep 1000000 ) &
+
+# Idle forever; teardown ends us by signalling the group.
+while :; do sleep 1; done

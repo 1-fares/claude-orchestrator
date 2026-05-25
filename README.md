@@ -86,7 +86,7 @@ Extended roles, added when the goal calls for them: **front-end developer**
 Keep the team as small as the goal allows. On a local subscription run every
 role defaults to the best model (Opus); drop a role to a faster model only for
 speed. On API-paid remote agents, invert it: bulk on Sonnet, Opus to check. Tune
-`model_for()` in [`bin/launch-team.sh`](./bin/launch-team.sh). Current ids: `opus`
+`model_for()` in [`bin/lib/team-spawn.sh`](./bin/lib/team-spawn.sh). Current ids: `opus`
 (`claude-opus-4-7`), `sonnet` (`claude-sonnet-4-6`), `haiku` (`claude-haiku-4-5`).
 
 ## How it works
@@ -309,7 +309,9 @@ claude-orchestrator/
 ├── templates/state.md        # ledger format -> .team/state.md
 ├── bin/
 │   ├── team-env.sh           # per-clone bus port + tmux session (sourced)
+│   ├── lib/                   # sourced helpers: team-spawn.sh, roster.sh
 │   ├── start-orchestrator.sh launch-team.sh stop-team.sh panic.sh
+│   ├── add-role.sh retire-role.sh   # dynamic team scaling (grow/shrink mid-run)
 │   ├── new-goal.sh worktree.sh
 │   ├── verify-unit.sh check-scope.sh preflight-deploy.sh
 │   └── team-status.sh team-watch.sh team-broadcast.sh team-logs.sh watchdog.sh

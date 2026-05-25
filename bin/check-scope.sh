@@ -32,8 +32,11 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 unit="${1:?usage: check-scope.sh <unit> [base-ref]}"
 base="${2:-}"
-brief="$repo/tasks/$unit.md"
-[ -f "$brief" ] || { echo "no task brief: tasks/$unit.md" >&2; exit 2; }
+# Prefer this run's per-run brief ($TEAM_DIR/tasks), fall back to shared $repo/tasks
+# (legacy, or briefs left there), so concurrent runs do not read each other's brief.
+brief="$TEAM_DIR/tasks/$unit.md"
+[ -f "$brief" ] || brief="$repo/tasks/$unit.md"
+[ -f "$brief" ] || { echo "no task brief for '$unit' (looked in $TEAM_DIR/tasks and $repo/tasks)" >&2; exit 2; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not a git tree: $PWD" >&2; exit 2; }
 
 # Resolve a per-unit baseline so the changed-set reflects THIS unit's work, not

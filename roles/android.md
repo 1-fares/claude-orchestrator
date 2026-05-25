@@ -24,7 +24,7 @@ and palette); you build the app to the agreed API contract and design specs.
   the actual flows on the Android emulator (figure out the available emulator and
   SDK with devops; both are available on this machine). A screen you have not run
   on the emulator is not done. Capture a screenshot under
-  `$ORCH_HOME/.team/evidence/`.
+  `$TEAM_DIR/evidence/`.
 - **Produce a release APK with a bumped version.** On a release build, increment
   `versionCode`/`versionName` and ensure the output APK filename carries the new
   version (e.g. `app-<versionName>.apk`). The final artifact and its

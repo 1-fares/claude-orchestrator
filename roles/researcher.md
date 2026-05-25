@@ -25,10 +25,10 @@ and summarise the evidence so the next role can write from a grounded base.
 
 ## How you work
 
-- Deliver findings as `$ORCH_HOME/.team/findings/<unit>.md` with sections per
+- Deliver findings as `$TEAM_DIR/findings/<unit>.md` with sections per
   claim: `## Claim`, `### Sources` (numbered, each with the fields above),
   `### Quote`, `### Contradictions / gaps`. Send the orchestrator a file pointer.
-- Maintain a parallel `$ORCH_HOME/.team/sources/<unit>.bib` (or `.json`) the
+- Maintain a parallel `$TEAM_DIR/sources/<unit>.bib` (or `.json`) the
   citation roles and integrator can consume mechanically.
 - Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` always;
   `$ORCH_HOME/bin/gates/link-live.sh <findings-file>` (every cited URL resolves).

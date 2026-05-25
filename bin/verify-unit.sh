@@ -15,8 +15,12 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 unit="${1:?usage: verify-unit.sh <unit>}"
-brief="$repo/tasks/$unit.md"
-[ -f "$brief" ] || { echo "no task brief: tasks/$unit.md" >&2; exit 2; }
+# Prefer this run's per-run brief ($TEAM_DIR/tasks), fall back to the shared
+# $repo/tasks (legacy single-team, or briefs the orchestrator left there). This
+# keeps two concurrent runs from reading each other's identically-named brief.
+brief="$TEAM_DIR/tasks/$unit.md"
+[ -f "$brief" ] || brief="$repo/tasks/$unit.md"
+[ -f "$brief" ] || { echo "no task brief for '$unit' (looked in $TEAM_DIR/tasks and $repo/tasks)" >&2; exit 2; }
 
 cmd="$(grep -m1 '^verify:' "$brief" | sed 's/^verify:[[:space:]]*//')"
 [ -n "$cmd" ] && [ "$cmd" != "<command that builds, tests, and lints this unit; must exit 0>" ] \

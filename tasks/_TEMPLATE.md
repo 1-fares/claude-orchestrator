@@ -1,10 +1,14 @@
 # Task: <unit-id>
 
 The structured handoff from orchestrator to a role. Copy to
-`tasks/<unit-id>.md`, fill in, then assign with a file pointer
-(`/is s <role> --file tasks/<unit-id>.md`). The machine-readable header lines
-(keys ending in `:`) are read by `bin/verify-unit.sh` and `bin/check-scope.sh`,
-keep them and put one value per line.
+`$TEAM_DIR/tasks/<unit-id>.md`, fill in, then assign with a file pointer
+(`/is s <role> --file $TEAM_DIR/tasks/<unit-id>.md`). Writing under `$TEAM_DIR`
+(per-run: `.team-<run-id>/tasks/`, or `.team/tasks/` in legacy mode) keeps two
+concurrent runs in one clone from clobbering each other's identically-named
+brief. The gates read `$TEAM_DIR/tasks/<unit>.md` first, then fall back to
+`$ORCH_HOME/tasks/<unit>.md`. The machine-readable header lines (keys ending in
+`:`) are read by `bin/verify-unit.sh` and `bin/check-scope.sh`, keep them and put
+one value per line.
 
 <!-- machine-readable header -->
 unit: <unit-id>

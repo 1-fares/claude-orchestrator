@@ -43,7 +43,7 @@ below applies to every role.)
   the unit's `verify:` line typically wires one of these. Only when none apply
   does the verify gate get waived, and you must still capture concrete evidence
   (the rendered file, a check log, a screenshot) under
-  `$ORCH_HOME/.team/evidence/<unit>/`.
+  `$TEAM_DIR/evidence/<unit>/`.
 - Report `done:` only when the unit's acceptance is met and checked, with the
   artifact path and a one-line summary. Then yield; the `/is` monitor wakes you on
   the next message.

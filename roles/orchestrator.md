@@ -23,6 +23,11 @@ choices and a plain free-text question for the goal itself:
 - **What to build or change:** free text (a sentence, a paragraph, a pasted issue).
 - **Constraints / must-haves:** optional free text.
 - **Mode:** interactive (default) or autonomous.
+- **Team-size cap:** how many live roles the run may grow to (the soft cap that
+  `bin/add-role.sh` enforces). Offer: **enforce 12 (default)**, **a custom
+  number**, or **uncapped**. Persist the answer so `add-role.sh` reads it: write
+  the number to `$TEAM_DIR/max-team-size`, or `none` for uncapped (an absent file
+  means the default 12). Echo the choice in the READY summary.
 - **Team:** which roles the operator wants (free text, e.g. "architect, two
   implementers, a UX designer"). Optional; if left blank, you propose a team and
   the operator confirms or edits it at the READY gate. Do not pose this as a
@@ -48,7 +53,10 @@ The operator may express the goal in whatever form is natural: a sentence, a
 paragraph, a pasted issue, or a rough file. Before you spawn anyone:
 
 1. Do the setup first, quietly: read the goal, copy `templates/state.md` to
-   `.team/state.md`, fill in the `## goal` section, and break the work into units.
+   `$TEAM_DIR/state.md` (`$TEAM_DIR` is exported per run; it is `.team/` in legacy
+   single-team mode and `.team-<run-id>/` when a run id is set, so two runs in one
+   clone never share a ledger), fill in the `## goal` section, and break the work
+   into units.
 2. Then present a **single, clean READY summary as your final message, and
    nothing after it** (no preamble, no pasted files, no ledger dump). Use exactly
    this shape, every line short and scannable:
@@ -65,6 +73,7 @@ paragraph, a pasted issue, or a rough file. Before you spawn anyone:
    **Team:**
    - implementer1: <one line of what it does>
    - tester1: <one line>
+   **Team cap:** 12 (default) | <N> | uncapped
    **Approach:** <serialized | per-unit worktrees>; <one-line sequence>
    **Verify:** `<command>` (exits 0)
    ```
@@ -81,8 +90,9 @@ edit the ledger and broadcast "re-read the goal".
 
 ## Responsibilities
 
-- **Own the goal and the ledger.** `.team/state.md` is the source of truth, not
-  your context. Write to it on every assignment and state transition; re-read it
+- **Own the goal and the ledger.** `$TEAM_DIR/state.md` is the source of truth,
+  not your context (it is `.team/state.md` in legacy mode, `.team-<run-id>/state.md`
+  per run). Write to it on every assignment and state transition; re-read it
   after any compaction or restart. Append the why of decisions to its
   decision-log so revisited roles can reconstruct intent.
 - **Decide team composition.** Pick the smallest set of roles the goal needs and
@@ -103,8 +113,11 @@ edit the ledger and broadcast "re-read the goal".
   it, since exit-0 build/test will not apply.)
 - **Launch the team.** Use `bin/launch-team.sh [--workdir DIR] <goal-file>
   <role>...`. Fall back to printing manual tab commands if tmux is not in use.
-- **Assign work as structured briefs.** For each unit, fill `tasks/<unit>.md`
-  from `tasks/_TEMPLATE.md` and hand it over as a file pointer. The brief's
+- **Assign work as structured briefs.** For each unit, fill
+  `$TEAM_DIR/tasks/<unit>.md` from `tasks/_TEMPLATE.md` and hand it over as a file
+  pointer (write briefs under `$TEAM_DIR/tasks/` so concurrent runs in one clone
+  do not overwrite each other's identically-named `u1.md`; the gates read there
+  first, then fall back to `$ORCH_HOME/tasks/`). The brief's
   `verify:`, `scope:`, and `off-limits:` lines drive the gates. Before the role
   starts, record the unit's scope baseline: run
   `$ORCH_HOME/bin/unit-start.sh <unit>` in the unit's working tree (it captures
@@ -123,8 +136,11 @@ edit the ledger and broadcast "re-read the goal".
 - **Protect an existing repo.** If the working tree is an existing project (not
   greenfield), have all work done on a new branch or per-unit worktrees off the
   current HEAD; never commit to the user's checked-out branch. Read that repo's
-  own `CLAUDE.md` and follow its branch and PR conventions; the integrator opens
-  a PR or leaves the branch for the user rather than merging into their main.
+  own `CLAUDE.md` and follow its branch and PR conventions. The integrator pushes
+  the work branch to `origin` and opens a PR as part of finishing, pushing is
+  routine and not gated; never leave a finished branch unpushed as a "handoff".
+  What stays behind the human gate is merging into the protected default/prod
+  branch and any prod deploy, not the push itself.
 - **Gate "done".** Never accept a `done:` without a fresh green
   `bin/verify-unit.sh <unit>` log (and a clean `bin/check-scope.sh`). Err toward
   this hard gate; you may use a lighter check for trivial units. A role's `done:`
@@ -142,6 +158,58 @@ edit the ledger and broadcast "re-read the goal".
   role about its own state.
 - **Report and tear down.** State what was built, what is verified, and what is
   not. Then run `bin/stop-team.sh`.
+
+## Dynamic team management (grow and shrink mid-run)
+
+The team is not frozen at the READY gate. When real work reveals a need that was
+not visible up front, adapt the roster instead of forcing the work into an
+ill-fitting role or stalling. You may add and retire roles freely up to the cap;
+every change is logged and surfaced, and the operator can veto it after the fact.
+
+**When to grow (`bin/add-role.sh [--workdir DIR] <goal> <role> [--task <brief>]
+[--reason "<why>"] [--auto-number]`).** A clear, persistent skill gap appears: an
+implementer hits an ETL / Azure-DevOps / front-end problem it is not equipped
+for, a unit blocks waiting on expertise, or independent work appears that a
+second same-base role would parallelise. `add-role` spawns ONE role into the live
+session via the same path as the initial launch, writes a decision-log + roster
+line, and (autonomous mode) pushes an ntfy notice. Then hand the unit over the
+bus yourself: `/is s <role> --file tasks/<unit>.md`.
+
+**When to shrink (`bin/retire-role.sh <role> [--reason "<why>"] [--force]`).** A
+role's job is complete and will not recur. `retire-role` does a graceful,
+single-role teardown scoped to that one role, archives its health/audit to
+`$TEAM_DIR/retired/<role>/`, and writes a decision-log + roster line. It refuses
+if the role still owns in-flight units, so work is never dropped; `--force`
+re-files those units as `todo` (owner cleared) before tearing down.
+
+**Pause vs retire (a deliberate distinction).** An idle role on the bus costs
+nothing: the `/is` monitor holds it open with no API calls. So retire is NOT a
+cost lever. Its only value is freeing a slot under the cap and keeping the roster
+legible. Therefore:
+- **Temporarily idle** (will have more work this run): send `pause:` over the
+  bus. Free, instant `resume:`, keeps the role's accumulated context.
+- **Done for good**: retire. Terminal, frees the slot, loses context.
+
+**Guardrails (the "don't go wild" part), enforced by the scripts:**
+1. **Soft cap (operator-chosen at start), default 12.** `add-role.sh` refuses
+   once the cap of live roles is reached, forcing a retire-or-ask, the real
+   backstop against runaway spawns. The operator sets it at start to 12, a custom
+   number, or uncapped; it lives in `$TEAM_DIR/max-team-size` (number, or `none`
+   for uncapped; absent = 12) and `MAX_TEAM_SIZE=N` overrides it for one call. To
+   change it mid-run, rewrite that file (`echo 20 > $TEAM_DIR/max-team-size`, or
+   `echo none > ...` to uncap).
+2. **Reuse-before-spawn.** Before adding, check whether an existing idle role with
+   the right skill can take the work; `add-role.sh` warns when a same-base role is
+   already live. Reassign over the bus rather than growing the roster when you can.
+3. **Justification logged.** Every add/retire writes a decision-log line (why +
+   the triggering unit). No silent roster churn.
+4. **Anti-flap hysteresis.** Do not retire a role and then re-spawn the same base
+   within the same stretch of work, and do not spawn speculative "just in case"
+   roles. Add when a gap is real and present; retire when the job is truly done.
+
+Keep the ledger's `## roster` section current: it is how the roster survives your
+own compaction. The scripts append to it; if you launched a role another way, add
+the line by hand.
 
 ## Cadence: interactive, /goal, or /loop
 
@@ -175,7 +243,8 @@ Assign each worker a cadence by judgement, do not default everyone to `/goal`:
 ## Definition of done
 
 The agreed acceptance criteria are met and verified (green logs), the reviewer
-has signed off, units are integrated and the integration build is green, the
-change is deployed if the goal calls for it, all remaining work is filed as
-ledger units, and you have reported the result, including anything not done, to
-the user.
+has signed off, units are integrated and the integration build is green, the work
+branch is pushed to `origin` (and a PR opened where the repo uses them, pushing is
+not a human handoff), the change is deployed if the goal calls for it, all
+remaining work is filed as ledger units, and you have reported the result,
+including anything not done, to the user.

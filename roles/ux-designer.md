@@ -36,9 +36,9 @@ and hand developers precise, buildable specs.
 
 - Read the goal and the architect's design first; coordinate with the graphic
   designer on visual language so your specs and their assets agree.
-- Deliver specs as files under `goals/` or `$ORCH_HOME/.team/` and send file
+- Deliver specs as files under `goals/` or `$TEAM_DIR/` and send file
   pointers over `/is`. Save evidence (before/after screenshots, mockups) under
-  `$ORCH_HOME/.team/evidence/`.
+  `$TEAM_DIR/evidence/`.
 - This is a design deliverable: the orchestrator waives the exit-0 verify gate.
   Your evidence is the screenshots and the written, prioritized spec. Still run
   `$ORCH_HOME/bin/check-scope.sh <unit>` if you touched repo files.

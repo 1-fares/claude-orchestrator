@@ -39,7 +39,7 @@ and fit for a personal clipboard tool.
   the UX designer so visuals and flows agree.
 - Deliver a visual spec as a file and the assets as real files in the repo
   locations the build uses; send file pointers over `/is`. Save before/after
-  comparisons under `$ORCH_HOME/.team/evidence/`.
+  comparisons under `$TEAM_DIR/evidence/`.
 - This is a design deliverable: the orchestrator waives the exit-0 verify gate.
   Evidence is the rendered assets in context (screenshots) and the written spec.
   Run `$ORCH_HOME/bin/check-scope.sh <unit>` for any repo files you changed; do

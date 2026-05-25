@@ -31,8 +31,8 @@ pass; that goes back to the implementer.
   after their fix. Keep your growing test files as the team's regression record;
   they make each round more pointed than the last.
 - Capture red before green. For a new test, save a failing run against the
-  pre-change tree (`$ORCH_HOME/.team/tests/<unit>.red.log`) and a passing run
-  after (`$ORCH_HOME/.team/tests/<unit>.green.log`). A test that passes against
+  pre-change tree (`$TEAM_DIR/tests/<unit>.red.log`) and a passing run
+  after (`$TEAM_DIR/tests/<unit>.green.log`). A test that passes against
   both old and new code tests nothing. The orchestrator may waive this for
   trivial units. (`$ORCH_HOME` is the orchestrator clone, exported in your env.)
 - Use `/loop` to re-run the suite periodically if you are watching a long change.

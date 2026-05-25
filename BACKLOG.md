@@ -8,7 +8,13 @@ reinvent. **B9 (dynamic team scaling) is the priority next build per the operato
 
 ---
 
-## B9 - Dynamic team scaling (grow/shrink the team mid-run)
+## B9 - Dynamic team scaling (grow/shrink the team mid-run)  [BUILT 2026-05-25]
+
+**Status: built.** `bin/add-role.sh`, `bin/retire-role.sh`, the shared
+`bin/lib/team-spawn.sh` + `bin/lib/roster.sh`, the idempotent api-watchdog start,
+the orchestrator "Dynamic team management" section, and the ledger `## roster`
+section are all implemented and tested (see STATUS.md). The original design and
+policy notes below are retained for the rationale.
 
 **What.** Let the orchestrator change team composition as work progresses: spawn
 a specialist when a clear skill gap appears mid-run (a researcher, a second
@@ -27,13 +33,17 @@ stalling.
   and retires freely up to `MAX_TEAM_SIZE`, logs the why to the decision-log, and
   emits a one-line `added X / retired Y (reason)` notice. Operator can veto after
   the fact.
-- **Hard cap: `MAX_TEAM_SIZE=8`** (env-overridable). `add-role.sh` refuses past
-  it, forcing a retire-or-ask. This is the real backstop against runaway spawning.
+- **Soft cap, operator-chosen at start (default 12).** `add-role.sh` refuses past
+  it, forcing a retire-or-ask. The operator picks enforce-12 / a custom number /
+  uncapped at orchestrator start; it lives in `$TEAM_DIR/max-team-size`
+  (`MAX_TEAM_SIZE` env overrides for one call). The real backstop against runaway
+  spawning when enforced.
 - **Autonomous (B2): growth allowed unattended within the cap, with an ntfy push
   per roster change.** Pruning (pause/retire) also allowed unattended.
 
 **Guardrails (the "don't go wild" part).**
-1. Hard cap (8) enforced by `add-role.sh`.
+1. Soft cap (operator-chosen at start: default 12, custom, or uncapped) enforced
+   by `add-role.sh`.
 2. Reuse-before-spawn: check whether an existing idle role with the right skill
    can take the work before creating a new one.
 3. Justification logged: every add/retire writes a decision-log line (why +
@@ -225,6 +235,59 @@ app for `/remote-control` + the ntfy app for watchdog pushes.
 Tunnel, anything) is needed only if you choose to use the helpers from the
 phone. Not required for the primary path. If set up, point `NOTIFY_HOOK_BASE`
 at the reachable IP and the signed-URL helper picks it up automatically.
+
+---
+
+## B10 - Evaluate Agent Teams features for folding into the orchestrator
+
+**What.** Assess each first-party Agent Teams capability and decide, per feature,
+whether to adopt it, mirror it, or skip it. Full comparison and evidence in
+[docs/native-agents-comparison.md](docs/native-agents-comparison.md).
+
+**Why.** Agent Teams (local, experimental, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`,
+v2.1.32+) is the first-party build of this exact pattern and has matured since the
+2026-05-24 prior-art note. The substrate has converged; our durable value is the
+discipline layer (gates + ledger + integrator + scope). The strategic question is
+whether to keep the bespoke `/is` substrate or re-target the discipline layer to
+run on top of Agent Teams once it leaves experimental. Decide deliberately, not by
+drift.
+
+**Candidates to evaluate (adopt / mirror / skip).**
+1. **Quality-gate hooks** (`TaskCompleted` / `TaskCreated` / `TeammateIdle`,
+   exit 2 to block). This is the primitive our enforced gates need. Strategic:
+   prototype `verify-unit.sh` + `check-scope.sh` as a `TaskCompleted` hook on an
+   Agent Teams run; if it works, the discipline layer becomes portable and the
+   `/is` substrate can eventually retire. Highest-leverage item.
+2. **Shared task list** (auto dependency unblocking + file-locked claiming). Our
+   ledger tracks dependencies manually via the orchestrator. Evaluate adopting the
+   self-claiming + auto-unblock model, or mirroring file-locked claiming in the
+   ledger to cut orchestrator turns on coordination.
+3. **Plan-approval mode** (teammate read-only until lead approves). Maps to a
+   review-before-implement gate. Evaluate as a cadence option for risky units.
+4. **Subagent-definition reuse** (one definition usable as subagent or teammate).
+   Align our `roles/<base>.md` format so a role doubles as a subagent definition,
+   reducing duplication.
+5. **Mailbox auto-delivery + idle notifications.** The bus already push-wakes via
+   the Monitor tool; compare latency/ergonomics, likely skip unless clearly better.
+
+**Do-not-regress (where we are ahead; folding in must not lose these).** Free idle
+roles (Agent Teams teammates consume tokens even when idle), session resume (Agent
+Teams has none for in-process teammates), multiple concurrent teams (Agent Teams:
+one at a time), the readable narrative ledger/decision-log as an audit artifact,
+the dedicated integrator + scope/off-limits enforcement, `api-watchdog` rate-limit
+recovery.
+
+**Constraints.** Agent Teams is still experimental (no resume, one team at a time,
+task-status can lag). Not an immediate rewrite. Evaluation now, adoption gated on
+Agent Teams leaving experimental. Both run on the operator's subscription, so
+billing is not a deciding factor (verified, see the research doc).
+
+**To produce.** A per-feature decision table (adopt / mirror / skip + rationale)
+appended to the research doc, and a spike: gates-as-`TaskCompleted`-hook on a
+throwaway Agent Teams run, to test whether the discipline layer ports cleanly.
+
+**Depends on / strengthens.** Informs B3 (productise: a governance layer on a
+first-party substrate is more shippable than a bespoke bus). Independent of B2/B4.
 
 ---
 
