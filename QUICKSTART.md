@@ -122,6 +122,130 @@ The watchdog makes no Claude API call, so it cannot itself be rate-limited.
 Patterns it looks for live in `bin/api-watchdog.patterns` (edit freely).
 Disable with `API_WATCHDOG_DISABLED=1`.
 
+## Remote control from a phone (Tailscale + SSH + ntfy)
+
+The substrate is already there: tmux sessions survive disconnects, `bin/attach.sh`
+re-enters a specific run, ntfy delivers stall / question / done pushes (B8). What
+this section adds is a path from the phone to those primitives.
+
+### One-time setup
+
+**1. Tailscale on the WSL2 host.** Tailscale is the network layer; it gives the
+WSL2 host a stable `100.x.y.z` IP reachable from any device on your tailnet,
+without router config and without exposing anything publicly.
+
+```bash
+# Inside WSL2 (Ubuntu)
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo systemctl enable --now tailscaled        # needs WSL2 systemd; modern WSL2 has it
+sudo tailscale up                             # opens an auth URL; sign in once
+tailscale ip -4                               # note this address; the phone will use it
+```
+
+If `systemctl` reports `System has not been booted with systemd`, enable it in
+`/etc/wsl.conf` (`[boot]\nsystemd=true`), `wsl --shutdown` on the Windows side,
+relaunch, then retry. (Required once per WSL distro.)
+
+**2. Tailscale Android app.** Install from Play Store, sign in with the same
+account. The phone now sees the WSL2 host's `100.x.y.z`.
+
+**3. SSHd in WSL2.** WSL2 ships `openssh-server` but does not auto-start it:
+
+```bash
+sudo apt install -y openssh-server
+sudo systemctl enable --now ssh
+```
+
+Generate an SSH keypair on the phone (ConnectBot: menu → Manage Pubkeys → Generate),
+copy the public key, paste it into `~/.ssh/authorized_keys` on the WSL2 host.
+
+**4. ConnectBot connection.** Add a host: `user@100.x.y.z`, select the pubkey,
+connect. You should land in a shell.
+
+Optional but recommended: in ConnectBot's host settings, map **Volume Down** to
+`Ctrl` (Settings → Other → Camera/Volume Up/Down behaviour). Tmux prefix
+(`Ctrl-a` / `Ctrl-b`) becomes Volume-Down + a/b. Much faster than the on-screen
+modifier.
+
+### Day-to-day flow
+
+```
+phone wakes:    ntfy push: 🟠 [orchestrator/wd-abc-123] role 'tester2' stalled
+phone taps:     opens ConnectBot → SSH session → bin/inbox.sh
+                                  (shows every run awaiting input)
+phone types:    TEAM_RUN_ID=wd-abc-123 bin/attach.sh   (lands in the right session)
+                ... read the question, type the answer, prefix-d to detach
+                ... session keeps running on the WSL2 host
+```
+
+If you want roaming-stable sessions (WiFi → cellular without losing the attach),
+install **Termux** from F-Droid (free; the Play Store version is unmaintained),
+`pkg install mosh openssh`, and use `mosh user@100.x.y.z -- tmux -L orchestrator
+attach -t <session>`. ConnectBot is SSH-only and drops on network hand-off.
+
+### Compact mobile commands
+
+These exist for the small-screen case:
+
+- `bin/team-status.sh --mobile` -- ~40-column dashboard, fits portrait phone
+- `bin/inbox.sh` -- every parallel run currently awaiting input, across all run-ids
+- `bin/approve.sh <run-id> [<text>]` -- send `<text>` (default: `go`) to that run's orchestrator
+
+### Action-button push notifications (Tier 2)
+
+Tap **approve / pause / stop** on the phone's ntfy notification, no terminal
+needed. Implemented end to end:
+
+- `bin/notify-hook.py` -- a single-file Python daemon (uv-run, stdlib only) that
+  listens for HMAC-signed action URLs and dispatches via `bin/approve.sh` or
+  `bin/team-broadcast.sh`. The hook makes no Claude API call and holds no per-team
+  state of its own.
+- `bin/sign-action-url.sh` -- generates the signed URLs; used by the orchestrator
+  and watchdog when emitting `Actions:`-tagged ntfy pushes.
+- `bin/notify-via-ntfy.sh` -- one-line helper to send an ntfy push with one or
+  more `--action approve|pause|resume|stop|priority` buttons that call the hook.
+
+**Set it up once.** First run of `notify-hook.py` writes a random 32-byte HMAC
+secret to `~/.claude/notify-hook.secret` (0600). Keep that file private; with it,
+URLs are forgeable.
+
+```bash
+# Bind to the tailnet IP so the phone can reach it; localhost-only by default.
+nohup bin/notify-hook.py --bind "$(tailscale ip -4)" --port 8421 \
+  > ~/.claude/notify-hook.log 2>&1 &
+echo $! > ~/.claude/notify-hook.pid
+
+# Tell the helpers where the hook lives (add to ~/.bashrc to persist):
+export NOTIFY_HOOK_BASE=http://$(tailscale ip -4):8421
+```
+
+**Try one push with buttons:**
+
+```bash
+TEAM_RUN_ID=<run-id-you-want-to-target> \
+  bin/notify-via-ntfy.sh --title READY --body "ready to start?" \
+  --action approve --action pause
+```
+
+Phone receives a push with two buttons; a tap fires an HMAC-signed HTTP GET that
+the hook validates and dispatches. URLs have a 30-minute TTL by default
+(`--ttl` on `sign-action-url.sh`).
+
+**Safety properties.** Every URL carries an HMAC of `METHOD\nPATH\nEXP`; tampering
+or replay after expiry returns 403. The hook never touches a session it cannot
+positively dispatch to; it logs every accept and reject to `$NOTIFY_HOOK_LOG`
+(append-only). Lost the secret? Rotate it: stop the hook, `rm ~/.claude/notify-hook.secret`,
+restart. Existing URLs become invalid; re-send any outstanding pushes.
+
+### Threat model
+
+- Tailscale is private (your tailnet only); WSL2 sshd is not exposed publicly.
+- SSH key on the phone is guarded by the phone's biometric / PIN at unlock.
+- ntfy.sh topic is public: anyone who knows `myteam-orchestrator` can read
+  your pushes. Operational content only; rotate to a long-random topic if you
+  add anything sensitive. Self-host ntfy on the same WSL2 host (Tailscale-only)
+  if you want fully-private pushes.
+
 ## Parallel runs (same clone)
 
 Every `bin/run.sh` invocation gets its own `TEAM_RUN_ID`, so its own bus port,

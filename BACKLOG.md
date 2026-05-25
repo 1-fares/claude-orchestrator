@@ -108,7 +108,7 @@ and its licence, add attribution, and confirm no bundled CJK remains.
 
 ---
 
-## B4 - Remote / mobile control
+## B4 - Remote / mobile control (Tiers 0-2 built; user-side Tailscale setup pending)
 
 **What.** Drive the system from a phone: one session running on the machine,
 connect remotely, kick off and monitor builds and debugging, large and small.
@@ -116,15 +116,35 @@ connect remotely, kick off and monitor builds and debugging, large and small.
 **Why.** The tmux substrate already makes this largely an SSH-plus-attach
 problem; high convenience for low mechanism.
 
-**Scope / considerations.**
-- SSH or mosh plus tmux attach from a mobile terminal; `team-status.sh` as a
-  compact mobile dashboard.
-- Push notifications when input is needed or a run finishes.
-- Security: exposing SSH; running unattended `--dangerously-skip-permissions`
-  triggered remotely; answering the READY gate and menus on a small screen.
-- Evaluate Claude Code's own remote/web/cloud surfaces vs a plain SSH+tmux path.
+**Built (2026-05-25).**
+- **Tier 0 (docs).** QUICKSTART "Remote control from a phone" section: Tailscale
+  inside WSL2 + Tailscale Android + SSHd + ConnectBot. Plus optional Termux+mosh
+  for roaming-stable sessions (ConnectBot drops on WiFi-cellular hand-off).
+- **Tier 1 (small-screen helpers).** `bin/team-status.sh --mobile` (~40-col
+  compact dashboard); `bin/inbox.sh` (every live orchestrator run on this clone
+  with run-id, age, last orchestrator message, attach + approve commands);
+  `bin/approve.sh` (send `go` or any text to a specific run's orchestrator
+  pane).
+- **Tier 2 (action-button hook).** `bin/notify-hook.py` (singleton HTTP daemon,
+  stdlib only, HMAC-signed URLs with TTL); `bin/sign-action-url.sh` (URL
+  generator); `bin/notify-via-ntfy.sh` (sender helper). Actions: approve, pause,
+  resume, stop, priority. Audit log of every accept and reject. Verified end to
+  end with curl against a sentinel session (bad-sig 403, expired 403, valid
+  dispatch 200 + correct send-keys).
 
-**Depends on.** B2 (background + notify).
+**Remaining (user-side).**
+- Install Tailscale in WSL2 + Tailscale Android app + ConnectBot key.
+- Start the hook bound to the tailnet IP and add `NOTIFY_HOOK_BASE` to
+  `~/.bashrc`.
+- Optional: rotate the public ntfy topic to a long-random one; self-host ntfy on
+  the WSL2 host (Tailscale-only) if pushes should be fully private.
+- Optional: update `roles/orchestrator.md` to call `notify-via-ntfy.sh` with
+  `--action approve` whenever it stops at a gate. Today the orchestrator just
+  prints its question to its pane; once it pushes, the phone gets the tap-to-go
+  button automatically.
+
+**Depends on.** B2 (background + notify) -- now mostly independent, since this
+build wired the notify half.
 
 ---
 

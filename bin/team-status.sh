@@ -4,16 +4,27 @@
 # messages.log for each role's last message. No bus auth needed, so it runs from
 # anywhere (the orchestrator can also run /is list for the live bus roster).
 #
-# Usage: bin/team-status.sh
+# Usage: bin/team-status.sh           # wide desktop output
+#        bin/team-status.sh --mobile  # compact ~40-col output for a phone
 
 set -uo pipefail
+
+mobile=0
+for a in "$@"; do case "$a" in
+  --mobile|-m) mobile=1 ;;
+  -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+esac; done
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 active="$TEAM_DIR/active"
 msglog="$HOME/.claude/data/inter-session/messages.log"
 
-echo "team: $TEAM_SESSION   bus port: $TEAM_PORT"
+if [ "$mobile" = 1 ]; then
+  echo "team $TEAM_SESSION  port $TEAM_PORT"
+else
+  echo "team: $TEAM_SESSION   bus port: $TEAM_PORT"
+fi
 if [ ! -f "$active" ] || [ ! -s "$active" ]; then
   echo "no roles recorded (.team/active empty). Launch with bin/launch-team.sh."
   exit 0
@@ -67,6 +78,22 @@ health_of() {  # role -> short health state (from api-watchdog), or "-"
     *)           echo "$s" ;;
   esac
 }
+
+if [ "$mobile" = 1 ]; then
+  # 40-col compact: role | live | idle | health (drop pid/window/last-msg).
+  printf '%-12s %-3s %-5s %s\n' ROLE A IDLE HEALTH
+  while IFS=$'\t' read -r pid wid role; do
+    [ -n "${role:-}" ] || continue
+    if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then
+      alive=y; else alive=X; fi
+    idle="-"
+    if [ -n "${wid:-}" ] && act="$(tmux display-message -p -t "$wid" '#{window_activity}' 2>/dev/null)" && [ -n "$act" ]; then
+      idle="$(fmt_age "$act")"
+    fi
+    printf '%-12s %-3s %-5s %s\n' "${role:0:12}" "$alive" "$idle" "$(health_of "$role")"
+  done < "$active"
+  exit 0
+fi
 
 printf '%-14s %-8s %-6s %-8s %-7s %-9s %s\n' ROLE PID ALIVE WINDOW IDLE HEALTH LAST
 while IFS=$'\t' read -r pid wid role; do
