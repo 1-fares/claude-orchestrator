@@ -30,3 +30,7 @@ tasks/*
 
 # Past-run task artifacts are private working history; not shipped.
 tasks-archive/
+
+# Personal infra tooling, hardcoded to a private deployment (resource names,
+# regions, alarm/metric names). Kept local, not shipped with the template.
+bin/preflight-cutover-observation.sh
