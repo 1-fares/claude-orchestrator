@@ -1,0 +1,13 @@
+# Patterns the api-watchdog looks for on each role's tmux pane to flag
+# transient, retryable Anthropic API / network errors. One extended regex per
+# line; case-insensitive. Edit freely; per-clone, gitignored if you wish.
+API Error.*Rate limit
+API Error.*temporarily limiting requests
+API Error.*Overloaded
+rate.*limited
+Connection error
+Network error
+ECONNRESET
+ETIMEDOUT
+fetch failed
+socket hang up

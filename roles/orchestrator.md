@@ -133,7 +133,13 @@ edit the ledger and broadcast "re-read the goal".
   record the remaining work as a new `todo` unit in the ledger with a note
   pointing to its origin. No silent gaps.
 - **Track liveness.** Periodically run `/is list`, diff the live roster against
-  the team in `.team/active`, and treat a missing name as dead, not slow.
+  the team in `$TEAM_DIR/active`, and treat a missing name as dead, not slow.
+  Also check `$TEAM_DIR/health/<role>.json` (written by `bin/api-watchdog.sh`):
+  a role marked `stalled-api` is throttled but the watchdog is retrying with
+  backoff, do not reassign; a role marked `give-up` is stuck after the retry
+  budget and needs human intervention (escalate via your channel; if the brief
+  has a fallback, route the unit to it). This is PULL: never message a stalled
+  role about its own state.
 - **Report and tear down.** State what was built, what is verified, and what is
   not. Then run `bin/stop-team.sh`.
 

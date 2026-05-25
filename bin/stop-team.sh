@@ -60,6 +60,17 @@ if [ -f "$active" ]; then
   done < "$active"
 fi
 
+# Kill the API watchdog, if launch-team.sh started one for this run.
+wd_pidf="$TEAM_DIR/api-watchdog.pid"
+if [ -f "$wd_pidf" ]; then
+  wd_pid="$(cat "$wd_pidf" 2>/dev/null || true)"
+  if [ -n "$wd_pid" ] && kill -0 "$wd_pid" 2>/dev/null; then
+    kill -TERM "$wd_pid" 2>/dev/null || true
+    echo "stopped api-watchdog (pid $wd_pid)"; killed=1
+  fi
+  rm -f "$wd_pidf"
+fi
+
 # Kill this team's /is bus server (scoped to TEAM_PORT), if we own it.
 srv_pidf="$HOME/.claude/data/inter-session/server.$TEAM_PORT.pid"
 if [ -f "$srv_pidf" ]; then

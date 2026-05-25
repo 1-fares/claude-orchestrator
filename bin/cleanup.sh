@@ -122,6 +122,18 @@ if [ "${#unsigned[@]}" -gt 0 ]; then
   echo "   To stop one of these, do it yourself after confirming it is not live work."
 fi
 
+# 3b. API watchdog (if launch-team.sh started one for this clone's team).
+wd_pidf="$TEAM_DIR/api-watchdog.pid"
+if [ -f "$wd_pidf" ]; then
+  wd_pid="$(cat "$wd_pidf" 2>/dev/null || true)"
+  if [ -n "$wd_pid" ] && kill -0 "$wd_pid" 2>/dev/null; then
+    tag "kill api-watchdog (pid $wd_pid)"
+    [ "$DRY" = 0 ] && { kill -TERM "$wd_pid" 2>/dev/null || true; sleep 1; kill -KILL "$wd_pid" 2>/dev/null || true; rm -f "$wd_pidf"; }
+  else
+    [ "$DRY" = 0 ] && rm -f "$wd_pidf"
+  fi
+fi
+
 # 4. Stale /is bus pidfiles (dead pids only; never kill a live bus server).
 for pf in "$HOME/.claude/data/inter-session/"server.*.pid; do
   [ -e "$pf" ] || continue

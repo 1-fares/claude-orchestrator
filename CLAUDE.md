@@ -116,6 +116,16 @@ file is the portable version of the same discipline.
   `TEAM_RUN_ID` = today's per-clone behavior (state in `.team/`).
 - `bin/preflight-deploy.sh`, `bin/panic.sh`, `bin/watchdog.sh`, `bin/worktree.sh`,
   `bin/trust-workdir.sh` (pre-accept the workspace-trust prompt for a dir).
+- `bin/api-watchdog.sh`: detects role sessions stalled on transient Anthropic
+  API rate-limit / network errors, auto-sends `try again` with exponential
+  backoff (default 30/60/120/300/600s, max 5 retries), writes per-role state to
+  `$TEAM_DIR/health/<role>.json`, and pushes `ntfy` notifications on state
+  changes when `NTFY_URL` is set (first stall, recovery, give-up). Started
+  automatically by `launch-team.sh`; cleaned up by `stop-team.sh` / `panic.sh` /
+  `cleanup.sh`. Pure shell, makes no Claude API call, so cannot itself be
+  rate-limited. Tier-3 awareness is pull-only: the orchestrator reads
+  `$TEAM_DIR/health/` to decide. Patterns at `bin/api-watchdog.patterns`.
+  Disable with `API_WATCHDOG_DISABLED=1`.
 - **Non-code substrate.** `roles/` ships generic non-code roles, structural
   pipeline references that codify lane discipline (`researcher`, `writer`,
   `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`, `doc-integrator`),

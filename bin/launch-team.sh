@@ -219,3 +219,13 @@ done
 echo
 echo "Roles running in tmux session '$session' on the team socket '$TEAM_TMUX'."
 echo "Watch:  bin/team-status.sh    Attach:  tmux -L $TEAM_TMUX attach -t $session"
+
+# Start the API watchdog (auto-recover transient Anthropic rate-limit / network
+# stalls). Pure shell, no claude API calls, so cannot itself be rate-limited.
+# Set API_WATCHDOG_DISABLED=1 to skip.
+if [ "${API_WATCHDOG_DISABLED:-0}" != "1" ] && [ -x "$repo/bin/api-watchdog.sh" ]; then
+  mkdir -p "$TEAM_DIR"
+  nohup "$repo/bin/api-watchdog.sh" >"$TEAM_DIR/api-watchdog.log" 2>&1 &
+  echo "$!" > "$TEAM_DIR/api-watchdog.pid"
+  echo "api-watchdog started (pid $!, log: $TEAM_DIR/api-watchdog.log)"
+fi

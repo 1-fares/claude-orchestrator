@@ -56,7 +56,19 @@ print(f"{text}{age}")
 PY
 }
 
-printf '%-14s %-8s %-6s %-8s %-7s %s\n' ROLE PID ALIVE WINDOW IDLE LAST
+health_of() {  # role -> short health state (from api-watchdog), or "-"
+  local hf="$TEAM_DIR/health/$1.json"
+  [ -f "$hf" ] || { echo "-"; return; }
+  local s r; s="$(jq -r '.state // "-"' "$hf" 2>/dev/null)"; r="$(jq -r '.retries // 0' "$hf" 2>/dev/null)"
+  case "$s" in
+    active)      echo "ok" ;;
+    stalled-api) echo "STALL/${r}" ;;
+    give-up)     echo "GIVE-UP" ;;
+    *)           echo "$s" ;;
+  esac
+}
+
+printf '%-14s %-8s %-6s %-8s %-7s %-9s %s\n' ROLE PID ALIVE WINDOW IDLE HEALTH LAST
 while IFS=$'\t' read -r pid wid role; do
   [ -n "${role:-}" ] || continue
   if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then
@@ -65,5 +77,5 @@ while IFS=$'\t' read -r pid wid role; do
   if [ -n "${wid:-}" ] && act="$(tmux display-message -p -t "$wid" '#{window_activity}' 2>/dev/null)" && [ -n "$act" ]; then
     win="$wid"; idle="$(fmt_age "$act")"
   fi
-  printf '%-14s %-8s %-6s %-8s %-7s %s\n' "$role" "$pid" "$alive" "$win" "$idle" "$(last_msg "$role")"
+  printf '%-14s %-8s %-6s %-8s %-7s %-9s %s\n' "$role" "$pid" "$alive" "$win" "$idle" "$(health_of "$role")" "$(last_msg "$role")"
 done < "$active"

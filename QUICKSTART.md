@@ -101,6 +101,27 @@ slide content, legal analysis, anything the operator briefs.
 - **Domain overlays** (Swiss legal cite-verifier, RFP compliance matrix, etc.)
   are added on demand; not in the substrate.
 
+## API rate-limit resilience
+
+Transient Anthropic API rate-limit / network errors stall a role's pane with a
+`try again` prompt; in a multi-role run, an unwatched stall halts the team
+silently. `bin/launch-team.sh` auto-starts `bin/api-watchdog.sh`, a pure-shell
+daemon that scans every team window, detects the stall, and sends `try again`
+with exponential backoff (30s → 60s → 120s → 300s → 600s, max 5 retries). It
+records per-role state in `$TEAM_DIR/health/<role>.json` (visible in the
+`HEALTH` column of `bin/team-status.sh`) and pushes `ntfy` on state changes
+(first stall, recovery, give-up) when `NTFY_URL` is set.
+
+```
+# Pick any ntfy topic (account-free; just open it in the ntfy phone app):
+export NTFY_URL=https://ntfy.sh/orch-<your-handle>-<random>
+bin/run.sh ...
+```
+
+The watchdog makes no Claude API call, so it cannot itself be rate-limited.
+Patterns it looks for live in `bin/api-watchdog.patterns` (edit freely).
+Disable with `API_WATCHDOG_DISABLED=1`.
+
 ## Parallel runs (same clone)
 
 Every `bin/run.sh` invocation gets its own `TEAM_RUN_ID`, so its own bus port,
