@@ -62,14 +62,22 @@ notify() {
 now() { date +%s; }
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null; }
 
-# classify <pane-id> -> echoes one of: active | stalled-api | give-up
-# Reads the bottom of the pane; "stalled-api" iff an error pattern is visible
-# AND there is no active spinner (claude is idle waiting for input).
+# classify <pane-id> -> echoes one of: active | stalled-api
+# "stalled-api" requires THREE conditions on the visible bottom of the pane:
+#   1. no active spinner (claude is not currently working)
+#   2. an empty Claude-TUI input prompt ('❯ ' on a line by itself near the
+#      bottom) is visible -- this is the actual idle marker; without it, the
+#      role may have legitimately printed an error string but be actively
+#      typing/processing, sending 'try again' would corrupt their input
+#   3. one of the configured error patterns is visible in the recent output
 classify() {
-  local visible busy hit
+  local visible busy hit idle_prompt
   visible="$(tmux capture-pane -t "$1" -p 2>/dev/null | tail -25)"
   busy="$(printf '%s' "$visible" | grep -ciE 'esc to interrupt|Working…|Thinking|· ↓|tokens ·')"
   if [ "$busy" -gt 0 ]; then echo "active"; return; fi
+  # Require an empty '❯ ' prompt in the bottom few lines (no text after it).
+  idle_prompt="$(printf '%s' "$visible" | tail -8 | grep -cE '^[[:space:]]*❯[[:space:]]*$')"
+  if [ "$idle_prompt" -eq 0 ]; then echo "active"; return; fi
   hit="$(printf '%s' "$visible" | grep -iE "$pattern_regex" | head -1 || true)"
   if [ -n "$hit" ]; then echo "stalled-api"; return; fi
   echo "active"
