@@ -72,6 +72,19 @@ file and goal are given by absolute path. The orchestrator (bus name
   `uv run <cmd>` to run anything (e.g. `uv run pytest`, `uv run python app.py`).
   Do not use bare `pip`, `python -m venv`, or a global interpreter. Verify
   commands run under `uv run` so dependencies resolve.
+- **Pragmatic solutions over dead-ends.** When something fails or is blocked,
+  do not stop at "cannot be done; the API / permissions / owner will not allow
+  it." Diagnose the cause, then build or propose the path a competent human
+  tool would offer: the specific reason, the actor who can unblock it, and the
+  concrete next action. Where it is safe and in scope, automate that action
+  behind an explicit, approved step rather than leaving it as advice. A correct
+  "this is denied" is half an answer; the useful half is "here is exactly why,
+  and here is how to resolve it." This binds error envelopes, tool design, and
+  investigation reports alike: an investigation that ends "not our bug, ask
+  someone else" is not finished until it has also asked "what would make this
+  work next time, and can we provide it?" Distinguish a true hard limit (which
+  is reported plainly) from a limit that is merely inconvenient to lift (which
+  is engineered around).
 
 If the user's global instructions are also loaded, they take precedence; this
 file is the portable version of the same discipline.

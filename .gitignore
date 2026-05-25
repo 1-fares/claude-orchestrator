@@ -10,3 +10,23 @@ project.conf
 
 # Generated team tmux config (per-clone, imports your prefix; not for the template).
 team.tmux.conf
+
+# Privacy: per-project goal/task briefs are private working files. A real brief
+# can carry endpoints, emails, local paths, and app internals, none of which
+# belong in this public template. Only the templates and the curated generic
+# demos are tracked; everything else under goals/ and tasks/ is ignored, so a
+# stray `git add .` cannot leak a real project brief.
+goals/*
+!goals/_TEMPLATE.md
+!goals/bugfix-inflection.md
+!goals/bugfix-slugify.md
+!goals/bugfix-validatorjs.md
+!goals/csv-dashboard.md
+!goals/expense-tracker.md
+!goals/repo-bugfix.md
+
+tasks/*
+!tasks/_TEMPLATE.md
+
+# Past-run task artifacts are private working history; not shipped.
+tasks-archive/
