@@ -65,20 +65,22 @@ iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-
 # classify <pane-id> -> echoes one of: active | stalled-api
 # "stalled-api" requires THREE conditions on the visible bottom of the pane:
 #   1. no active spinner (claude is not currently working)
-#   2. an empty Claude-TUI input prompt ('❯ ' on a line by itself near the
-#      bottom) is visible -- this is the actual idle marker; without it, the
-#      role may have legitimately printed an error string but be actively
-#      typing/processing, sending 'try again' would corrupt their input
+#   2. the Claude-TUI input prompt marker '❯' is visible in the bottom few
+#      lines, i.e. the input box is rendered (whether the line shows
+#      placeholder text like '❯ Try "..."', queued user text like '❯ try again',
+#      or just '❯ '). PRESENCE of '❯' is the idle marker; we cannot require an
+#      empty prompt because the TUI always shows placeholder text when empty
 #   3. one of the configured error patterns is visible in the recent output
+#      (bottom 15 lines), not just deep scrollback
 classify() {
-  local visible busy hit idle_prompt
-  visible="$(tmux capture-pane -t "$1" -p 2>/dev/null | tail -25)"
-  busy="$(printf '%s' "$visible" | grep -ciE 'esc to interrupt|Working…|Thinking|· ↓|tokens ·')"
+  local visible busy idle hit
+  visible="$(tmux capture-pane -t "$1" -p 2>/dev/null)"
+  busy="$(printf '%s' "$visible" | tail -25 | grep -ciE 'esc to interrupt|Working…|Thinking|· ↓|tokens ·')"
   if [ "$busy" -gt 0 ]; then echo "active"; return; fi
-  # Require an empty '❯ ' prompt in the bottom few lines (no text after it).
-  idle_prompt="$(printf '%s' "$visible" | tail -8 | grep -cE '^[[:space:]]*❯[[:space:]]*$')"
-  if [ "$idle_prompt" -eq 0 ]; then echo "active"; return; fi
-  hit="$(printf '%s' "$visible" | grep -iE "$pattern_regex" | head -1 || true)"
+  # Claude-TUI input box rendered => idle, waiting for input.
+  idle="$(printf '%s' "$visible" | tail -8 | grep -c '❯' || true)"
+  if [ "$idle" -eq 0 ]; then echo "active"; return; fi
+  hit="$(printf '%s' "$visible" | tail -15 | grep -iE "$pattern_regex" | head -1 || true)"
   if [ -n "$hit" ]; then echo "stalled-api"; return; fi
   echo "active"
 }
