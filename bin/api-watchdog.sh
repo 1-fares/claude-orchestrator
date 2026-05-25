@@ -109,7 +109,7 @@ scan_once() {
           if [ "$prev" != "stalled-api" ] && [ "$prev" != "give-up" ]; then
             since=$nowts; retries=0; last_retry=0
             echo "$(iso "$nowts") [$name] STALLED (api/network error)" >> "$af"
-            notify "🟠 [orchestrator/$TEAM_RUN_ID] role '$name' stalled (API/network); watchdog retrying"
+            notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' stalled (API/network); watchdog retrying"
           fi
           if [ "$prev" = "give-up" ]; then
             # already given up; only write state, do not retry or notify again
@@ -119,7 +119,7 @@ scan_once() {
           # Retry decision
           if [ "$retries" -ge "$max_retries" ]; then
             echo "$(iso "$nowts") [$name] GIVE-UP after $retries retries" >> "$af"
-            notify "🔴 [orchestrator/$TEAM_RUN_ID] role '$name' stuck after $retries retries; manual intervention needed"
+            notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' stuck after $retries retries; manual intervention needed"
             write_state "$hf" "give-up" "$retries" "$last_retry" "$since"
             continue
           fi
@@ -138,7 +138,7 @@ scan_once() {
         active)
           if [ "$prev" = "stalled-api" ] || [ "$prev" = "give-up" ]; then
             echo "$(iso "$nowts") [$name] RECOVERED after $retries retries" >> "$af"
-            notify "🟢 [orchestrator/$TEAM_RUN_ID] role '$name' recovered"
+            notify "🟢 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' recovered"
           fi
           write_state "$hf" "active" 0 0 "$nowts"
           ;;
@@ -146,7 +146,7 @@ scan_once() {
     done
 }
 
-echo "api-watchdog: starting team=$TEAM_SESSION run=$TEAM_RUN_ID interval=${interval}s max-retries=$max_retries ntfy=${NTFY_URL:-<unset>}"
+echo "api-watchdog: starting team=$TEAM_SESSION run=${TEAM_RUN_ID:-legacy} interval=${interval}s max-retries=$max_retries ntfy=${NTFY_URL:-<unset>}"
 if [ "$once" = 1 ]; then
   scan_once; exit 0
 fi
