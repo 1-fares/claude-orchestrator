@@ -1,6 +1,6 @@
 # Backlog
 
-Forward-looking work items, captured 2026-05-24. Not yet scheduled. B3 is
+Forward-looking work items, last updated 2026-05-25. Not yet scheduled. B3 is
 discussion-only for now (no changes until agreed). Prior-art research precedes
 build on all of them: adopt or integrate mature existing tools rather than
 reinvent.
@@ -23,7 +23,8 @@ use (B4).
 **Scope / considerations.**
 - Auto-approve or async-approve the READY gate; machine-checkable acceptance, a
   round budget, and a kill switch.
-- Notification on done / blocked / needs-input (ties to B4 push).
+- Notification on done / blocked / needs-input (the `ntfy` push channel +
+  `NTFY_URL` env are already wired by B8; reuse them).
 - A watchdog for orphans; never leak tmux servers, bus servers, or pids across
   many runs. (Teardown was reliable in testing: every `reset.sh` killed the
   session, reaped the tree, and stopped the bus on its port.)
@@ -33,8 +34,10 @@ use (B4).
 **What's already in place that lowers the cost.** Per-run `TEAM_RUN_ID` isolation
 (parallel teams trivially), recovery-aware `bin/run.sh`, orphan-safe
 `bin/cleanup.sh`, the `interactive | autonomous` mode is already a concept in
-`roles/orchestrator.md`, and the orchestrator can be driven programmatically
-(proven during testing).
+`roles/orchestrator.md`, the orchestrator can be driven programmatically
+(proven during testing), and **B8** (`bin/api-watchdog.sh`) gives transient
+rate-limit / network resilience plus a working ntfy push channel, which were
+the two hard prerequisites for unattended runs.
 
 **Proposed surface.** A single command:
 ```
@@ -194,10 +197,5 @@ so the substrate still has real advantages today.
   Tailscale + mosh + `tmux attach` + an `ntfy` hook. Omnara (OSS, self-hostable)
   for a polished phone UI. First-party Remote Control steers a single session, not
   the bus/team. Security: `--dangerously-skip-permissions` + remote needs a
-  sandbox (Anthropic is moving to OS-level sandboxing).
-- **B5**: integrate, do not rebuild, for research (GPT Researcher, PaperQA2,
-  STORM) and legal (Harvey/CoCounsel; autonomous legal output is a no-go, ~1 in 6
-  fabrication even in purpose-built tools). Genuine gaps: writing/editing
-  pipelines and content-correct slides. Required core change: **pluggable
-  non-exit-0 gates** (citation / fact-check / rubric-judge), which is also our
-  cross-domain differentiator.
+  sandbox (Anthropic is moving to OS-level sandboxing). The `ntfy` half is now
+  in place via B8; remaining work is the SSH/mosh path and the mobile UX.
