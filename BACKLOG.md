@@ -108,43 +108,38 @@ and its licence, add attribution, and confirm no bundled CJK remains.
 
 ---
 
-## B4 - Remote / mobile control (Tiers 0-2 built; user-side Tailscale setup pending)
+## B4 - Remote / mobile control (primary path = /remote-control; escape-hatch helpers built)
 
 **What.** Drive the system from a phone: one session running on the machine,
-connect remotely, kick off and monitor builds and debugging, large and small.
+connect remotely, kick off and monitor builds and debugging.
 
-**Why.** The tmux substrate already makes this largely an SSH-plus-attach
-problem; high convenience for low mechanism.
+**Decision (2026-05-25).** Use first-party **`/remote-control`** as the primary
+path. Outbound-only, polished mobile app, push notifications when Claude needs
+input, multi-session (server mode, up to 32), can attach to an already-running
+session (`/remote-control` slash command). Zero host-side network setup.
 
-**Built (2026-05-25).**
-- **Tier 0 (docs).** QUICKSTART "Remote control from a phone" section: Tailscale
-  inside WSL2 + Tailscale Android + SSHd + ConnectBot. Plus optional Termux+mosh
-  for roaming-stable sessions (ConnectBot drops on WiFi-cellular hand-off).
-- **Tier 1 (small-screen helpers).** `bin/team-status.sh --mobile` (~40-col
-  compact dashboard); `bin/inbox.sh` (every live orchestrator run on this clone
-  with run-id, age, last orchestrator message, attach + approve commands);
-  `bin/approve.sh` (send `go` or any text to a specific run's orchestrator
-  pane).
-- **Tier 2 (action-button hook).** `bin/notify-hook.py` (singleton HTTP daemon,
-  stdlib only, HMAC-signed URLs with TTL); `bin/sign-action-url.sh` (URL
-  generator); `bin/notify-via-ntfy.sh` (sender helper). Actions: approve, pause,
-  resume, stop, priority. Audit log of every accept and reject. Verified end to
-  end with curl against a sentinel session (bad-sig 403, expired 403, valid
-  dispatch 200 + correct send-keys).
+**Built (2026-05-25), retained as escape hatch.** Not needed for the primary
+path; useful when `/remote-control` cannot cover the case (shell access, role
+window scrollback, custom watchdog action buttons, multi-run lifecycle).
+- **Tier 1 helpers.** `bin/team-status.sh --mobile` (compact dashboard);
+  `bin/inbox.sh` (every live run with run-id + attach/approve commands);
+  `bin/approve.sh` (send `go` or any text to a run's orchestrator pane).
+- **Tier 2 action-button hook.** `bin/notify-hook.py` (singleton HTTP daemon,
+  stdlib only, HMAC-signed URLs, TTL); `bin/sign-action-url.sh`;
+  `bin/notify-via-ntfy.sh`. OFF by default; start with
+  `bin/notify-hook.py --bind <reachable-ip> --port 8421` if you decide you
+  want it. Verified end to end (bad-sig 403, expired 403, valid 200 + correct
+  send-keys).
 
-**Remaining (user-side).**
-- Install Tailscale in WSL2 + Tailscale Android app + ConnectBot key.
-- Start the hook bound to the tailnet IP and add `NOTIFY_HOOK_BASE` to
-  `~/.bashrc`.
-- Optional: rotate the public ntfy topic to a long-random one; self-host ntfy on
-  the WSL2 host (Tailscale-only) if pushes should be fully private.
-- Optional: update `roles/orchestrator.md` to call `notify-via-ntfy.sh` with
-  `--action approve` whenever it stops at a gate. Today the orchestrator just
-  prints its question to its pane; once it pushes, the phone gets the tap-to-go
-  button automatically.
+**Gap that `/remote-control` does not cover.** The api-watchdog's stall /
+recovery / give-up signals (B8) do not flow through it -- they only fire when
+Claude itself decides input is needed. Keep both apps on the phone: the Claude
+app for `/remote-control` + the ntfy app for watchdog pushes.
 
-**Depends on.** B2 (background + notify) -- now mostly independent, since this
-build wired the notify half.
+**Reaching the host for the escape hatch.** A tunnel (Tailscale, Cloudflare
+Tunnel, anything) is needed only if you choose to use the helpers from the
+phone. Not required for the primary path. If set up, point `NOTIFY_HOOK_BASE`
+at the reachable IP and the signed-URL helper picks it up automatically.
 
 ---
 
