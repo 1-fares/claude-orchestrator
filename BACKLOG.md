@@ -3,7 +3,86 @@
 Forward-looking work items, last updated 2026-05-25. Not yet scheduled. B3 is
 discussion-only for now (no changes until agreed). Prior-art research precedes
 build on all of them: adopt or integrate mature existing tools rather than
-reinvent.
+reinvent. **B9 (dynamic team scaling) is the priority next build per the operator
+(2026-05-25); design + policy resolved below.**
+
+---
+
+## B9 - Dynamic team scaling (grow/shrink the team mid-run)
+
+**What.** Let the orchestrator change team composition as work progresses: spawn
+a specialist when a clear skill gap appears mid-run (a researcher, a second
+front-end dev, an ETL specialist, an Azure DevOps engineer, ...) and retire a
+role whose job is complete and won't recur. Bounded, justified, never runaway.
+
+**Why.** Today the team is fixed at the READY gate and launched once. Real work
+reveals needs that were not visible up front (an implementer hits an ETL problem
+it is not equipped for; a unit blocks waiting on expertise; independent work
+appears that a second same-role would parallelise). The orchestrator should
+adapt the roster instead of forcing the work into an ill-fitting role or
+stalling.
+
+**Resolved policy (operator decisions 2026-05-25).**
+- **Authority: auto within a cap, surface every change.** The orchestrator adds
+  and retires freely up to `MAX_TEAM_SIZE`, logs the why to the decision-log, and
+  emits a one-line `added X / retired Y (reason)` notice. Operator can veto after
+  the fact.
+- **Hard cap: `MAX_TEAM_SIZE=8`** (env-overridable). `add-role.sh` refuses past
+  it, forcing a retire-or-ask. This is the real backstop against runaway spawning.
+- **Autonomous (B2): growth allowed unattended within the cap, with an ntfy push
+  per roster change.** Pruning (pause/retire) also allowed unattended.
+
+**Guardrails (the "don't go wild" part).**
+1. Hard cap (8) enforced by `add-role.sh`.
+2. Reuse-before-spawn: check whether an existing idle role with the right skill
+   can take the work before creating a new one.
+3. Justification logged: every add/retire writes a decision-log line (why +
+   triggering unit). No silent roster churn.
+4. Anti-flap hysteresis: do not retire then re-spawn the same base within a
+   cooldown; no speculative "just in case" spawns.
+
+**Pause vs retire (a deliberate distinction).** An idle role on the bus costs
+nothing (the `/is` monitor holds it open with no API calls). So retire is NOT a
+cost lever; its value is freeing a slot under the cap and keeping the roster
+legible. Therefore: temporarily-idle role -> `pause:` (keeps accumulated context,
+free, instant resume); done-forever role -> retire (terminal: kills the session,
+frees the slot, loses context).
+
+**What already exists (lowers the cost a lot).**
+- `launch-team.sh` already adds a window to a LIVE session (`start_one`, the
+  has-session branch) and deliberately preserves live `.team/active` entries so a
+  second launch adds rather than replaces (the reap-dead-keep-live block).
+- `stop-team.sh` already has the clean per-role kill pattern to reuse for a
+  single-role retire: graceful send-keys -> TERM process group -> KILL -> close
+  window -> verify against `active`.
+- The api-watchdog re-scans `list-windows` each tick, so a newly added role is
+  covered automatically.
+- B5 auto-authoring (`ensure_role_file` from `_TEMPLATE.md`) already concocts a
+  tailored role file for a novel skill.
+
+**To build.**
+1. `bin/add-role.sh [--workdir DIR] <goal> <role> [--task <brief>]`: spawn ONE
+   role into the live session (factor/reuse `start_one`). Refuse if already live;
+   optional auto-numbering; enforce `MAX_TEAM_SIZE`; decision-log line; (B2) ntfy.
+2. `bin/retire-role.sh <role> [--reason ...] [--force]`: graceful single-role
+   teardown scoped to that one `active` entry; archive `health/`+audit to
+   `$TEAM_DIR/retired/`; refuse if the role has in-flight units unless `--force`
+   (which first files the remaining work as a `todo` unit); decision-log line.
+3. Fix: make `launch-team.sh`'s api-watchdog start idempotent (a repeated call
+   currently starts a SECOND watchdog; guard on the pidfile's process being live).
+4. `roles/orchestrator.md`: a "Dynamic team management" section (triggers,
+   guardrails, reuse-before-spawn, pause-vs-retire, the cap, justification).
+5. `templates/state.md`: a "team roster" section (current roles + status + when
+   added/retired) so the roster survives orchestrator compaction.
+
+**Safety.** `retire-role.sh` must reuse the cleanup/stop-team scoping discipline:
+operate ONLY on this run's `TEAM_SESSION`, kill ONLY the target role's recorded
+pid-group and window, verify it is still a claude process before killing, never
+touch another session. (Same hard-won rules as `cleanup.sh`.)
+
+**Depends on / strengthens.** Independent of B2 but strengthens it (autonomous
+runs that can right-size their own team are far more capable). Reuses B8's ntfy
+channel for the autonomous-mode change notices.
 
 ---
 
