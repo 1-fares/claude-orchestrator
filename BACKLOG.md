@@ -110,6 +110,12 @@ and its licence, add attribution, and confirm no bundled CJK remains.
 
 ## B4 - Remote / mobile control (primary path = /remote-control; escape-hatch helpers built)
 
+**STATUS 2026-05-25: phone test ON HOLD until 2026-06-02.** Code is built and
+verified locally. The `/remote-control` end-to-end phone test is blocked: the
+operator switched Anthropic accounts for usage reasons and the rc-connected
+account is unavailable until after 2026-06-02. Resume the Step 1-8 walkthrough
+(QUICKSTART "Remote control from a phone") then.
+
 **What.** Drive the system from a phone: one session running on the machine,
 connect remotely, kick off and monitor builds and debugging.
 
