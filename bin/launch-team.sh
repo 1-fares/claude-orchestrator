@@ -103,6 +103,12 @@ echo "Watch:  bin/team-status.sh    Attach:  tmux -L $TEAM_TMUX attach -t $sessi
 # Idempotent: a repeated launch does not start a second watchdog.
 start_api_watchdog
 
+# Start the tmux watchdog (detect a dead tmux server fast, snapshot panes for
+# forensics, ntfy on transitions, write CRASH-DETECTED.md). Added May 2026
+# after a transient-scope cleanup killed an entire team in one second.
+# Opt-out: TMUX_WATCHDOG_DISABLED=1. Idempotent.
+start_tmux_watchdog
+
 # Start the B11 visual dashboard (second-screen view of the live run). Loopback-
 # only, read-only, opt-out with DASHBOARD_DISABLED=1, port override with
 # DASHBOARD_PORT. Idempotent like the watchdog. Torn down by stop-team.sh /
@@ -111,3 +117,63 @@ start_api_watchdog
 # own guard short-circuits without launching the server.
 prompt_dashboard_choice
 start_dashboard
+
+# Bring up the user-communicator role (u28 wiring): the team's two-way liaison
+# to the operator. Same shape as the dashboard: a soft default-Y prompt with
+# COMMUNICATOR_DISABLED=1 env override, idempotent (skips when the bus already
+# has a 'communicator' peer or when the tmux 'communicator' window exists).
+prompt_communicator_choice() {
+  if [ "${COMMUNICATOR_DISABLED:-0}" = "1" ]; then
+    echo "communicator: skipped (COMMUNICATOR_DISABLED=1)"
+    return 0
+  fi
+  if [ -t 0 ]; then
+    printf 'Spawn the user-communicator role? [Y/n] '
+  fi
+  local ans=""
+  if ! read -r -t 5 ans; then
+    [ -t 0 ] && echo
+    if [ -t 0 ]; then
+      echo "communicator: accepted (timeout, default Y)"
+    else
+      echo "communicator: prompt skipped (non-tty, default Y)"
+    fi
+    return 0
+  fi
+  case "$ans" in
+    [Nn]|[Nn][Oo])
+      export COMMUNICATOR_DISABLED=1
+      echo "communicator: declined; COMMUNICATOR_DISABLED=1 for this launch"
+      ;;
+    "")
+      echo "communicator: accepted (default Y)"
+      ;;
+    *)
+      echo "communicator: accepted ($ans)"
+      ;;
+  esac
+}
+
+start_communicator() {
+  [ "${COMMUNICATOR_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/communicator.sh" ] || return 0
+
+  # Idempotency: prefer the bus as the source of truth (the role file says the
+  # bus enforces uniqueness). Fall back to the tmux window check inside
+  # communicator.sh when the is-skill is not on disk. Either way a repeat
+  # invocation is a no-op.
+  local is_list="$HOME/.claude/skills/is/bin/list.py" existing_id=""
+  if [ -f "$is_list" ]; then
+    existing_id="$(python3 "$is_list" 2>/dev/null \
+                     | awk '$1 == "communicator" {print $NF; exit}')"
+    if [ -n "$existing_id" ]; then
+      echo "communicator already running on the bus (peer id $existing_id)"
+      return 0
+    fi
+  fi
+
+  "$repo/bin/communicator.sh"
+}
+
+prompt_communicator_choice
+start_communicator
