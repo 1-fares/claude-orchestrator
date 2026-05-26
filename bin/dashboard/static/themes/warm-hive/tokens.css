@@ -3,6 +3,7 @@
 :root[data-theme="warm-hive"] {
   --bg:                #14110A;
   --surface:           #1F1A12;
+  --surface-2:         #2E2618;
   --text:              #FBEDD0;
   --alert:             #B85240;
   --node-active:       #E8B14A;
@@ -20,4 +21,5 @@
   --edge-priority:     #E8B14A;
   --edge-default:      #4A3A22;
   --selection-cue:     #FBEDD0;
+  --token-ink:         #14110A;
 }

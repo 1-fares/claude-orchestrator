@@ -3,6 +3,7 @@
 :root[data-theme="pixar-cgi"] {
   --bg:                #173544;
   --surface:           #214458;
+  --surface-2:         #2A5168;
   --text:              #ECE1C8;
   --alert:             #B83A3E;
   --node-active:       #E89A3C;
@@ -20,4 +21,5 @@
   --edge-priority:     #B83A3E;
   --edge-default:      #3A4A52;
   --selection-cue:     #ECE1C8;
+  --token-ink:         #173544;
 }

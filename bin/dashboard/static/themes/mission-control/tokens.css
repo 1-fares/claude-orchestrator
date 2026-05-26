@@ -3,6 +3,7 @@
 :root[data-theme="mission-control"] {
   --bg:                #1A1612;
   --surface:           #25201A;
+  --surface-2:         #322B22;
   --text:              #E8DCC2;
   --alert:             #D9542E;
   --node-active:       #FFB627;
@@ -20,4 +21,5 @@
   --edge-priority:     #FFB627;
   --edge-default:      #8C4A2E;
   --selection-cue:     #4DE0B8;
+  --token-ink:         #1A1612;
 }

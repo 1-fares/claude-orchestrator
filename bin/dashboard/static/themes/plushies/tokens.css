@@ -3,6 +3,7 @@
 :root[data-theme="plushies"] {
   --bg:                #2E1F12;
   --surface:           #3A281A;
+  --surface-2:         #4A3424;
   --text:              #F0DCBE;
   --alert:             #B83A2E;
   --node-active:       #E1A14C;
@@ -20,4 +21,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #4A3826;
   --selection-cue:     #F0DCBE;
+  --token-ink:         #2E1F12;
 }

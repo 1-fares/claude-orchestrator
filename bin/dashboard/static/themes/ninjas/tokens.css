@@ -3,6 +3,7 @@
 :root[data-theme="ninjas"] {
   --bg:                #0F1A28;
   --surface:           #1B2A3A;
+  --surface-2:         #243648;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;
@@ -20,4 +21,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #3A3E55;
   --selection-cue:     #F0DCB4;
+  --token-ink:         #0F1A28;
 }

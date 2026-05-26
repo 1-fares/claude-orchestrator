@@ -3,6 +3,7 @@
 :root[data-theme="constellation-spirits"] {
   --bg:                #161420;
   --surface:           #221A2E;
+  --surface-2:         #2E2438;
   --text:              #FBEDD0;
   --alert:             #B83A2E;
   --node-active:       #FFC44D;
@@ -20,4 +21,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #2A2C40;
   --selection-cue:     #FBEDD0;
+  --token-ink:         #161420;
 }

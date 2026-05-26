@@ -3,6 +3,7 @@
 :root[data-theme="comic-adventurers"] {
   --bg:                #F4ECDC;
   --surface:           #E8DEC8;
+  --surface-2:         #DED1B4;
   --text:              #1A1828;
   --alert:             #B83A2E;
   --node-active:       #D9892E;
@@ -20,4 +21,5 @@
   --edge-priority:     #C8322E;
   --edge-default:      #3A4055;
   --selection-cue:     #F0DCB4;
+  --token-ink:         #1A1828;
 }

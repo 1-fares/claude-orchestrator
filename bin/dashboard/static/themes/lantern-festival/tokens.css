@@ -3,6 +3,7 @@
 :root[data-theme="lantern-festival"] {
   --bg:                #1F1208;
   --surface:           #2A1B10;
+  --surface-2:         #3A271A;
   --text:              #FDDCB4;
   --alert:             #B6432A;
   --node-active:       #E89A3C;
@@ -20,4 +21,5 @@
   --edge-priority:     #B6432A;
   --edge-default:      #4A4A55;
   --selection-cue:     #FDDCB4;
+  --token-ink:         #1F1208;
 }
