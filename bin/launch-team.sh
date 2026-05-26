@@ -102,3 +102,9 @@ echo "Watch:  bin/team-status.sh    Attach:  tmux -L $TEAM_TMUX attach -t $sessi
 # stalls). Pure shell, no claude API calls, so cannot itself be rate-limited.
 # Idempotent: a repeated launch does not start a second watchdog.
 start_api_watchdog
+
+# Start the B11 visual dashboard (second-screen view of the live run). Loopback-
+# only, read-only, opt-out with DASHBOARD_DISABLED=1, port override with
+# DASHBOARD_PORT. Idempotent like the watchdog. Torn down by stop-team.sh /
+# panic.sh / cleanup.sh.
+start_dashboard

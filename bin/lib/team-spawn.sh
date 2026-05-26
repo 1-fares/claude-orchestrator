@@ -193,3 +193,43 @@ start_api_watchdog() {
   echo "$!" > "$pidf"
   echo "api-watchdog started (pid $!, log: $TEAM_DIR/api-watchdog.log)"
 }
+
+# Start the B11 visual dashboard for this team, once. Same shape as the api
+# watchdog: idempotent (skip if recorded pid is alive), opt-out via
+# DASHBOARD_DISABLED=1, port override via DASHBOARD_PORT. Read-only HTTP server
+# bound to 127.0.0.1 — second-screen view of a live run. Cleaned up by
+# stop-team.sh / panic.sh / cleanup.sh.
+start_dashboard() {
+  [ "${DASHBOARD_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/dashboard.sh" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  local pidf="$TEAM_DIR/dashboard.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q '[d]ashboard/server/server.py'; then
+      echo "dashboard already running (pid $oldpid)"
+      return 0
+    fi
+  fi
+  # 9>&- for the same flock reason as start_api_watchdog. The dashboard inherits
+  # TEAM_DIR from the environment, so it observes THIS run.
+  nohup "$repo/bin/dashboard.sh" --port "${DASHBOARD_PORT:-0}" \
+        >"$TEAM_DIR/dashboard.log" 2>&1 9>&- &
+  local dpid=$!
+  echo "$dpid" > "$pidf"
+  # Wait briefly for the server to bind and write its URL on the first log line.
+  local i url=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if ! kill -0 "$dpid" 2>/dev/null; then break; fi
+    url="$(grep -oE 'http://127\.0\.0\.1:[0-9]+/' "$TEAM_DIR/dashboard.log" 2>/dev/null | head -1)"
+    [ -n "$url" ] && break
+    sleep 0.2
+  done
+  if [ -n "$url" ]; then
+    echo "$url" > "$TEAM_DIR/dashboard.url"
+    echo "dashboard started (pid $dpid) — open ${url}  (log: $TEAM_DIR/dashboard.log)"
+  else
+    echo "dashboard started (pid $dpid, log: $TEAM_DIR/dashboard.log; URL not captured yet)"
+  fi
+}
