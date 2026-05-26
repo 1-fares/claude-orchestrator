@@ -69,8 +69,14 @@ export class GraphView {
         else   this.onNodeOut();
       })
       .enableNodeDrag(false)
-      .enableZoomInteraction(false)
-      .enablePanInteraction(false)
+      .enableZoomInteraction(true)
+      .enablePanInteraction(true)
+      .onEngineStop(() => {
+        if (!this._fittedOnce) {
+          this.fg.zoomToFit(400, 40);
+          this._fittedOnce = true;
+        }
+      })
       .cooldownTime(15000)
       .d3VelocityDecay(0.35)
       .warmupTicks(20);
@@ -88,6 +94,9 @@ export class GraphView {
   _resize() {
     const rect = this.container.getBoundingClientRect();
     this.fg.width(rect.width).height(rect.height);
+    if (this._fittedOnce) {
+      this.fg.zoomToFit(200, 40);
+    }
   }
 
   _edgeAlpha(l) {
@@ -392,6 +401,11 @@ export class GraphView {
     if (this.broadcastSeen.size > 1000) {
       const arr = [...this.broadcastSeen];
       this.broadcastSeen = new Set(arr.slice(-500));
+    }
+
+    if (topoChanged) {
+      // Re-arm zoomToFit so the engine-stop after the new layout refits.
+      this._fittedOnce = false;
     }
 
     if (newEdges || topoChanged) {
