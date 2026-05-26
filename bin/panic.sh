@@ -58,6 +58,18 @@ if [ -f "$wd_pidf" ]; then
   rm -f "$wd_pidf"
 fi
 
+# Dashboard server (if launch-team.sh started one).
+db_pidf="$TEAM_DIR/dashboard.pid"
+if [ -f "$db_pidf" ]; then
+  db_pid="$(cat "$db_pidf" 2>/dev/null || true)"
+  if [ -n "$db_pid" ] && kill -0 "$db_pid" 2>/dev/null \
+     && ps -p "$db_pid" -o args= 2>/dev/null | grep -q '[d]ashboard/server/server.py'; then
+    kill -KILL "$db_pid" 2>/dev/null || true
+    echo "panic: killed dashboard (pid $db_pid)"; killed=1
+  fi
+  rm -f "$db_pidf" "$TEAM_DIR/dashboard.url"
+fi
+
 # This team's /is bus server (scoped to TEAM_PORT).
 srv_pidf="$HOME/.claude/data/inter-session/server.$TEAM_PORT.pid"
 if [ -f "$srv_pidf" ]; then

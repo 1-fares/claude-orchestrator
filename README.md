@@ -187,6 +187,7 @@ bin/run.sh ~/projects/app "add a --json flag"   # target + goal in one line
 bin/run.sh "add a --json flag"     # repeat run, goal inline (uses the saved target)
 # watch / intervene / end (from another terminal):
 bin/team-status.sh                 # one-glance dashboard
+bin/dashboard.sh                   # second-screen visual dashboard (force-graph + stats)
 bin/team-broadcast.sh 'pause: hold on'     # intervene out-of-band
 bin/reset.sh                       # clean slate for a new run
 bin/panic.sh                       # emergency: stop everything
@@ -245,6 +246,14 @@ least integrated:
   `pause:`/`resume:` and `stop:`/`priority:` convention.
 - **Logs:** [`bin/team-logs.sh [role]`](./bin/team-logs.sh) shows per-role history
   from the bus message log; `--sync` materializes `.team/log/<role>.log`.
+- **Visual dashboard:** [`bin/dashboard.sh`](./bin/dashboard.sh) serves a
+  read-only second-screen view (force-directed graph of roles + stats panel)
+  on `http://127.0.0.1:<port>/`. Auto-started by `launch-team.sh`; URL is
+  printed at launch and saved to `$TEAM_DIR/dashboard.url`. Run standalone with
+  `bin/dashboard.sh [--port N] [--team-dir DIR]` against any state dir, or
+  with no live team (degrades to an empty-state view). Loopback-only.
+  Opt out with `DASHBOARD_DISABLED=1`; fix the port with `DASHBOARD_PORT=N`.
+  Cleaned up by `stop-team.sh` / `panic.sh` / `reset.sh` / `cleanup.sh`.
 
 ## Concurrency and integration
 
