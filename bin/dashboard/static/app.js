@@ -85,10 +85,12 @@ function populateThemeSelect() {
   if (!ui.themeSelect) return;
   const sel = ui.themeSelect;
   const list = themes.getRegistry();
-  // Default theme first, then the rest by display_name ascending.
-  const def = list.find(t => t.name === 'paper-puppet-stage');
+  // Default theme first, then the rest by display_name ascending. The
+  // canonical default name lives in glyphs.js so a future change updates
+  // a single constant.
+  const def = list.find(t => t.name === themes.DEFAULT_THEME);
   const rest = list
-    .filter(t => t.name !== 'paper-puppet-stage')
+    .filter(t => t !== def)
     .sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''));
   const ordered = def ? [def, ...rest] : rest;
   sel.replaceChildren(...ordered.map(t => {
@@ -497,7 +499,7 @@ bootTheme().then(() => {
   schedulePolling();
 }).catch(err => {
   console.warn('theme boot failed; rendering with base tokens:', err);
-  themes.applyTheme('paper-puppet-stage', { persist: false });
+  themes.applyTheme(themes.DEFAULT_THEME, { persist: false });
   poll();
   schedulePolling();
 });
