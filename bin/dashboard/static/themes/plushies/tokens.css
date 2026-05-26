@@ -1,7 +1,8 @@
 /* plushies — B11 theme tokens */
+/* chrome rework (u12c): #2E1F12 chrome, text contrast 11.9:1 */
 :root[data-theme="plushies"] {
-  --bg:                #1B130C;
-  --surface:           #261A12;
+  --bg:                #2E1F12;
+  --surface:           #3A281A;
   --text:              #F0DCBE;
   --alert:             #B83A2E;
   --node-active:       #E1A14C;

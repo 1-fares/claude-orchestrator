@@ -1,7 +1,8 @@
 /* lantern-festival — B11 theme tokens */
+/* chrome rework (u12c): #1F1208 chrome, text contrast 14.0:1 */
 :root[data-theme="lantern-festival"] {
-  --bg:                #0E0E14;
-  --surface:           #1A1A22;
+  --bg:                #1F1208;
+  --surface:           #2A1B10;
   --text:              #FDDCB4;
   --alert:             #B6432A;
   --node-active:       #E89A3C;

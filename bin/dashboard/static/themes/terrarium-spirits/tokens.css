@@ -1,7 +1,8 @@
 /* terrarium-spirits — B11 theme tokens */
+/* chrome rework (u12c): #1A2D18 chrome, text contrast 10.9:1 */
 :root[data-theme="terrarium-spirits"] {
-  --bg:                #15201A;
-  --surface:           #1F2A22;
+  --bg:                #1A2D18;
+  --surface:           #243A20;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;

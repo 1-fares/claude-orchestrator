@@ -2,7 +2,7 @@
   "name": "comic-adventurers",
   "display_name": "Comic Adventurers",
   "summary": "Chibi superhero squad with halftone shading on navy night.",
-  "mode": "dark",
+  "mode": "light",
   "default_edge_style": "solid",
   "default_token_style": "spark"
 }

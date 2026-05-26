@@ -1,7 +1,8 @@
 /* warm-hive — B11 theme tokens */
+/* chrome rework (u12c): #14110A chrome, text contrast 16.3:1 */
 :root[data-theme="warm-hive"] {
-  --bg:                #0F0E1A;
-  --surface:           #1B1929;
+  --bg:                #14110A;
+  --surface:           #1F1A12;
   --text:              #FBEDD0;
   --alert:             #B85240;
   --node-active:       #E8B14A;

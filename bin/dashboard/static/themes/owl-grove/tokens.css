@@ -1,7 +1,8 @@
 /* owl-grove — B11 theme tokens */
+/* chrome rework (u12c): #1A2B3A chrome, text contrast 10.8:1 */
 :root[data-theme="owl-grove"] {
-  --bg:                #1F2735;
-  --surface:           #2A3445;
+  --bg:                #1A2B3A;
+  --surface:           #243648;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89C2B;
