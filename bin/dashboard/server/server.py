@@ -48,6 +48,24 @@ Endpoints:
                      <theme> must match THEME_NAME_RE and resolve to an
                      existing subdir; <file> must match THEME_FILE_RE and the
                      resolved realpath must stay under that subdir.
+  GET /chat?since=<ts-or-msgid>
+                     conversation.jsonl entries strictly newer than the
+                     cursor. Cursor is empty (all), an RFC 3339 UTC ts, or an
+                     8 lowercase hex msg_id. At most 500 entries per call.
+                     Response: {"thread_id", "schema_version", "since",
+                     "entries": [...]}. 400 on malformed cursor.
+  POST /chat         operator-side write surface. JSON body
+                     `{"author_name", "body", "addressed_to"?}`. Server appends
+                     a JSONL entry to $TEAM_DIR/comm/inbound.jsonl with a
+                     server-stamped `ts`, `author_type="operator"`, and
+                     `msg_id=null`. 202 on accept. 400 on missing author_name
+                     or body, malformed JSON, body > 256 KB, or addressed_to
+                     not matching `operator|orchestrator|role:<name>`.
+  GET /chat/open-question
+                     contents of $TEAM_DIR/comm/open-question.json verbatim,
+                     or `{}` if absent.
+  GET /chat/queue    contents of $TEAM_DIR/comm/question-queue.jsonl as a JSON
+                     array (one element per line), or `[]` if absent.
   GET /healthz       liveness probe
 
 SCHEMA_VERSION history:
@@ -56,6 +74,10 @@ SCHEMA_VERSION history:
        unchanged at the field level; the version bump signals to clients that
        the theme endpoints exist (clients that ignore them stay backward
        compatible because /state.json payload is unchanged).
+  3 — added /chat surface for the communicator role (u30): GET /chat,
+       POST /chat, GET /chat/open-question, GET /chat/queue. Reads and writes
+       $TEAM_DIR/comm/* with realpath containment. /state.json payload shape
+       is unchanged at the field level.
 """
 
 from __future__ import annotations
@@ -77,7 +99,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlsplit
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 RECENT_WINDOW_SEC = 30.0           # server-side message retention window
 ACTIVE_RECENT_SEC = 3.0            # "active" rule 6: msg within this window
 RING_MAX = 500                     # cache ring size
@@ -139,6 +161,17 @@ THEME_MODES = {"dark", "light"}
 THEME_EDGE_STYLES = {"solid", "ribbon", "streak", "spark"}
 THEME_TOKEN_STYLES = {"spark", "disc", "ribbon", "streak"}
 THEME_SUMMARY_MAX = 80
+
+# /chat surface (u30). Backs the communicator role's push surface; reads and
+# writes live under $TEAM_DIR/comm/. The /is bus enforces a 256 KB per-message
+# cap and we mirror it on the POST body so an oversized operator turn cannot
+# slip past the dashboard surface and then bounce off the bus elsewhere.
+CHAT_BODY_MAX = 256 * 1024
+CHAT_MAX_ENTRIES = 500
+CHAT_MSGID_RE = re.compile(r"^[0-9a-f]{8}$")
+CHAT_ADDRESSED_TO_RE = re.compile(
+    r"^(operator|orchestrator|role:[a-z0-9][a-z0-9-]{0,39})$"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -929,6 +962,218 @@ def build_snapshot(state: ServerState, now: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# /chat surface (u30). Backs the communicator role's push surface.
+# All file reads/writes use realpath containment under $TEAM_DIR/comm/.
+# ---------------------------------------------------------------------------
+
+def _comm_dir(team_dir: Optional[str]) -> Optional[Path]:
+    if not team_dir:
+        return None
+    return Path(team_dir) / "comm"
+
+
+def _safe_comm_path(team_dir: Optional[str], filename: str) -> Optional[Path]:
+    """Resolve $TEAM_DIR/comm/<filename> or return None.
+
+    Two layers of defence: filename must not contain `/`, `\\`, NUL, or `..`
+    components, and the resolved realpath must stay under $TEAM_DIR/comm/. A
+    symlinked entry that points elsewhere is rejected.
+    """
+    if team_dir is None:
+        return None
+    if not filename or any(b in filename for b in ("/", "\\", "\x00")):
+        return None
+    if filename in (".", "..") or filename.startswith("."):
+        # The four files the communicator owns all begin with a letter; reject
+        # dotfiles wholesale rather than carry an allow-list mismatch.
+        return None
+    try:
+        root = (Path(team_dir) / "comm").resolve()
+    except OSError:
+        return None
+    try:
+        candidate = (Path(team_dir) / "comm" / filename).resolve()
+    except OSError:
+        return None
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _parse_chat_since(raw: Optional[str]) -> tuple[Optional[str], Optional[Any]]:
+    """Validate `?since=<x>` and return ("ts", float) or ("msgid", str) or
+    (None, None) when the cursor is empty/missing. Raises ValueError on a
+    malformed cursor so the handler can 400."""
+    if raw is None or raw == "":
+        return None, None
+    if CHAT_MSGID_RE.match(raw):
+        return "msgid", raw
+    ts = _parse_iso(raw)
+    if ts is not None:
+        return "ts", ts
+    raise ValueError(f"malformed since cursor: {raw!r}")
+
+
+def _read_chat_entries(team_dir: Optional[str], cursor_kind: Optional[str],
+                       cursor_val: Any, warnings: list) -> list:
+    """Project $TEAM_DIR/comm/conversation.jsonl, filter by cursor, cap to
+    CHAT_MAX_ENTRIES from the tail. Returns [] when the file is absent."""
+    path = _safe_comm_path(team_dir, "conversation.jsonl")
+    if path is None or not path.is_file():
+        return []
+    out: list = []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    warnings.append("conversation.jsonl: skipped malformed line")
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                out.append(rec)
+    except OSError as e:
+        warnings.append(f"conversation.jsonl not readable: {e}")
+        return []
+
+    if cursor_kind == "ts":
+        out = [r for r in out if (_parse_iso(r.get("ts")) or 0.0) > cursor_val]
+    elif cursor_kind == "msgid":
+        # Strictly after the entry whose msg_id matches; if no such entry,
+        # return empty (the cursor refers to an entry this server hasn't
+        # written, so by definition nothing newer than it exists here).
+        idx = None
+        for i, r in enumerate(out):
+            if r.get("msg_id") == cursor_val:
+                idx = i
+                break
+        out = out[idx + 1:] if idx is not None else []
+
+    if len(out) > CHAT_MAX_ENTRIES:
+        out = out[-CHAT_MAX_ENTRIES:]
+    return out
+
+
+def _read_open_question(team_dir: Optional[str], warnings: list) -> dict:
+    path = _safe_comm_path(team_dir, "open-question.json")
+    if path is None or not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        warnings.append(f"open-question.json not readable: {e}")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _read_chat_queue(team_dir: Optional[str], warnings: list) -> list:
+    path = _safe_comm_path(team_dir, "question-queue.jsonl")
+    if path is None or not path.is_file():
+        return []
+    out: list = []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    warnings.append("question-queue.jsonl: skipped malformed line")
+                    continue
+                out.append(rec)
+    except OSError as e:
+        warnings.append(f"question-queue.jsonl not readable: {e}")
+        return []
+    return out
+
+
+def _now_iso_utc() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _thread_id_for(team_dir: Optional[str]) -> Optional[str]:
+    if not team_dir:
+        return None
+    base = os.path.basename(team_dir.rstrip("/"))
+    if base.startswith(".team-"):
+        return base[len(".team-"):]
+    return None
+
+
+def _validate_chat_post(body: Any) -> tuple[Optional[dict], Optional[str]]:
+    """Return (normalized_entry, None) on success or (None, reason)."""
+    if not isinstance(body, dict):
+        return None, "body must be a JSON object"
+    author = body.get("author_name")
+    text = body.get("body")
+    if not isinstance(author, str) or not author.strip():
+        return None, "missing or empty author_name"
+    if not isinstance(text, str) or text == "":
+        return None, "missing or empty body"
+    if len(text.encode("utf-8")) > CHAT_BODY_MAX:
+        return None, f"body exceeds {CHAT_BODY_MAX} bytes"
+    addressed_to = body.get("addressed_to")
+    if addressed_to is not None:
+        if not isinstance(addressed_to, str) or not CHAT_ADDRESSED_TO_RE.match(addressed_to):
+            return None, "addressed_to must match operator|orchestrator|role:<name>"
+    # Path-traversal defence: reject NUL or backslash anywhere in stringy fields
+    # so a downstream tool that mistakes one for a path separator stays safe.
+    for k in ("author_name", "body", "addressed_to"):
+        v = body.get(k)
+        if isinstance(v, str) and ("\x00" in v):
+            return None, f"NUL byte in {k}"
+    return {
+        "author_name": author,
+        "body": text,
+        "addressed_to": addressed_to,
+    }, None
+
+
+def _append_inbound(team_dir: str, entry: dict, warnings: list) -> Optional[dict]:
+    """Append one JSONL entry to $TEAM_DIR/comm/inbound.jsonl and return the
+    written record. Creates the comm/ dir (mode 0700) if absent."""
+    comm = _comm_dir(team_dir)
+    if comm is None:
+        return None
+    try:
+        comm.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as e:
+        warnings.append(f"comm/ not creatable: {e}")
+        return None
+    path = _safe_comm_path(team_dir, "inbound.jsonl")
+    if path is None:
+        return None
+    record = {
+        "ts": _now_iso_utc(),
+        "thread_id": _thread_id_for(team_dir),
+        "author_type": "operator",
+        "author_name": entry["author_name"],
+        "prefix": None,
+        "msg_id": None,
+        "in_reply_to": None,
+        "addressed_to": entry.get("addressed_to"),
+        "unit": None,
+        "body": entry["body"],
+    }
+    try:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, separators=(",", ":"), ensure_ascii=False))
+            fh.write("\n")
+    except OSError as e:
+        warnings.append(f"inbound.jsonl not writable: {e}")
+        return None
+    return record
+
+
+# ---------------------------------------------------------------------------
 # HTTP handler.
 # ---------------------------------------------------------------------------
 
@@ -1010,6 +1255,36 @@ def make_handler(state: ServerState):
                     "schema_version": SCHEMA_VERSION,
                     "themes": state.themes,
                 })
+                return
+            if raw == "/chat":
+                team_dir = resolve_team_dir(state.team_dir_arg)
+                qs = parse_qs(urlsplit(self.path).query)
+                raw_since = qs.get("since", [None])[0]
+                try:
+                    cursor_kind, cursor_val = _parse_chat_since(raw_since)
+                except ValueError as e:
+                    self._send_json({"error": str(e)}, status=400)
+                    return
+                warnings: list = []
+                entries = _read_chat_entries(
+                    team_dir, cursor_kind, cursor_val, warnings
+                )
+                self._send_json({
+                    "thread_id": _thread_id_for(team_dir),
+                    "schema_version": SCHEMA_VERSION,
+                    "since": raw_since or "",
+                    "entries": entries,
+                })
+                return
+            if raw == "/chat/open-question":
+                team_dir = resolve_team_dir(state.team_dir_arg)
+                warnings = []
+                self._send_json(_read_open_question(team_dir, warnings))
+                return
+            if raw == "/chat/queue":
+                team_dir = resolve_team_dir(state.team_dir_arg)
+                warnings = []
+                self._send_json(_read_chat_queue(team_dir, warnings))
                 return
             if raw.startswith("/role-feed/"):
                 name = raw[len("/role-feed/"):]
@@ -1093,6 +1368,58 @@ def make_handler(state: ServerState):
                 return
 
             self._send_json({"error": "not found"}, status=404)
+
+        def do_POST(self) -> None:
+            raw = urlsplit(self.path).path
+            if any(bad in raw for bad in ("..", "%2e", "%2E", "\\", "\x00")):
+                self._send_json({"error": "not found"}, status=404)
+                return
+            if raw != "/chat":
+                self._send_json({"error": "not found"}, status=404)
+                return
+
+            # Length gate first: refuse to read past the cap. Content-Length is
+            # advisory; if absent we still cap the read so a chunked or oversized
+            # body cannot stream past the limit.
+            try:
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                self._send_json({"error": "invalid Content-Length"}, status=400)
+                return
+            if clen < 0 or clen > CHAT_BODY_MAX + 1024:
+                self._send_json(
+                    {"error": f"body exceeds {CHAT_BODY_MAX} bytes"}, status=400
+                )
+                return
+            try:
+                payload = self.rfile.read(min(clen, CHAT_BODY_MAX + 1024)) if clen else b""
+            except OSError:
+                self._send_json({"error": "body read failed"}, status=400)
+                return
+            if not payload:
+                self._send_json({"error": "empty body"}, status=400)
+                return
+            try:
+                parsed = json.loads(payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._send_json({"error": "malformed JSON"}, status=400)
+                return
+            entry, why = _validate_chat_post(parsed)
+            if entry is None:
+                self._send_json({"error": why}, status=400)
+                return
+
+            team_dir = resolve_team_dir(state.team_dir_arg)
+            if not team_dir:
+                self._send_json({"error": "no team dir configured"}, status=400)
+                return
+            warnings: list = []
+            record = _append_inbound(team_dir, entry, warnings)
+            if record is None:
+                msg = warnings[-1] if warnings else "append failed"
+                self._send_json({"error": msg}, status=500)
+                return
+            self._send_json({"ok": True, "ts": record["ts"]}, status=202)
 
         def log_message(self, fmt, *args) -> None:
             # Quiet by default; stderr would clutter the tmux pane.
