@@ -38,6 +38,10 @@ const SELECT_RING_PX      = 3;
 const SELECT_RING_GAP_PX  = 4;
 const SEEN_MSG_LIMIT      = 2000;
 const REST_MASCOT_AFTER_MS = 30000;   // "swarm resting" mascot fades in after this
+const ORBIT_PERIOD_MS     = 3000;     // delegating-orbit revolution
+const ORBIT_GAP_PX        = 10;       // distance from disc edge to orbit ring
+const ORBIT_DOT_R_PX      = 4;
+const ORBIT_DOT_COUNT     = 2;        // dots equally spaced around the orbit
 
 // Image cache: url → HTMLImageElement. A theme change invalidates entries
 // via clearImageCache() so the next render fetches the new-theme assets.
@@ -50,6 +54,51 @@ function loadImage(url) {
   return img;
 }
 function clearImageCache() { imageCache.clear(); }
+
+// u24: derive the three-way activity behaviour (working / delegating / idle)
+// from the server's optional `activity` field; fall back to the legacy `state`
+// when the server hasn't been upgraded yet so old recorded snapshots and any
+// pre-u24 server still render sanely.
+function activityFor(r) {
+  const a = r && r.activity;
+  if (a === 'working' || a === 'delegating'
+      || a === 'idle'  || a === 'stalled-api'
+      || a === 'give-up') return a;
+  switch (r && r.state) {
+    case 'stalled-api': return 'stalled-api';
+    case 'give-up':     return 'give-up';
+    case 'active':      return 'working';
+    case 'idle':
+    case 'paused':
+    case 'dead':        return 'idle';
+    default:            return null;
+  }
+}
+
+function subagentCount(r) {
+  const n = r && r.subagent_count;
+  return (Number.isFinite(n) && n > 0) ? Math.floor(n) : 0;
+}
+
+function roleTooltip(r, now, lastSeenActive) {
+  const name = (r && r.name) || '';
+  const act = activityFor(r);
+  const n = subagentCount(r);
+  switch (act) {
+    case 'working':     return `${name}: working`;
+    case 'delegating':  return `${name}: delegating to ${n || '?'} subagent${n === 1 ? '' : 's'}`;
+    case 'stalled-api': return `${name}: stalled (API)`;
+    case 'give-up':     return `${name}: give-up`;
+    case 'idle': {
+      const age = (lastSeenActive && now > lastSeenActive)
+        ? Math.round((now - lastSeenActive) / 1000) : null;
+      return age != null
+        ? `${name}: idle (last activity ${age}s ago)`
+        : `${name}: idle`;
+    }
+    default: return `open ${name} feed`;
+  }
+}
 
 export class GraphView {
   constructor(rootEl, callbacks = {}) {
@@ -284,6 +333,12 @@ export class GraphView {
       this._labelEl(r.name).dataset.roleState = r.state;
       const btn = this._buttonEl(r.name);
       btn.dataset.roleState = r.state;
+      const act = activityFor(r);
+      if (act) btn.dataset.activity = act;
+      else delete btn.dataset.activity;
+      const seenAt = this.nodeRuntime.get(r.name)?.lastSeenActive || 0;
+      btn.title = roleTooltip(r, now, seenAt);
+      btn.setAttribute('aria-label', btn.title);
       if (this.selectedRole === r.name) btn.dataset.selected = 'true';
       else delete btn.dataset.selected;
 
@@ -626,6 +681,50 @@ export class GraphView {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(badge, bx, by + 1);
+      }
+
+      // 6b) Delegating: slow orbit dots around the disc + small N pill on
+      //     the bottom-right corner (u24). Reads as a non-colour third
+      //     channel for "this role is busy but waiting on a subagent,"
+      //     visually distinct from the breathe of `working` and the still
+      //     of `idle`. Theme-aware: dots use --node-active, pill bg /
+      //     ink read from --surface-2 / --text.
+      const activity = activityFor(r);
+      const subN = subagentCount(r);
+      if (activity === 'delegating' && !this.reducedMotion) {
+        const orbitR = R + ORBIT_GAP_PX;
+        const t = phase(now, ORBIT_PERIOD_MS, rt.phase0);
+        const dotCol = cssVar('--node-active') || stateColor;
+        for (let i = 0; i < ORBIT_DOT_COUNT; i++) {
+          const a = t * 2 * Math.PI + (i * 2 * Math.PI) / ORBIT_DOT_COUNT;
+          const dx = orbitR * Math.cos(a);
+          const dy = orbitR * Math.sin(a);
+          ctx.beginPath();
+          ctx.arc(dx, dy, ORBIT_DOT_R_PX, 0, 2 * Math.PI);
+          ctx.fillStyle = withAlpha(dotCol, 0.95);
+          ctx.fill();
+        }
+      }
+      if (activity === 'delegating') {
+        // N pill, bottom-right corner. Drawn even in reduced-motion so the
+        // delegating signal still reads when motion is off.
+        const label = subN > 0 ? String(subN) : '⋯';
+        const px = R * 0.78, py = R * 0.78;
+        const pillR = R * 0.32;
+        const pillBg = cssVar('--surface-2') || stateColor;
+        const pillInk = cssVar('--text') || cssVar('--token-ink') || '#1A1730';
+        ctx.beginPath();
+        ctx.arc(px, py, pillR, 0, 2 * Math.PI);
+        ctx.fillStyle = pillBg;
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = withAlpha(cssVar('--node-active') || stateColor, 0.85);
+        ctx.stroke();
+        ctx.fillStyle = pillInk;
+        ctx.font = `700 ${Math.round(R * 0.36)}px ${cssVar('--font-sans')}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, px, py + 1);
       }
 
       // 7) Selection cue: 3 px solid offset ring outside the state ring,

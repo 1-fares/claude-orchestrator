@@ -158,11 +158,20 @@ function renderPanelHeader() {
   const s = role?.state || 'idle';
   const color = cssVar(STATE_COLOR_VAR[s] || STATE_COLOR_VAR.idle);
   const badge = STATE_BADGE[s];
-  ui.panelStateChip.textContent =
-    (badge ? badge + ' ' : '') + (STATE_LABEL[s] || s);
+  // u24: append subagent fan-out to the chip when the role is delegating,
+  // so the panel header reads e.g. "active · ⚙ ×3" instead of bare "active".
+  const subN = Number.isFinite(role?.subagent_count) && role.subagent_count > 0
+    ? Math.floor(role.subagent_count) : 0;
+  const isDelegating = role?.activity === 'delegating' || (subN > 0 && s === 'active');
+  const base = (badge ? badge + ' ' : '') + (STATE_LABEL[s] || s);
+  ui.panelStateChip.textContent = isDelegating
+    ? `${base} · ⚙ ×${subN || '?'}`
+    : base;
   ui.panelStateChip.style.color = color;
   ui.panelStateChip.style.background = withAlpha(color, 0.18);
   ui.panelStateChip.dataset.state = s;
+  if (isDelegating) ui.panelStateChip.dataset.activity = 'delegating';
+  else delete ui.panelStateChip.dataset.activity;
 
   const lastTs = role?.last_msg_ts;
   if (lastTs && state.lastSnap?.now_ts) {
