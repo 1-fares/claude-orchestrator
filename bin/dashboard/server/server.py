@@ -131,6 +131,7 @@ STATIC_ALLOWLIST = (
     "graph.js",
     "sidebar.js",
     "glyphs.js",
+    "chat.js",
 )
 
 MIME_BY_EXT = {
