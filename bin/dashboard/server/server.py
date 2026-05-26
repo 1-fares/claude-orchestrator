@@ -19,6 +19,7 @@ import re
 import signal
 import socket
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -774,11 +775,15 @@ def main(argv: Optional[list] = None) -> int:
         except Exception:
             pass
 
+    # serve_forever() runs on the main thread and only checks the shutdown
+    # flag between poll_interval ticks. Calling httpd.shutdown() directly from
+    # a signal handler would deadlock: shutdown() blocks on an event that the
+    # serve loop sets, but the serve loop is the very thread the handler has
+    # paused. So we hand the shutdown off to a daemon thread; the signal
+    # handler returns immediately, serve_forever resumes, picks up the flag on
+    # its next tick, and exits cleanly.
     def _stop(signum, frame):
-        try:
-            httpd.shutdown()
-        except Exception:
-            pass
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
