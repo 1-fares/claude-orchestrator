@@ -1,0 +1,22 @@
+/* pixar-cgi — B11 theme tokens */
+:root[data-theme="pixar-cgi"] {
+  --bg:                #16252E;
+  --surface:           #1F303A;
+  --text:              #ECE1C8;
+  --alert:             #B83A3E;
+  --node-active:       #E89A3C;
+  --node-idle:         #6DB8B4;
+  --node-paused:       #C28B3E;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45E2E;
+  --node-give-up:      #B83A3E;
+  --node-orchestrator: #C28B3E;
+  --node-dead:         #3A4A52;
+  --edge-status:       #B9C0C8;
+  --edge-done:         #6DB8B4;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #B83A3E;
+  --edge-default:      #3A4A52;
+  --selection-cue:     #ECE1C8;
+}

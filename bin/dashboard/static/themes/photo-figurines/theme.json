@@ -1,0 +1,8 @@
+{
+  "name": "photo-figurines",
+  "display_name": "Photo Figurines",
+  "summary": "Photoreal vinyl collectible figurines on walnut wood.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

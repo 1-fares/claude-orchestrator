@@ -1,0 +1,22 @@
+/* ninjas — B11 theme tokens */
+:root[data-theme="ninjas"] {
+  --bg:                #0E1426;
+  --surface:           #1A2034;
+  --text:              #F0DCB4;
+  --alert:             #B83A2E;
+  --node-active:       #E89A3C;
+  --node-idle:         #5C5670;
+  --node-paused:       #5C5670;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45A2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #E89A3C;
+  --node-dead:         #2A2E40;
+  --edge-status:       #B9B0C8;
+  --edge-done:         #6F8E5A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #3A3E55;
+  --selection-cue:     #F0DCB4;
+}

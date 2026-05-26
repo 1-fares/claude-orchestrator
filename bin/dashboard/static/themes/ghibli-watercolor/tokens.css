@@ -1,0 +1,22 @@
+/* ghibli-watercolor — B11 theme tokens */
+:root[data-theme="ghibli-watercolor"] {
+  --bg:                #243524;
+  --surface:           #2A3F2A;
+  --text:              #F4E6CE;
+  --alert:             #B83A2E;
+  --node-active:       #E0A040;
+  --node-idle:         #7C8E4A;
+  --node-paused:       #B07045;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45A2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #E0A040;
+  --node-dead:         #3A4A36;
+  --edge-status:       #F4E6CE;
+  --edge-done:         #7C8E4A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E0A040;
+  --edge-priority:     #B07045;
+  --edge-default:      #3A4A36;
+  --selection-cue:     #F4E6CE;
+}

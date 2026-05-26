@@ -1,0 +1,8 @@
+{
+  "name": "agents-noir",
+  "display_name": "Agents Noir",
+  "summary": "Chibi men-in-black under a warm garage lamp.",
+  "mode": "dark",
+  "default_edge_style": "streak",
+  "default_token_style": "streak"
+}
