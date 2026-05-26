@@ -1,55 +1,22 @@
-/* u5-frontend: Night Honey design tokens. Names match the team's
-   design/ux-spec.md section 5 verbatim; values from visual-spec.md
-   section 8. The frontend reads these; restyling the dashboard is a
-   CSS-vars edit, not a code change. */
+/* u13-frontend-themes: theme-agnostic base tokens.
+ * Color tokens live per-theme under /static/themes/<name>/tokens.css,
+ * which scopes via :root[data-theme="<name>"] and is loaded as the
+ * swappable stylesheet (id="theme-tokens"). This file defines
+ * non-color tokens shared across every theme: type scale, spacing,
+ * radii, motion durations + curves, and theme-agnostic surface
+ * neutrals derived from the color contract. */
 :root {
-  /* surfaces */
-  --bg:            #1A1730;
-  --surface:       #221E3D;
-  --surface-2:     #2C2750;
-  --border:        #3A335E;
-  --border-muted:  #2A2547;
-
-  /* ink */
-  --ink-primary:   #FFF5DD;
-  --ink-secondary: #B9B0E0;
-  --ink-tertiary:  #7E78A8;
-
-  /* brand accent */
-  --accent:        #FFC44D;
-  --accent-soft:   rgba(255,196,77,0.16);
-
-  /* state colours (ux-spec section 1) */
-  --state-active-color:      #FFC44D;
-  --state-idle-color:        #B9B0E0;
-  --state-paused-color:      #6FB6FF;
-  --state-question-color:    #FFE066;
-  --state-stalled-api-color: #FF9A3C;
-  --state-give-up-color:     #FF5C75;
-  --state-dead-color:        #5B5681;
-
-  /* prefix colours (ux-spec section 2) */
-  --prefix-status-color:   #B9B0E0;
-  --prefix-done-color:     #6AE3A1;
-  --prefix-question-color: #FFE066;
-  --prefix-answer-color:   #F2B500;
-  --prefix-priority-color: #FF6BD6;
-  --prefix-pause-color:    #6FB6FF;
-  --prefix-resume-color:   #4DD0B5;
-  --prefix-stop-color:     #FF5C75;
-  --prefix-other-color:    #B9B0E0;
-
-  /* token / halo */
-  --token-fill:   #FFF5DD;
-  --token-stroke: #1A1730;
-  --token-glow:   rgba(255,255,255,0.55);
-  --node-halo:    rgba(255,255,255,0.18);
-  --node-shadow:  0 4px 14px rgba(0,0,0,0.40);
-
-  /* selection */
-  --select-ring:         #FFF5DD;
-  --select-ring-opacity: 0.85;
-  --select-ring-width:   3px;
+  /* derived surface neutrals (each theme defines --bg, --surface and
+     --text in its own tokens.css; below are derived shades + safe
+     fallbacks so the dashboard renders even before a theme is loaded) */
+  --bg:            #14121F;
+  --surface:       #1E1B2E;
+  --surface-2:     #2A2543;
+  --text:          #EDEAD8;
+  --ink-secondary: rgba(237,234,216,0.74);
+  --ink-tertiary:  rgba(237,234,216,0.50);
+  --border:        rgba(237,234,216,0.18);
+  --border-muted:  rgba(237,234,216,0.10);
 
   /* type */
   --font-sans: ui-rounded, "SF Pro Rounded", "Nunito", "Quicksand",
@@ -89,14 +56,22 @@
   /* shadows */
   --shadow-card:       0 8px 28px rgba(0,0,0,0.40);
   --shadow-soft:       0 1px 2px rgba(0,0,0,0.30);
-  --shadow-ring-focus: 0 0 0 3px var(--accent-soft);
+  --shadow-ring-focus: 0 0 0 3px rgba(255,255,255,0.18);
 
-  /* graph sizes */
-  --node-size:    44px;
-  --token-size:   14px;
+  /* graph sizes — bigger v2 nodes per master spec section 6 + brief */
+  --node-size:    52px;
+  --orch-scale:   1.25;
+  --token-size:   16px;
   --lane-offset:  6px;
 
-  /* motion durations (ux-spec authoritative) */
+  /* halo / glow neutrals (composed from --text in CSS so themes inherit) */
+  --token-fill:   #FFF5DD;
+  --token-stroke: rgba(0,0,0,0.45);
+  --token-glow:   rgba(255,255,255,0.55);
+  --node-halo:    rgba(255,255,255,0.20);
+  --node-shadow:  0 4px 14px rgba(0,0,0,0.40);
+
+  /* motion durations (master spec section 6) */
   --motion-breathe-dur:   1.6s;
   --motion-pulse-dur:     3s;
   --motion-bounce-dur:    1s;
@@ -105,7 +80,7 @@
   --motion-token-dur-max: 0.9s;
   --motion-trace-decay:   6s;
 
-  /* motion curves (visual-spec) */
+  /* motion curves */
   --ease-breathe:       cubic-bezier(0.45, 0, 0.55, 1);
   --ease-pulse:         ease-in-out;
   --ease-bounce:        cubic-bezier(0.34, 1.56, 0.64, 1);

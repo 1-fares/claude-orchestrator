@@ -1,28 +1,46 @@
-// u5-frontend: fixed-radial swarm renderer.
+// u13-frontend-themes: fixed-radial swarm renderer (v2 update of u5).
 // Vanilla canvas + requestAnimationFrame, with absolutely-positioned DOM
 // labels and per-role transparent button overlays. State and motion
-// vocabulary lives in glyphs.js; the values in tokens.css. Layout follows
-// visual-spec.md section 4 (radial, deterministic from sorted roster).
+// vocabulary lives in glyphs.js; theme-aware role-image URLs come from
+// themes.js so each repaint picks up the active theme's assets.
+//
+// v2 changes vs u5:
+//  - Per-edge per-direction token serialisation: only one token in flight
+//    per (from→to) at any moment, the rest queue. Queue tail coalesces
+//    into a `×N` badge beyond depth 6.
+//  - Synthetic heartbeat tokens emit a `status:` ping along edges with
+//    recent activity if no real traffic has fired for HEARTBEAT_GAP_MS;
+//    the master spec's aliveness floor (one token / 4 s / edge).
+//  - Role images cached per (theme,url) so a theme switch invalidates
+//    the cache via the themes.onChange listener.
+//  - Selection cue is a 3 px offset ring outside the state ring, scoped
+//    in CSS via [data-theme] when a theme wants to override.
 
 import {
-  assetForRole, prefixInfo,
+  prefixInfo,
   STATE_COLOR_VAR, STATE_BADGE,
   cssVar, withAlpha,
+  glyphForRole, getActive as activeTheme, onChange as onThemeChange,
 } from './glyphs.js';
 
-const TOKEN_RADIUS_PX     = 9;        // half of --token-size 14 + extra for glyph
-const TOKEN_LANE_PX       = 6;        // --lane-offset
+const TOKEN_RADIUS_PX     = 9;
+const TOKEN_LANE_PX       = 6;
 const TOKEN_DUR_MIN_MS    = 600;
 const TOKEN_DUR_MAX_MS    = 900;
-const TRACE_DECAY_MS      = 6000;     // --motion-trace-decay
-const COALESCE_CAP        = 5;        // max simultaneous tokens per pair-dir
+const TRACE_DECAY_MS      = 6000;
+const QUEUE_VISIBLE_CAP   = 6;
+const HEARTBEAT_GAP_MS    = 4000;     // aliveness floor: 1 token / 4 s / edge
+const HEARTBEAT_RECENT_MS = 20000;    // edge eligible if any peer was active recently
 const FLASH_DUR_MS        = 200;
-const HALO_LINGER_MS      = 200;      // halo lingers briefly after token lands
+const HALO_LINGER_MS      = 200;
 const RING_THICK_PX       = 3;
 const SELECT_RING_PX      = 3;
+const SELECT_RING_GAP_PX  = 4;
 const SEEN_MSG_LIMIT      = 2000;
+const REST_MASCOT_AFTER_MS = 30000;   // "swarm resting" mascot fades in after this
 
-// Image cache: name → HTMLImageElement (loaded async, drawn when ready).
+// Image cache: url → HTMLImageElement. A theme change invalidates entries
+// via clearImageCache() so the next render fetches the new-theme assets.
 const imageCache = new Map();
 function loadImage(url) {
   if (imageCache.has(url)) return imageCache.get(url);
@@ -31,6 +49,7 @@ function loadImage(url) {
   imageCache.set(url, img);
   return img;
 }
+function clearImageCache() { imageCache.clear(); }
 
 export class GraphView {
   constructor(rootEl, callbacks = {}) {
@@ -49,11 +68,18 @@ export class GraphView {
     // Live model.
     this.roster = [];          // last seen array of role objects
     this.rosterByName = new Map();
-    this.nodeRuntime = new Map();  // name → { phase0, lastFlashAt, lastTokenLandAt }
-    this.tokens = [];          // in-flight tokens
+    this.nodeRuntime = new Map();  // name → { phase0, flashUntil, haloUntil, lastSeenActive }
+    this.tokens = [];          // in-flight tokens (one per pair-direction)
+    this.pending = new Map();  // (from,to) → queued tokens awaiting launch
     this.traces = [];          // decaying traces
     this.seenMsgIds = new Set();
     this.selectedRole = null;
+    this.lastTokenLandedAt = 0;
+    // Heartbeat: last time a (from,to) edge launched a token (real or synth).
+    this.edgeLastEmit = new Map();
+    // Re-clear the image cache on theme change so canvas redraws pull
+    // the new theme's PNGs on the next animation frame.
+    this._unsubTheme = onThemeChange(() => clearImageCache());
 
     // DOM scaffolding.
     this._buildScaffold();
@@ -268,7 +294,10 @@ export class GraphView {
           flashUntil: 0,
           flashScale: 1.0,
           haloUntil: 0,
+          lastSeenActive: r.state === 'active' ? now : 0,
         });
+      } else if (r.state === 'active') {
+        this.nodeRuntime.get(r.name).lastSeenActive = now;
       }
     }
 
@@ -276,17 +305,23 @@ export class GraphView {
     this._recomputeLayout();
     this._syncOverlayPositions();
 
-    // Ingest new messages → spawn tokens.
+    // Ingest new messages → spawn tokens. Broadcasts halo the sender;
+    // direct messages enter the per-edge queue (one in-flight per dir).
     for (const m of (snap.messages || [])) {
       if (!m || !m.id || this.seenMsgIds.has(m.id)) continue;
       this.seenMsgIds.add(m.id);
       if (m.kind === 'broadcast') {
-        // Don't crowd the canvas with N tokens; sender flashes its halo.
         this._kickHalo(m.from, now);
         continue;
       }
       if (!m.from || !m.to) continue;
       if (!this.layout.has(m.from) || !this.layout.has(m.to)) continue;
+      // A real message keeps both endpoints "recently active" so the
+      // heartbeat keeps the edge alive between polls.
+      const fromRt = this.nodeRuntime.get(m.from);
+      const toRt   = this.nodeRuntime.get(m.to);
+      if (fromRt) fromRt.lastSeenActive = now;
+      if (toRt)   toRt.lastSeenActive   = now;
       this._spawnToken(m.from, m.to, m.prefix || 'other', now);
     }
     if (this.seenMsgIds.size > SEEN_MSG_LIMIT) {
@@ -310,36 +345,46 @@ export class GraphView {
 
   // ------------------------------------------------------------------ tokens
 
-  _spawnToken(from, to, prefix, now) {
-    // Lane offset: A→B uses +1, B→A uses -1, deterministic from name compare.
-    const laneSign = (from < to) ? 1 : -1;
-    // Coalesce: count in-flight tokens for this exact (from,to) pair.
-    const inflight = this.tokens.filter(
+  // v2 (master spec section 6 "Message-token rhythm"): one token in flight
+  // per (from→to) at a time. New traffic on the same edge queues; a queue
+  // tail beyond QUEUE_VISIBLE_CAP coalesces into a single `×N` badge.
+  _spawnToken(from, to, prefix, now, synthetic = false) {
+    if (!this.layout.has(from) || !this.layout.has(to)) return;
+    const key = this._dirKey(from, to);
+    const inFlight = this.tokens.find(
       t => t.from === from && t.to === to);
-    if (inflight.length >= COALESCE_CAP) {
-      const last = inflight[inflight.length - 1];
-      last.count += 1;
+    if (!inFlight) {
+      this._launchToken(from, to, prefix, now, synthetic);
       return;
     }
-    // Stagger 120 ms behind the most recent on the same pair.
-    let stagger = 0;
-    if (inflight.length) {
-      const lastSpawn = inflight[inflight.length - 1].spawn;
-      stagger = Math.max(0, (lastSpawn + 120) - now);
+    // Queue behind the in-flight token.
+    let q = this.pending.get(key);
+    if (!q) { q = []; this.pending.set(key, q); }
+    if (q.length >= QUEUE_VISIBLE_CAP) {
+      const tail = q[q.length - 1];
+      tail.count = (tail.count || 1) + 1;
+      return;
     }
-    // Edge length determines duration (linearly between MIN and MAX).
+    q.push({ from, to, prefix, count: 1, synthetic });
+  }
+
+  _launchToken(from, to, prefix, now, synthetic) {
     const A = this.layout.get(from);
     const B = this.layout.get(to);
+    if (!A || !B) return;
+    const laneSign = (from < to) ? 1 : -1;
     const d = Math.hypot(B.x - A.x, B.y - A.y);
     const tau = Math.min(1, d / 720);
     const dur = TOKEN_DUR_MIN_MS + (TOKEN_DUR_MAX_MS - TOKEN_DUR_MIN_MS) * tau;
     this.tokens.push({
       from, to, prefix,
-      spawn: now + stagger,
+      spawn: now,
       dur,
       laneSign,
       count: 1,
+      synthetic,
     });
+    this.edgeLastEmit.set(this._dirKey(from, to), now);
     this._kickHalo(from, now);
     this._kickHalo(to, now);
   }
@@ -350,6 +395,32 @@ export class GraphView {
     rt.haloUntil = Math.max(rt.haloUntil, now + TOKEN_DUR_MAX_MS + HALO_LINGER_MS);
   }
 
+  _dirKey(a, b) { return `${a}->${b}`; }
+
+  // Synthetic heartbeat: when no token is in flight for an edge whose
+  // endpoints have recent activity, emit a low-weight `status:` ping so
+  // the swarm always looks alive during real activity. Section 6 aliveness
+  // floor: ≤ one synthetic token / 4 s / edge.
+  _emitHeartbeats(now) {
+    if (this.reducedMotion) return;       // master spec section 8 suppresses
+    const orch = this.roster.find(r => r.is_orchestrator);
+    if (!orch) return;
+    for (const r of this.roster) {
+      if (r.is_orchestrator) continue;
+      const peer = r.name;
+      const rt = this.nodeRuntime.get(peer);
+      if (!rt) continue;
+      const recentActive =
+        rt.lastSeenActive && (now - rt.lastSeenActive) < HEARTBEAT_RECENT_MS;
+      if (!recentActive) continue;
+      const key = this._dirKey(orch.name, peer);
+      const last = this.edgeLastEmit.get(key) || 0;
+      if (now - last < HEARTBEAT_GAP_MS) continue;
+      // Emit a synthetic status ping orchestrator → peer.
+      this._spawnToken(orch.name, peer, 'status', now, /*synthetic*/ true);
+    }
+  }
+
   // ------------------------------------------------------------------ render
 
   _tick() {
@@ -357,11 +428,12 @@ export class GraphView {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.canvasW, this.canvasH);
 
-    // Background grid? Spec doesn't call for one; skip.
+    this._emitHeartbeats(now);
     this._drawEdges(now);
     this._drawTraces(now);
     this._drawNodes(now);
     this._drawTokens(now);
+    this._drawRestingMascot(now);
 
     requestAnimationFrame(this._tickBound);
   }
@@ -522,8 +594,8 @@ export class GraphView {
       ctx.fill();
       ctx.restore();
 
-      // 4) Role glyph image (60% of disc).
-      const imgUrl = assetForRole(r.name);
+      // 4) Role glyph image (60% of disc). URL is theme-aware via themes.js.
+      const imgUrl = glyphForRole(r.name);
       const img = loadImage(imgUrl);
       if (img.complete && img.naturalWidth > 0) {
         const gR = R * 0.6;
@@ -556,13 +628,17 @@ export class GraphView {
         ctx.fillText(badge, bx, by + 1);
       }
 
-      // 7) Selection ring.
+      // 7) Selection cue: 3 px solid offset ring outside the state ring,
+      //    coloured per-theme via --selection-cue. The cue is NEVER in any
+      //    channel the seven role-states use, so an active question-state
+      //    selected node reads as dashed-yellow + cream offset ring
+      //    (master spec section 7).
       if (this.selectedRole === r.name) {
+        const cueR = R + SELECT_RING_GAP_PX + SELECT_RING_PX;
+        const cueCol = cssVar('--selection-cue') || cssVar('--text') || '#EDEAD8';
         ctx.beginPath();
-        ctx.arc(0, 0, R + 7, 0, 2 * Math.PI);
-        const ringCol = cssVar('--select-ring') || '#FFF5DD';
-        const ringA = parseFloat(cssVar('--select-ring-opacity') || '0.85');
-        ctx.strokeStyle = withAlpha(ringCol, ringA);
+        ctx.arc(0, 0, cueR, 0, 2 * Math.PI);
+        ctx.strokeStyle = withAlpha(cueCol, 0.92);
         ctx.lineWidth = SELECT_RING_PX;
         ctx.stroke();
       }
@@ -574,21 +650,27 @@ export class GraphView {
   _drawTokens(now) {
     const ctx = this.ctx;
     const survivors = [];
+    const justLanded = [];
     for (const tk of this.tokens) {
       if (now < tk.spawn) { survivors.push(tk); continue; }
       const age = now - tk.spawn;
       if (age >= tk.dur) {
         // Token landed: convert to a trace, flash receiver, kick halo.
-        this.traces.push({
-          from: tk.from, to: tk.to, prefix: tk.prefix,
-          t0: now, laneSign: tk.laneSign,
-        });
+        // Synthetic heartbeat tokens skip the trace (kept understated).
+        if (!tk.synthetic) {
+          this.traces.push({
+            from: tk.from, to: tk.to, prefix: tk.prefix,
+            t0: now, laneSign: tk.laneSign,
+          });
+        }
         const rxRt = this.nodeRuntime.get(tk.to);
         if (rxRt) {
           rxRt.flashUntil = now + FLASH_DUR_MS;
           rxRt.flashScale = (tk.to === 'orchestrator') ? 1.12 : 1.08;
           rxRt.haloUntil = Math.max(rxRt.haloUntil, now + HALO_LINGER_MS);
         }
+        this.lastTokenLandedAt = now;
+        justLanded.push(tk);
         continue;
       }
       survivors.push(tk);
@@ -662,6 +744,50 @@ export class GraphView {
       ctx.fill();
     }
     this.tokens = survivors;
+
+    // Drain pending queues: for every (from→to) edge whose in-flight slot
+    // just freed (no surviving token), launch the next queued token. This
+    // produces the steady "stream" the master spec asks for instead of a
+    // simultaneous burst.
+    if (justLanded.length && this.pending.size) {
+      const liveKeys = new Set();
+      for (const tk of survivors) liveKeys.add(this._dirKey(tk.from, tk.to));
+      for (const tk of justLanded) {
+        const key = this._dirKey(tk.from, tk.to);
+        if (liveKeys.has(key)) continue;
+        const q = this.pending.get(key);
+        if (!q || !q.length) continue;
+        const head = q.shift();
+        if (!q.length) this.pending.delete(key);
+        this._launchToken(head.from, head.to, head.prefix, now, head.synthetic);
+        // Carry the queued ×N badge onto the freshly launched token.
+        const justSpawned = this.tokens[this.tokens.length - 1];
+        if (justSpawned && head.count > 1) justSpawned.count = head.count;
+      }
+    }
+  }
+
+  // Resting-state mascot: when no token has landed for REST_MASCOT_AFTER_MS
+  // and the roster is non-empty, fade the active theme's mascot in behind
+  // the swarm at 20 % opacity ("the swarm is resting"). Hidden as soon as
+  // traffic resumes.
+  _drawRestingMascot(now) {
+    if (!this.roster.length) return;
+    if (this.tokens.length || this.traces.length) return;
+    if (now - this.lastTokenLandedAt < REST_MASCOT_AFTER_MS) return;
+    const theme = activeTheme();
+    if (!theme) return;
+    const url = `/static/themes/${encodeURIComponent(theme)}/mascot.png`;
+    const img = loadImage(url);
+    if (!img.complete || !img.naturalWidth) return;
+    const ctx = this.ctx;
+    const cx = this.canvasW / 2;
+    const cy = this.canvasH / 2;
+    const size = Math.min(220, Math.min(this.canvasW, this.canvasH) * 0.32);
+    ctx.save();
+    ctx.globalAlpha = 0.20;
+    ctx.drawImage(img, cx - size / 2, cy - size / 2, size, size);
+    ctx.restore();
   }
 }
 

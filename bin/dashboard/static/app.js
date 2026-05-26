@@ -1,13 +1,14 @@
-// u5-frontend: app entry — poll loop, KPIs, freshness, empty state,
-// and the click-on-agent panel (per ux-spec section 3).
+// u13-frontend-themes: app entry — theme boot, poll loop, mission strip,
+// header KPIs, freshness, empty state, click-on-agent panel.
 
 import { GraphView } from './graph.js';
 import { Sidebar, fmtDuration } from './sidebar.js';
 import {
-  assetForRole, prefixInfo,
+  prefixInfo,
   STATE_COLOR_VAR, STATE_LABEL, STATE_BADGE,
   cssVar, withAlpha,
 } from './glyphs.js';
+import * as themes from './glyphs.js';
 
 const POLL_MS         = 1500;
 const POLL_HIDDEN_MS  = 10000;
@@ -47,18 +48,60 @@ const ui = {
   panel:        el('agent-panel'),
   panelHeader:  el('agent-panel-header'),
   panelFeed:    el('agent-panel-feed'),
+  panelEmpty:   el('agent-panel-empty'),
+  panelEmptyLine: el('agent-panel-empty-line'),
   panelClose:   el('agent-panel-close'),
   panelRoleName:    el('agent-panel-role-name'),
   panelStateChip:   el('agent-panel-state-chip'),
   panelLastActivity:el('agent-panel-last-activity'),
-  panelMascot: el('agent-panel-mascot'),
+  panelMascot:  el('agent-panel-mascot'),
+  themeSelect:  el('theme-select'),
+  missionStrip: el('mission-strip'),
+  missionGoal:  el('mission-goal'),
+  missionStatus:el('mission-status'),
+  missionBadges:el('mission-badges'),
 };
+
+themes.bindMascotImage(ui.emptyMascot);
+themes.bindMascotImage(ui.panelMascot);
 
 const graph = new GraphView(el('graph'), {
   onNodeClick:   (name) => openPanel(name),
   onCanvasClick: ()     => closePanel(),
 });
 const sidebar = new Sidebar(el('sidebar'));
+
+// ---------------------------------------------------------------- theme switcher
+
+async function bootTheme() {
+  await themes.fetchThemes();
+  populateThemeSelect();
+  const picked = themes.initialTheme();
+  themes.applyTheme(picked, { persist: false });
+  if (ui.themeSelect) ui.themeSelect.value = picked;
+}
+
+function populateThemeSelect() {
+  if (!ui.themeSelect) return;
+  const sel = ui.themeSelect;
+  const list = themes.getRegistry();
+  // Default theme first, then the rest by display_name ascending.
+  const def = list.find(t => t.name === 'paper-puppet-stage');
+  const rest = list
+    .filter(t => t.name !== 'paper-puppet-stage')
+    .sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''));
+  const ordered = def ? [def, ...rest] : rest;
+  sel.replaceChildren(...ordered.map(t => {
+    const opt = document.createElement('option');
+    opt.value = t.name;
+    opt.textContent = t.display_name || t.name;
+    if (t.summary) opt.title = t.summary;
+    return opt;
+  }));
+  sel.addEventListener('change', () => {
+    themes.applyTheme(sel.value);
+  });
+}
 
 // ---------------------------------------------------------------- panel state
 
@@ -81,6 +124,7 @@ function openPanel(name) {
   ui.panel.dataset.open = 'true';
   document.body.dataset.panel = 'open';
   renderPanelHeader();
+  setEmptyVisible(false);
   ui.panelFeed.replaceChildren(mkLoadingRow());
   refreshFeed();
 }
@@ -95,6 +139,13 @@ function closePanel() {
   delete ui.panel.dataset.open;
   delete document.body.dataset.panel;
   ui.panelFeed.replaceChildren();
+  setEmptyVisible(false);
+}
+
+function setEmptyVisible(yes) {
+  if (!ui.panelEmpty) return;
+  if (yes) ui.panelEmpty.removeAttribute('hidden');
+  else ui.panelEmpty.setAttribute('hidden', '');
 }
 
 function renderPanelHeader() {
@@ -111,22 +162,12 @@ function renderPanelHeader() {
   ui.panelStateChip.style.background = withAlpha(color, 0.18);
   ui.panelStateChip.dataset.state = s;
 
-  // Last activity (server clock, snap-aligned).
   const lastTs = role?.last_msg_ts;
   if (lastTs && state.lastSnap?.now_ts) {
     const age = Math.max(0, state.lastSnap.now_ts - lastTs);
     ui.panelLastActivity.textContent = `last activity: ${relStr(age)}`;
   } else {
     ui.panelLastActivity.textContent = 'last activity: —';
-  }
-  // Panel mascot (faint behind the feed when empty); we set the src here
-  // and CSS shows/hides it.
-  if (ui.panelMascot) {
-    const url = assetForRole(name);
-    if (ui.panelMascot.dataset.src !== url) {
-      ui.panelMascot.src = url;
-      ui.panelMascot.dataset.src = url;
-    }
   }
 }
 
@@ -170,7 +211,6 @@ function renderFeed(role, messages) {
     const direction = (m.direction === 'sent') ? 'out' : 'in';
     const arrow = (direction === 'out') ? '→' : '←';
     const peerWord = (direction === 'out') ? 'to' : 'from';
-    const pi = prefixInfo(m.prefix || 'other');
     const isFresh = !state.feedSeenIds.has(m.id);
     if (isFresh) newIds.add(m.id);
 
@@ -203,12 +243,9 @@ function renderFeed(role, messages) {
     list.appendChild(row);
   }
 
-  // Mascot (faint) shown only when feed empty; toggle visibility.
-  if (ui.panelMascot) ui.panelMascot.dataset.faint = 'false';
-
   ui.panelFeed.replaceChildren(list);
+  setEmptyVisible(false);
 
-  // Mark new rows; clear the "new" data attr after the slide-in window.
   if (newIds.size && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     setTimeout(() => {
       for (const row of list.querySelectorAll('[data-fresh="true"]')) {
@@ -217,7 +254,6 @@ function renderFeed(role, messages) {
     }, FEED_ROW_NEW_MS + 50);
   }
 
-  // Update seen set; cap to ~2x feed size.
   for (const m of messages) state.feedSeenIds.add(m.id);
   if (state.feedSeenIds.size > FEED_DEFAULT_LIMIT * 2) {
     state.feedSeenIds = new Set([...state.feedSeenIds].slice(-FEED_DEFAULT_LIMIT));
@@ -225,15 +261,15 @@ function renderFeed(role, messages) {
 }
 
 function renderFeedEmpty(role) {
-  if (ui.panelMascot) ui.panelMascot.dataset.faint = 'true';
-  const empty = mkEl('div', { cls: 'feed-empty' }, [
-    mkEl('div', { cls: 'feed-empty-line', text: `No bus messages yet for ${role}.` }),
-  ]);
-  ui.panelFeed.replaceChildren(empty);
+  ui.panelFeed.replaceChildren();
+  if (ui.panelEmptyLine) {
+    ui.panelEmptyLine.textContent = `No bus messages yet for ${role}.`;
+  }
+  setEmptyVisible(true);
 }
 
 function renderFeedError(reason) {
-  if (ui.panelMascot) ui.panelMascot.dataset.faint = 'true';
+  setEmptyVisible(false);
   const card = mkEl('div', { cls: 'feed-error' }, [
     mkEl('div', { cls: 'feed-error-row' }, [
       mkEl('span', { cls: 'icon', text: '⚠' }),
@@ -243,6 +279,73 @@ function renderFeedError(reason) {
     mkEl('pre', { cls: 'feed-error-detail', text: reason }),
   ]);
   ui.panelFeed.replaceChildren(card);
+}
+
+// ---------------------------------------------------------------- mission strip
+
+function renderMissionStrip(snap) {
+  const goalEl   = ui.missionGoal;
+  const statusEl = ui.missionStatus;
+  const badgesEl = ui.missionBadges;
+  if (!goalEl || !statusEl || !badgesEl) return;
+  // Derive a digest client-side from /state.json (master spec section 6
+  // says either parser or endpoint; this is the parser path).
+  const units = snap?.units || {};
+  const counts = units.counts || {};
+  const list   = units.list || [];
+  const unitTotal = list.length || Object.values(counts).reduce((a, b) => a + (b || 0), 0);
+  const unitDone  = counts.done || 0;
+  const unitInProgress = list.filter(u => u.status === 'in-progress')
+    .map(u => u.id);
+  const blockerCount = counts.blocked || 0;
+  const stalledApiCount = (snap?.roster || [])
+    .filter(r => r.state === 'stalled-api').length;
+  const questionCount = (snap?.roster || [])
+    .reduce((acc, r) => acc + (r.open_question_ids?.length || 0), 0);
+
+  // Goal: pulled from the run dir if /state.json carries it; in the
+  // round-2 server it lives in state.md but is not surfaced in
+  // /state.json. Until u14 exposes a digest, show a graceful default
+  // assembled from snap.run.run_id + roster_count.
+  const goalText =
+    (snap?.goal_what || snap?.run?.goal_what) ||
+    `Active swarm · ${snap?.run?.roster_count ?? 0} roles`;
+  goalEl.textContent = goalText;
+
+  const inProgressLine = unitInProgress[0]
+    ? `${unitInProgress[0]} in progress, ${unitDone}/${unitTotal} units done`
+    : (unitDone === unitTotal && unitTotal > 0
+        ? `${unitDone}/${unitTotal} units done`
+        : `${unitDone}/${unitTotal} units done, ${unitInProgress.length} in progress`);
+  statusEl.textContent = blockerCount
+    ? `${inProgressLine} — ${blockerCount} blocker${blockerCount > 1 ? 's' : ''}`
+    : `${inProgressLine}, no blockers`;
+
+  const badges = [];
+  if (blockerCount > 0) {
+    badges.push(mkBadge('blocker', '⚠', blockerCount));
+  }
+  if (questionCount > 0) {
+    badges.push(mkBadge('question', '?', questionCount));
+  }
+  if (stalledApiCount > 0) {
+    badges.push(mkBadge('stalled-api', '⟳', stalledApiCount));
+  }
+  badgesEl.replaceChildren(...badges);
+
+  // Show the strip only when there's any data to display.
+  ui.missionStrip.dataset.empty = (unitTotal === 0 && !snap?.run?.roster_count)
+    ? 'true' : 'false';
+}
+
+function mkBadge(kind, glyph, count) {
+  const chip = mkEl('span', { cls: 'mission-badge', text: '' });
+  chip.dataset.kind = kind;
+  chip.append(
+    mkEl('span', { cls: 'badge-glyph', text: glyph }),
+    mkEl('span', { cls: 'badge-count', text: String(count) }),
+  );
+  return chip;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -295,7 +398,7 @@ async function poll() {
     const resp = await fetch('/state.json', { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const snap = await resp.json();
-    if (snap.schema_version && snap.schema_version > 1) {
+    if (snap.schema_version && snap.schema_version > 2) {
       console.warn('Unknown schema_version', snap.schema_version,
                    '— attempting to render anyway.');
     }
@@ -338,6 +441,7 @@ function render(snap) {
 
   graph.update(snap, state.lastSnapAtPerf);
   sidebar.update(snap);
+  renderMissionStrip(snap);
 
   if (state.panelOpen) renderPanelHeader();
 }
@@ -373,8 +477,27 @@ document.addEventListener('visibilitychange', () => {
   if (!state.hidden) poll();
 });
 
+// reduced-motion change tracking (the GraphView reads it once on
+// construction; this listener keeps the global root class in sync for
+// CSS to key off, which is what master spec section 8 specifies).
+const motionMql = window.matchMedia('(prefers-reduced-motion: reduce)');
+function applyMotionClass(e) {
+  document.documentElement.classList.toggle('reduce-motion', e.matches);
+}
+applyMotionClass(motionMql);
+motionMql.addEventListener?.('change', applyMotionClass);
+
 setInterval(updateFreshness, 200);
 
-// Kick off
-poll();
-schedulePolling();
+// Kick off — boot the theme registry first so the right tokens.css is
+// in the cascade before the initial render. The first poll then runs
+// against a themed page.
+bootTheme().then(() => {
+  poll();
+  schedulePolling();
+}).catch(err => {
+  console.warn('theme boot failed; rendering with base tokens:', err);
+  themes.applyTheme('paper-puppet-stage', { persist: false });
+  poll();
+  schedulePolling();
+});

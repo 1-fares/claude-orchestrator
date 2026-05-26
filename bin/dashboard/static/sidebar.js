@@ -6,20 +6,20 @@
 // /state.json are never interpreted as markup.
 
 import {
-  assetForRole,
   STATE_COLOR_VAR, STATE_LABEL, STATE_BADGE,
   cssVar, withAlpha,
+  glyphForRole, bindRoleImage,
 } from './glyphs.js';
 
 const UNIT_STATUS_COLORS = {
   todo:           '--ink-tertiary',
-  assigned:       '--state-idle-color',
-  acked:          '--state-idle-color',
-  'in-progress':  '--state-active-color',
-  blocked:        '--state-give-up-color',
-  review:         '--state-question-color',
-  integrating:    '--state-question-color',
-  done:           '--prefix-done-color',
+  assigned:       '--node-idle',
+  acked:          '--node-idle',
+  'in-progress':  '--node-active',
+  blocked:        '--node-give-up',
+  review:         '--node-question',
+  integrating:    '--node-question',
+  done:           '--edge-done',
   deferred:       '--ink-tertiary',
 };
 
@@ -101,9 +101,11 @@ export class Sidebar {
     }
     for (const r of sorted) {
       let row = existing.get(r.name);
+      let createdImg = null;
       if (!row) {
+        const img = mkEl('img', { cls: 'role-thumb', attrs: { alt: '' } });
         row = mkEl('div', { cls: 'roster-row', data: { name: r.name } }, [
-          mkEl('img', { cls: 'role-thumb', attrs: { alt: '' } }),
+          img,
           mkEl('div', { cls: 'role-text' }, [
             mkEl('div', { cls: 'role-name' }),
             mkEl('div', { cls: 'role-state-row' }, [
@@ -113,18 +115,16 @@ export class Sidebar {
           ]),
         ]);
         this.rosterEl.appendChild(row);
+        createdImg = img;
       }
       const state = r.state || 'idle';
       const colorVar = STATE_COLOR_VAR[state] || STATE_COLOR_VAR.idle;
       const color = cssVar(colorVar);
       row.dataset.roleState = state;
 
-      const img = row.querySelector('.role-thumb');
-      const url = assetForRole(r.name);
-      if (img.dataset.src !== url) {
-        img.src = url;
-        img.dataset.src = url;
-      }
+      // Bind once at row creation so theme switches refresh the src via
+      // themes.js's `data-themed-image` refresh loop.
+      if (createdImg) bindRoleImage(createdImg, r.name);
 
       row.querySelector('.role-name').textContent = r.name;
 
