@@ -159,14 +159,19 @@ function renderPanelHeader() {
   const color = cssVar(STATE_COLOR_VAR[s] || STATE_COLOR_VAR.idle);
   const badge = STATE_BADGE[s];
   // u24: append subagent fan-out to the chip when the role is delegating,
-  // so the panel header reads e.g. "active · ⚙ ×3" instead of bare "active".
-  const subN = Number.isFinite(role?.subagent_count) && role.subagent_count > 0
-    ? Math.floor(role.subagent_count) : 0;
-  const isDelegating = role?.activity === 'delegating' || (subN > 0 && s === 'active');
+  // matching the tri-state rule in design/u24-delegating-visual.md §2.
+  //   subagent_count >= 1 → "·⚙ ×N"
+  //   subagent_count === 0 → bare label (truly zero, no fan-out)
+  //   subagent_count missing → "·⚙" (unknown count)
+  const isDelegating = role?.activity === 'delegating';
+  const rawN = role?.subagent_count;
   const base = (badge ? badge + ' ' : '') + (STATE_LABEL[s] || s);
-  ui.panelStateChip.textContent = isDelegating
-    ? `${base} · ⚙ ×${subN || '?'}`
-    : base;
+  let suffix = '';
+  if (isDelegating) {
+    if (Number.isFinite(rawN) && rawN >= 1) suffix = ` ·⚙ ×${Math.floor(rawN)}`;
+    else if (!Number.isFinite(rawN))         suffix = ' ·⚙';
+  }
+  ui.panelStateChip.textContent = base + suffix;
   ui.panelStateChip.style.color = color;
   ui.panelStateChip.style.background = withAlpha(color, 0.18);
   ui.panelStateChip.dataset.state = s;

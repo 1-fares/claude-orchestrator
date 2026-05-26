@@ -38,10 +38,10 @@ const SELECT_RING_PX      = 3;
 const SELECT_RING_GAP_PX  = 4;
 const SEEN_MSG_LIMIT      = 2000;
 const REST_MASCOT_AFTER_MS = 30000;   // "swarm resting" mascot fades in after this
-const ORBIT_PERIOD_MS     = 3000;     // delegating-orbit revolution
-const ORBIT_GAP_PX        = 10;       // distance from disc edge to orbit ring
-const ORBIT_DOT_R_PX      = 4;
-const ORBIT_DOT_COUNT     = 2;        // dots equally spaced around the orbit
+const ORBIT_PERIOD_MS     = 2400;     // delegating-orbit revolution (design/u24-delegating-visual.md §1)
+const ORBIT_GAP_PX        = 9;        // distance from disc edge to orbit ring
+const ORBIT_DOT_R_PX      = 3.5;      // 7 px diameter
+const ORBIT_PHASE_STEP_MS = 370;      // (role-index * 0.37 s) % period; desyncs N orbits
 
 // Image cache: url → HTMLImageElement. A theme change invalidates entries
 // via clearImageCache() so the next render fetches the new-theme assets.
@@ -78,6 +78,19 @@ function activityFor(r) {
 function subagentCount(r) {
   const n = r && r.subagent_count;
   return (Number.isFinite(n) && n > 0) ? Math.floor(n) : 0;
+}
+
+// Distinguish truly-zero (server reported `delegating:0`, hide pill) from
+// unknown (server emitted plain `delegating`, render ⚙). Spec §2 hides on 0
+// but draws a ⚙ glyph when the helper could not parse N.
+function subagentBadge(r) {
+  if (!r) return null;
+  const n = r.subagent_count;
+  if (Number.isFinite(n)) {
+    if (n <= 0) return null;       // truly 0 → hide pill
+    return String(Math.floor(n));
+  }
+  return '⚙';                       // unknown → ⚙ glyph at pill geometry
 }
 
 function roleTooltip(r, now, lastSeenActive) {
@@ -683,45 +696,63 @@ export class GraphView {
         ctx.fillText(badge, bx, by + 1);
       }
 
-      // 6b) Delegating: slow orbit dots around the disc + small N pill on
-      //     the bottom-right corner (u24). Reads as a non-colour third
-      //     channel for "this role is busy but waiting on a subagent,"
-      //     visually distinct from the breathe of `working` and the still
-      //     of `idle`. Theme-aware: dots use --node-active, pill bg /
-      //     ink read from --surface-2 / --text.
+      // 6b) Delegating: one orbiting satellite disc + a top-right N pill
+      //     per design/u24-delegating-visual.md §1–§2. Reads as the second
+      //     non-colour channel for "busy but waiting on a subagent",
+      //     additive to the existing state colour + breathe. Theme-safe via
+      //     --state-active-color (or --node-active) / --surface-2 /
+      //     --token-ink — no hardcoded hex.
       const activity = activityFor(r);
-      const subN = subagentCount(r);
-      if (activity === 'delegating' && !this.reducedMotion) {
-        const orbitR = R + ORBIT_GAP_PX;
-        const t = phase(now, ORBIT_PERIOD_MS, rt.phase0);
-        const dotCol = cssVar('--node-active') || stateColor;
-        for (let i = 0; i < ORBIT_DOT_COUNT; i++) {
-          const a = t * 2 * Math.PI + (i * 2 * Math.PI) / ORBIT_DOT_COUNT;
-          const dx = orbitR * Math.cos(a);
-          const dy = orbitR * Math.sin(a);
-          ctx.beginPath();
-          ctx.arc(dx, dy, ORBIT_DOT_R_PX, 0, 2 * Math.PI);
-          ctx.fillStyle = withAlpha(dotCol, 0.95);
-          ctx.fill();
-        }
-      }
       if (activity === 'delegating') {
-        // N pill, bottom-right corner. Drawn even in reduced-motion so the
-        // delegating signal still reads when motion is off.
-        const label = subN > 0 ? String(subN) : '⋯';
-        const px = R * 0.78, py = R * 0.78;
+        const orbitR = R + ORBIT_GAP_PX;
+        const roleIdx = this.roster.indexOf(r);
+        // Phase: role-index offset desyncs N concurrent orbits so the canvas
+        // never throbs in lockstep. Reduced-motion snaps to angle -π/2 (top
+        // of node) so the satellite remains visible as a static channel.
+        let a;
+        if (this.reducedMotion) {
+          a = -Math.PI / 2;
+        } else {
+          const offset = ((roleIdx * ORBIT_PHASE_STEP_MS) % ORBIT_PERIOD_MS)
+                       / ORBIT_PERIOD_MS;
+          // Linear angular velocity → clockwise (screen Y flipped, so +a is CW).
+          a = ((now / ORBIT_PERIOD_MS) + offset) * 2 * Math.PI - Math.PI / 2;
+        }
+        const dx = orbitR * Math.cos(a);
+        const dy = orbitR * Math.sin(a);
+        const activeCol = cssVar('--state-active-color')
+                       || cssVar('--node-active') || stateColor;
+        const inkCol = cssVar('--token-ink') || '#1A1730';
+        ctx.beginPath();
+        ctx.arc(dx, dy, ORBIT_DOT_R_PX, 0, 2 * Math.PI);
+        ctx.fillStyle = withAlpha(activeCol, 0.85);
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = withAlpha(inkCol, 0.55);
+        ctx.stroke();
+      }
+      const pillLabel = (activity === 'delegating') ? subagentBadge(r) : null;
+      if (pillLabel) {
+        // N pill, top-right corner. Hidden when count is truly 0 (spec §2).
+        // When count is unknown (server emitted plain `delegating` without
+        // :N), pillLabel is '⚙' at the same geometry. Survives reduced-motion
+        // as a non-text shape channel.
+        const label = pillLabel;
+        const px = R * 0.78, py = -R * 0.78;
         const pillR = R * 0.32;
         const pillBg = cssVar('--surface-2') || stateColor;
-        const pillInk = cssVar('--text') || cssVar('--token-ink') || '#1A1730';
+        const pillInk = cssVar('--token-ink') || '#1A1730';
+        const borderCol = cssVar('--state-active-color')
+                       || cssVar('--node-active') || stateColor;
         ctx.beginPath();
         ctx.arc(px, py, pillR, 0, 2 * Math.PI);
         ctx.fillStyle = pillBg;
         ctx.fill();
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = withAlpha(cssVar('--node-active') || stateColor, 0.85);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = withAlpha(borderCol, 0.75);
         ctx.stroke();
         ctx.fillStyle = pillInk;
-        ctx.font = `700 ${Math.round(R * 0.36)}px ${cssVar('--font-sans')}`;
+        ctx.font = `800 ${Math.round(R * 0.36)}px ${cssVar('--font-sans')}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(label, px, py + 1);
