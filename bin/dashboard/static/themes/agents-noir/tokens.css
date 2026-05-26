@@ -3,6 +3,7 @@
 :root[data-theme="agents-noir"] {
   --bg:                #1F1F22;
   --surface:           #2E2A24;
+  --surface-2:         #3A3530;
   --text:              #E8DCC2;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;
@@ -20,4 +21,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #2A2A30;
   --selection-cue:     #E8DCC2;
+  --token-ink:         #1F1F22;
 }

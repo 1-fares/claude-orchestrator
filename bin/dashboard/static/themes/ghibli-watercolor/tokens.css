@@ -3,6 +3,7 @@
 :root[data-theme="ghibli-watercolor"] {
   --bg:                #F5EFE0;
   --surface:           #E8E0CE;
+  --surface-2:         #DCD2BA;
   --text:              #1F2D1F;
   --alert:             #B83A2E;
   --node-active:       #E0A040;
@@ -20,4 +21,5 @@
   --edge-priority:     #B07045;
   --edge-default:      #3A4A36;
   --selection-cue:     #F4E6CE;
+  --token-ink:         #1F2D1F;
 }

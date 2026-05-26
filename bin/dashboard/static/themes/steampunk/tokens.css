@@ -3,6 +3,7 @@
 :root[data-theme="steampunk"] {
   --bg:                #221A0E;
   --surface:           #2E2210;
+  --surface-2:         #3E2E18;
   --text:              #E8D8B0;
   --alert:             #B83A2E;
   --node-active:       #D69A3C;
@@ -20,4 +21,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #4A3826;
   --selection-cue:     #E8D8B0;
+  --token-ink:         #221A0E;
 }
