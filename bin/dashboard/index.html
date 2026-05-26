@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>B11 Swarm Dashboard</title>
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <!-- force-graph from u1-research, pinned -->
+  <script src="https://cdn.jsdelivr.net/npm/force-graph@1.49/dist/force-graph.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <div class="brand">
+        <span class="logo">⬢</span>
+        <span class="title">Swarm</span>
+        <span class="run-id">run-id: <span id="hdr-run-id">—</span></span>
+      </div>
+      <div class="header-center">
+        <div class="kpi">
+          <span class="kpi-label">Elapsed</span>
+          <span class="kpi-value" id="hdr-elapsed">00:00:00</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi-label">Roles</span>
+          <span class="kpi-value"><span id="hdr-roster">0</span><span class="muted"> / </span><span id="hdr-roster-cap">12</span></span>
+        </div>
+      </div>
+      <div class="header-right">
+        <span class="warn-pill" id="hdr-warn-pill" title=""></span>
+        <span class="freshness">
+          <span class="dot" id="hdr-fresh-dot"></span>
+          <span id="hdr-fresh-text">connecting…</span>
+        </span>
+      </div>
+    </header>
+
+    <main id="main">
+      <div id="graph-wrap">
+        <div id="graph"></div>
+        <div id="empty">
+          <div class="empty-glyph">⬡</div>
+          <div class="empty-title">Waiting for team</div>
+          <div class="empty-meta">
+            <div><span class="key">team-dir:</span> <span id="empty-team-dir">(unknown)</span></div>
+            <div><span class="key">reason:</span> <span id="empty-reason">no roster available</span></div>
+          </div>
+          <div class="empty-hint">The dashboard will populate automatically once roles join.</div>
+        </div>
+      </div>
+
+      <aside id="sidebar"></aside>
+    </main>
+
+    <footer id="legend">
+      <span class="legend-item"><span class="swatch" style="background:var(--node-orchestrator)"></span><span class="label-name">orchestrator</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-active)"></span><span class="label-name">active</span></span>
+      <span class="legend-item"><span class="swatch ring"></span><span class="label-name">idle</span></span>
+      <span class="legend-item"><span class="swatch ring" style="border-color:var(--node-paused);border-style:dashed"></span><span class="label-name">paused</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-question)"></span><span class="label-name">question</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-stalled-api)"></span><span class="label-name">stalled-api</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-give-up)"></span><span class="label-name">give-up</span></span>
+    </footer>
+  </div>
+
+  <div id="tooltip"></div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
