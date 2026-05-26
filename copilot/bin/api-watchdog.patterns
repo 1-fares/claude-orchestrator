@@ -1,0 +1,27 @@
+# Patterns the api-watchdog looks for on each role's tmux pane to flag
+# transient, retryable GitHub Copilot / Anthropic API / network errors.
+# One extended regex per line; case-insensitive.
+#
+# TODO(copilot-port): observe real Copilot CLI error messages and add patterns
+# TODO(copilot-port): check if Copilot shows rate-limit errors differently than Claude
+
+# Copilot-specific
+rate.limit
+quota.*exceeded
+premium.*request
+Request.*failed
+Copilot.*unavailable
+Copilot.*error
+
+# Anthropic API (if Copilot routes through Anthropic)
+API Error.*Rate limit
+API Error.*temporarily limiting requests
+API Error.*Overloaded
+
+# Network / generic
+Connection error
+Network error
+ECONNRESET
+ETIMEDOUT
+fetch failed
+socket hang up

@@ -1,0 +1,12 @@
+[project]
+name = "inter-session-mcp"
+version = "0.1.0"
+description = "MCP server wrapping the inter-session WebSocket bus for GitHub Copilot CLI"
+requires-python = ">=3.9"
+
+dependencies = [
+    "mcp>=1.0.0",
+    "websockets>=12.0",
+]
+
+# TODO(copilot-port): add dev dependencies for testing

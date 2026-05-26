@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "inter-session": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "PATH_TO_COPILOT_MCP_DIR",
+        "python",
+        "PATH_TO_COPILOT_MCP_DIR/server.py"
+      ],
+      "env": {
+        "INTER_SESSION_PORT": "9473"
+      }
+    }
+  }
+}
