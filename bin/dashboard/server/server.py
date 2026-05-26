@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""B11 dashboard — read-only HTTP server for a live orchestrator run.
+"""B11 dashboard, read-only HTTP server for a live orchestrator run.
 
 Reads $TEAM_DIR/{active,state.md,health/*.json} and the inter-session bus log,
 serves a snapshot at /state.json plus static assets from bin/dashboard/. See
@@ -7,6 +7,27 @@ $TEAM_DIR/artifacts/u4-architecture.md for the full contract.
 
 Stdlib only. Single-threaded HTTPServer; snapshot built per request. Bind is
 hard-restricted to loopback (127.0.0.1, ::1, localhost).
+
+Endpoints:
+  GET /              static index.html
+  GET /static/<file> static asset (allow-listed)
+  GET /state.json    full snapshot, schema_version=1
+  GET /role-feed/<name>?limit=N
+                     per-role bus traffic feed for the click-to-stream panel
+                     (u4-server-feed). Returns the last N messages (default
+                     100, max 500) involving <name> as sender or receiver,
+                     chronologically (newest last). Response shape:
+                       {"role": "<name>", "schema_version": 1,
+                        "messages": [
+                          {"id", "ts", "direction" (sent|received),
+                           "peer" (role name or "all" for broadcasts),
+                           "prefix" (status/done/question/answer/priority/
+                                     pause/resume/other),
+                           "body_preview" (first 160 chars)},
+                          ...]}
+                     400 on invalid role name (^[a-z0-9][a-z0-9-]{0,39}$),
+                     404 on a name never seen on the bus and not in $TEAM_DIR/active.
+  GET /healthz       liveness probe
 """
 
 from __future__ import annotations
@@ -26,7 +47,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 SCHEMA_VERSION = 1
 RECENT_WINDOW_SEC = 30.0           # server-side message retention window
@@ -36,6 +57,11 @@ SERIALIZE_MAX = 200                # max messages in snapshot
 TIMELINE_MAX = 8
 QUESTION_TTL_SEC = 30 * 60         # prune unanswered questions after 30 min
 TAIL_BYTES = 256 * 1024            # initial bus-log tail read
+ROLE_FEED_TAIL_BYTES = 512 * 1024  # tail size for /role-feed/<name> reads
+ROLE_FEED_DEFAULT = 100
+ROLE_FEED_MAX = 500
+ROLE_FEED_PREVIEW_CHARS = 160
+ROLE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 PREFIXES = ("status", "done", "question", "answer", "priority", "pause", "resume")
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
@@ -432,6 +458,105 @@ def read_messages(now: float, cache: MessageCache, warnings: list) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Per-role feed (u4): backs GET /role-feed/<name>.
+# Fresh tail per request — the cache in MessageCache projects records and
+# drops session_ids, but the feed needs them to resolve recipients by name.
+# Tail size is bounded; at 1 Hz dashboard polls this is cheap.
+# ---------------------------------------------------------------------------
+
+def _read_log_tail(log_path: str, tail_bytes: int, warnings: list) -> Optional[str]:
+    try:
+        st = os.stat(log_path)
+        start_pos = max(0, st.st_size - tail_bytes)
+        with open(log_path, "rb") as fh:
+            fh.seek(start_pos)
+            if start_pos > 0:
+                fh.readline()  # discard partial line
+            return fh.read().decode("utf-8", errors="replace")
+    except OSError as e:
+        warnings.append(f"messages.log read failed: {e}")
+        return None
+
+
+def read_role_feed(role_name: str, limit: int, log_path: Optional[str],
+                   warnings: list) -> tuple[list, bool]:
+    """Project the bus log into a per-role feed.
+
+    Returns (messages, seen_in_log). `seen_in_log` is True when `role_name`
+    has appeared as a sender anywhere in the tailed window — used by the
+    handler to decide between 200 (known) and 404 (unknown), in concert
+    with $TEAM_DIR/active.
+    """
+    if not log_path or not os.path.isfile(log_path):
+        return [], False
+
+    payload = _read_log_tail(log_path, ROLE_FEED_TAIL_BYTES, warnings)
+    if payload is None:
+        return [], False
+
+    records: list = []
+    sid_to_name: dict = {}
+    for line in payload.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            warnings.append("messages.log: skipped malformed jsonl line")
+            continue
+        records.append(rec)
+        sid = rec.get("from")
+        nm = rec.get("from_name")
+        # Most-recent name wins on session_id reuse (extremely rare; uuids).
+        if sid and nm:
+            sid_to_name[sid] = nm
+
+    seen_in_log = role_name in set(sid_to_name.values())
+
+    out: list = []
+    for rec in records:
+        ts = rec.get("ts")
+        if not isinstance(ts, str):
+            continue
+        from_name = rec.get("from_name")
+        kind = rec.get("kind") or "direct"
+        to_sid = rec.get("to") or ""
+        text = rec.get("text") if isinstance(rec.get("text"), str) else ""
+
+        if from_name == role_name:
+            direction = "sent"
+            peer = "all" if kind == "broadcast" else (sid_to_name.get(to_sid) or "unknown")
+        elif kind == "broadcast":
+            # Broadcasts fan out to every connected peer; include them in
+            # every role's received-stream so the operator sees the same
+            # context the role would have seen at its terminal.
+            if from_name == role_name:
+                continue  # already handled above; defensive
+            direction = "received"
+            peer = from_name or "unknown"
+        elif kind == "direct" and sid_to_name.get(to_sid) == role_name:
+            direction = "received"
+            peer = from_name or "unknown"
+        else:
+            continue
+
+        out.append({
+            "id": rec.get("msg_id") or "",
+            "ts": ts,
+            "direction": direction,
+            "peer": peer,
+            "prefix": _classify(text),
+            "body_preview": text[:ROLE_FEED_PREVIEW_CHARS],
+        })
+
+    # Records were in arrival order; tail keeps newest LAST (chronological).
+    if len(out) > limit:
+        out = out[-limit:]
+    return out, seen_in_log
+
+
+# ---------------------------------------------------------------------------
 # Role state derivation (§4.1).
 # ---------------------------------------------------------------------------
 
@@ -696,6 +821,39 @@ def make_handler(state: ServerState):
                 return
             if raw == "/healthz":
                 self._send_json({"ok": True})
+                return
+            if raw.startswith("/role-feed/"):
+                name = raw[len("/role-feed/"):]
+                if not name or "/" in name or not ROLE_NAME_RE.match(name):
+                    self._send_json({"error": "invalid role name"}, status=400)
+                    return
+                qs = parse_qs(urlsplit(self.path).query)
+                limit = ROLE_FEED_DEFAULT
+                limit_raw = qs.get("limit", [None])[0]
+                if limit_raw is not None:
+                    try:
+                        limit = int(limit_raw)
+                    except ValueError:
+                        limit = ROLE_FEED_DEFAULT
+                limit = max(1, min(limit, ROLE_FEED_MAX))
+
+                warnings: list = []
+                log_path = _resolve_log_path()
+                messages, seen_in_log = read_role_feed(name, limit, log_path, warnings)
+
+                if not seen_in_log:
+                    # Role may be freshly joined and not yet sent anything.
+                    team_dir = resolve_team_dir(state.team_dir_arg)
+                    active = read_active(team_dir, []) if team_dir else []
+                    if not any(a.get("name") == name for a in active):
+                        self._send_json({"error": "unknown role"}, status=404)
+                        return
+
+                self._send_json({
+                    "role": name,
+                    "schema_version": SCHEMA_VERSION,
+                    "messages": messages,
+                })
                 return
             if raw.startswith("/static/"):
                 name = raw[len("/static/"):]
