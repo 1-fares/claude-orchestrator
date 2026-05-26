@@ -712,9 +712,11 @@ export class GraphView {
       ctx.stroke();
       ctx.restore();
 
-      // Glyph centred on disc.
+      // Glyph centred on disc. --token-ink is themed (dark by default;
+      // per-theme tokens.css overrides it so light themes can still
+      // hit the cream disc with a dark glyph).
       const pi = prefixInfo(tk.prefix);
-      ctx.fillStyle = '#1A1730';
+      ctx.fillStyle = cssVar('--token-ink') || '#1A1730';
       ctx.font = `700 11px ${cssVar('--font-sans')}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
