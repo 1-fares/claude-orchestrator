@@ -544,14 +544,16 @@ def _read_roster_cap(team_dir: Optional[str]) -> int:
     return 12
 
 
-def _empty_reason(team_dir: Optional[str], present: bool, active: list) -> Optional[str]:
+def _empty_reason(team_dir: Optional[str], present: bool, active: list) -> tuple:
+    """Return (reason_for_ui, is_error) when roster is empty; (None, False) when populated.
+    Only is_error=True reasons go into warnings[]; normal startup state does not."""
     if team_dir is None:
-        return "team_dir does not exist: (none resolved)"
+        return "No team directory configured (pass --team-dir or set $TEAM_DIR)", True
     if not present:
-        return f"team_dir does not exist: {team_dir}"
+        return f"Team directory not found: {team_dir}", True
     if not active:
-        return "$TEAM_DIR/active is empty or missing"
-    return None
+        return "No roles have joined yet. The orchestrator is starting up…", False
+    return None, False
 
 
 def build_snapshot(state: ServerState, now: float) -> dict:
@@ -566,8 +568,8 @@ def build_snapshot(state: ServerState, now: float) -> dict:
     health = read_health_dir(team_dir, warnings) if present else {}
     msgs, opens, counts_by_role = read_messages(now, state.msg_cache, warnings)
 
-    reason = _empty_reason(team_dir, present, active)
-    if reason:
+    reason, is_err = _empty_reason(team_dir, present, active)
+    if reason and is_err:
         warnings.insert(0, reason)
 
     roster_entries, _synth = ensure_orchestrator(active, present)
@@ -622,6 +624,7 @@ def build_snapshot(state: ServerState, now: float) -> dict:
         "units": {"counts": units["counts"], "list": units["list"]},
         "messages": msgs[-SERIALIZE_MAX:],
         "timeline": units["timeline"],
+        "empty_reason": reason,
         "warnings": warnings,
     }
 

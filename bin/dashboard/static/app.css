@@ -227,7 +227,7 @@ html, body {
 .roster-row:hover { background: var(--surface-2); }
 .roster-row .glyph {
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 .roster-row .name {
   color: var(--text);
@@ -288,7 +288,7 @@ html, body {
 .units-legend .label {
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: 10px;
+  font-size: var(--fs-small);
 }
 .units-legend .num {
   margin-left: auto;
@@ -394,7 +394,7 @@ html, body {
 }
 #tooltip .tt-msg {
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: var(--fs-small);
   margin-top: 2px;
 }
 
