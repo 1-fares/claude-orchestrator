@@ -141,8 +141,7 @@ function render(snap) {
   const empty = (run.roster_count == null || run.roster_count === 0);
   if (empty) {
     ui.empty.classList.add('visible');
-    const reason = (snap.warnings && snap.warnings[0]) || 'no roster available';
-    ui.emptyReason.textContent = reason;
+    ui.emptyReason.textContent = snap.empty_reason || 'Waiting for roles to join…';
     ui.emptyTeamDir.textContent = snap.team_dir || '(not set)';
   } else {
     ui.empty.classList.remove('visible');
