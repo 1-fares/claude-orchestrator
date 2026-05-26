@@ -3,17 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>B11 Swarm Dashboard</title>
+  <title>Swarm dashboard</title>
   <link rel="stylesheet" href="/static/tokens.css">
   <link rel="stylesheet" href="/static/app.css">
-  <!-- force-graph from u1-research, pinned -->
-  <script src="https://cdn.jsdelivr.net/npm/force-graph@1.49/dist/force-graph.min.js"></script>
+  <link rel="icon" type="image/png" href="/static/img/mascot.png">
 </head>
 <body>
   <div id="app">
     <header id="header">
       <div class="brand">
-        <span class="logo">⬢</span>
+        <img class="logo" src="/static/img/role-orchestrator.png" alt="">
         <span class="title">Swarm</span>
         <span class="run-id">run-id: <span id="hdr-run-id">—</span></span>
       </div>
@@ -40,13 +39,13 @@
       <div id="graph-wrap">
         <div id="graph"></div>
         <div id="empty">
-          <div class="empty-glyph">⬡</div>
+          <img class="empty-mascot" id="empty-mascot" src="/static/img/mascot.png" alt="">
           <div class="empty-title">Waiting for team</div>
           <div class="empty-meta">
             <div><span class="key">team-dir:</span> <span id="empty-team-dir">(unknown)</span></div>
             <div><span class="key">reason:</span> <span id="empty-reason">no roster available</span></div>
           </div>
-          <div class="empty-hint">The dashboard will populate automatically once roles join.</div>
+          <div class="empty-hint">The dashboard populates as roles join.</div>
         </div>
       </div>
 
@@ -54,17 +53,33 @@
     </main>
 
     <footer id="legend">
-      <span class="legend-item"><span class="swatch" style="background:var(--node-orchestrator)"></span><span class="label-name">orchestrator</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--node-active)"></span><span class="label-name">active</span></span>
-      <span class="legend-item"><span class="swatch ring"></span><span class="label-name">idle</span></span>
-      <span class="legend-item"><span class="swatch ring" style="border-color:var(--node-paused);border-style:dashed"></span><span class="label-name">paused</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--node-question)"></span><span class="label-name">question</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--node-stalled-api)"></span><span class="label-name">stalled-api</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--node-give-up)"></span><span class="label-name">give-up</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--state-active-color)"></span><span class="label-name">active</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--state-idle-color)"></span><span class="label-name">idle</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--state-paused-color)"></span><span class="label-name">paused</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--state-question-color)"></span><span class="label-name">question</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--state-stalled-api-color)"></span><span class="label-name">stalled-api</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--state-give-up-color)"></span><span class="label-name">give-up</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--state-dead-color)"></span><span class="label-name">dead</span></span>
+      <span class="legend-divider"></span>
+      <span class="legend-item"><span class="label-name">click any agent for live feed</span></span>
     </footer>
   </div>
 
-  <div id="tooltip"></div>
+  <aside id="agent-panel" aria-hidden="true">
+    <div id="agent-panel-header">
+      <div class="panel-title-row">
+        <h2 class="panel-role-name" id="agent-panel-role-name">—</h2>
+        <button class="panel-close" id="agent-panel-close" type="button" aria-label="close panel">×</button>
+      </div>
+      <div class="panel-state-row">
+        <span class="panel-state-chip" id="agent-panel-state-chip">idle</span>
+        <span class="panel-last-activity" id="agent-panel-last-activity">last activity: —</span>
+      </div>
+    </div>
+    <div id="agent-panel-feed">
+      <img class="panel-mascot" id="agent-panel-mascot" src="/static/img/mascot.png" alt="" data-faint="false">
+    </div>
+  </aside>
 
   <script type="module" src="/static/app.js"></script>
 </body>
