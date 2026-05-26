@@ -214,11 +214,12 @@ def parse_state_md(team_dir: Optional[str], warnings: list) -> dict:
                 continue
             datestr, sign, role, note = mm.group(1), mm.group(2), mm.group(3), mm.group(4)
             try:
-                ts = datetime.strptime(datestr, "%Y-%m-%d").timestamp() + 12 * 3600
+                ts = datetime.strptime(datestr, "%Y-%m-%d").timestamp()
             except ValueError:
                 continue
             events.append({
                 "ts": ts,
+                "date": datestr,
                 "kind": "add" if sign == "+" else "retire",
                 "role": role,
                 "source": "state.md:roster" + (f" ({note})" if note else ""),
@@ -580,6 +581,14 @@ def build_snapshot(state: ServerState, now: float) -> dict:
 
     state_md_mtime = _safe_mtime(os.path.join(team_dir, "state.md")) if present else None
     active_mtime = _safe_mtime(os.path.join(team_dir, "active")) if present else None
+
+    # Decision 2 (u1-spec): annotate the most-recent timeline event with the
+    # state.md mtime as ts_real, so the frontend can render "Xm ago" for the
+    # head row. Older rows fall back to the date string. Approximation: mtime
+    # reflects the latest write to state.md, which is correct for the newest
+    # entry and "newer than reality" for older ones — hence head-only.
+    if units["timeline"] and state_md_mtime:
+        units["timeline"][0]["ts_real"] = state_md_mtime
 
     # run_id: basename minus leading .team- ; legacy .team => null.
     run_id = None
