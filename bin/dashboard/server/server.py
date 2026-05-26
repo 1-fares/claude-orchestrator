@@ -15,13 +15,13 @@ Endpoints:
                      image asset under bin/dashboard/static/img/. Basename
                      must match IMG_BASENAME_RE (lowercase png/webp/svg/jpeg
                      files) and the resolved realpath must stay under that dir.
-  GET /state.json    full snapshot, schema_version=1
+  GET /state.json    full snapshot, schema_version=2
   GET /role-feed/<name>?limit=N
                      per-role bus traffic feed for the click-to-stream panel
                      (u4-server-feed). Returns the last N messages (default
                      100, max 500) involving <name> as sender or receiver,
                      chronologically (newest last). Response shape:
-                       {"role": "<name>", "schema_version": 1,
+                       {"role": "<name>", "schema_version": 2,
                         "messages": [
                           {"id", "ts", "direction" (sent|received),
                            "peer" (role name or "all" for broadcasts),
@@ -31,7 +31,31 @@ Endpoints:
                           ...]}
                      400 on invalid role name (^[a-z0-9][a-z0-9-]{0,39}$),
                      404 on a name never seen on the bus and not in $TEAM_DIR/active.
+  GET /themes        list of installed themes for the u13 switcher
+                     (u14-server-themes). Walks bin/dashboard/static/themes/
+                     once at startup, parses each subdir's theme.json against
+                     the u11 master-spec contract, and returns the validated
+                     list. Themes whose theme.json is malformed or fails
+                     validation are excluded and a single stderr warning per
+                     theme is emitted at load time. Response shape:
+                       {"schema_version": 2,
+                        "themes": [<theme.json object>, ...]}
+                     The cache is rebuilt on SIGHUP (or any restart); it does
+                     NOT auto-watch the filesystem, so operators must HUP or
+                     restart to pick up newly installed themes.
+  GET /static/themes/<theme>/<file>
+                     theme asset under bin/dashboard/static/themes/<theme>/.
+                     <theme> must match THEME_NAME_RE and resolve to an
+                     existing subdir; <file> must match THEME_FILE_RE and the
+                     resolved realpath must stay under that subdir.
   GET /healthz       liveness probe
+
+SCHEMA_VERSION history:
+  1 — initial /state.json + /role-feed shape.
+  2 — added /themes and /static/themes/<theme>/<file>. /state.json shape is
+       unchanged at the field level; the version bump signals to clients that
+       the theme endpoints exist (clients that ignore them stay backward
+       compatible because /state.json payload is unchanged).
 """
 
 from __future__ import annotations
@@ -53,7 +77,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlsplit
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 RECENT_WINDOW_SEC = 30.0           # server-side message retention window
 ACTIVE_RECENT_SEC = 3.0            # "active" rule 6: msg within this window
 RING_MAX = 500                     # cache ring size
@@ -97,6 +121,25 @@ MIME_BY_EXT = {
 # part of the pattern, not arbitrary names.
 IMG_BASENAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}\.(png|webp|svg|jpe?g)$")
 
+# Theme directory + file gates for /static/themes/<theme>/<file>. The dir name
+# follows the same kebab-case rule as the bus role-name pattern; the file
+# basename is the IMG pattern plus the text formats themes need (tokens.css,
+# theme.json, the per-asset prompt records).
+THEME_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+THEME_FILE_RE = re.compile(
+    r"^[a-z0-9][a-z0-9._-]{0,63}\.(png|webp|svg|jpe?g|css|json|txt)$"
+)
+
+# theme.json contract per $TEAM_DIR/design/themes/_master-spec.md §3.
+THEME_REQUIRED_FIELDS = (
+    "name", "display_name", "summary", "mode",
+    "default_edge_style", "default_token_style",
+)
+THEME_MODES = {"dark", "light"}
+THEME_EDGE_STYLES = {"solid", "ribbon", "streak", "spark"}
+THEME_TOKEN_STYLES = {"spark", "disc", "ribbon", "streak"}
+THEME_SUMMARY_MAX = 80
+
 
 # ---------------------------------------------------------------------------
 # Message cache (mutable, single-threaded — no lock needed).
@@ -118,6 +161,10 @@ class ServerState:
     index_html: Path
     started_ts: float
     msg_cache: MessageCache
+    # Theme registry: list of validated theme.json dicts, in directory-sorted
+    # order. Rebuilt at startup and on SIGHUP. None means "not yet loaded";
+    # an empty list means "no themes installed".
+    themes: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +617,111 @@ def read_role_feed(role_name: str, limit: int, log_path: Optional[str],
 
 
 # ---------------------------------------------------------------------------
+# Theme registry (u14-server-themes). Backs GET /themes.
+# Walks bin/dashboard/static/themes/ once at startup (and on SIGHUP), parses
+# each subdir's theme.json against the §3 contract, and caches the validated
+# list. Invalid themes are skipped with a single stderr warning each; valid
+# themes are returned in directory-name order.
+# ---------------------------------------------------------------------------
+
+def _validate_theme_json(data: Any, dir_name: str) -> tuple[Optional[dict], Optional[str]]:
+    """Validate parsed theme.json against the master-spec §3 contract.
+
+    Returns (theme_object, None) on success, or (None, reason) on failure.
+    `theme_object` is the parsed dict with the contract fields kept verbatim;
+    extra fields in the source are preserved so the frontend can read any
+    forward-compatible additions without a server change.
+    """
+    if not isinstance(data, dict):
+        return None, "theme.json is not a JSON object"
+    for f in THEME_REQUIRED_FIELDS:
+        if f not in data:
+            return None, f"missing required field '{f}'"
+    if not isinstance(data["name"], str) or data["name"] != dir_name:
+        return None, f"name field does not match dir basename '{dir_name}'"
+    if not isinstance(data["display_name"], str) or not data["display_name"]:
+        return None, "display_name must be a non-empty string"
+    if not isinstance(data["summary"], str) or len(data["summary"]) > THEME_SUMMARY_MAX:
+        return None, f"summary must be a string of <= {THEME_SUMMARY_MAX} chars"
+    if data["mode"] not in THEME_MODES:
+        return None, f"mode must be one of {sorted(THEME_MODES)}"
+    if data["default_edge_style"] not in THEME_EDGE_STYLES:
+        return None, f"default_edge_style must be one of {sorted(THEME_EDGE_STYLES)}"
+    if data["default_token_style"] not in THEME_TOKEN_STYLES:
+        return None, f"default_token_style must be one of {sorted(THEME_TOKEN_STYLES)}"
+    return data, None
+
+
+def load_themes(static_dir: Path) -> list:
+    """Walk static/themes/, parse each subdir's theme.json, return validated list.
+
+    Emits a single stderr warning per skipped theme (malformed JSON, schema
+    miss, name mismatch). The cache is populated by the caller; this function
+    has no side effect on it.
+    """
+    themes_root = static_dir / "themes"
+    out: list = []
+    if not themes_root.is_dir():
+        return out
+    try:
+        entries = sorted(p for p in themes_root.iterdir() if p.is_dir())
+    except OSError as e:
+        print(f"themes: cannot list {themes_root}: {e}", file=sys.stderr)
+        return out
+    for sub in entries:
+        # Dir-name discipline: reject anything that does not match the same
+        # pattern the URL allows. Avoids surfacing junk dirs like ".DS_Store"
+        # or stray staging dirs.
+        if not THEME_NAME_RE.match(sub.name):
+            print(f"themes: skipping '{sub.name}' (dir name fails THEME_NAME_RE)",
+                  file=sys.stderr)
+            continue
+        tj = sub / "theme.json"
+        if not tj.is_file():
+            print(f"themes: skipping '{sub.name}' (no theme.json)", file=sys.stderr)
+            continue
+        try:
+            data = json.loads(tj.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"themes: skipping '{sub.name}' (theme.json unreadable: {e})",
+                  file=sys.stderr)
+            continue
+        obj, why = _validate_theme_json(data, sub.name)
+        if obj is None:
+            print(f"themes: skipping '{sub.name}' ({why})", file=sys.stderr)
+            continue
+        out.append(obj)
+    return out
+
+
+def _safe_theme_path(theme: str, filename: str, static_dir: Path) -> Optional[Path]:
+    """Resolve /static/themes/<theme>/<filename> or return None.
+
+    Two layers of defence: pattern gates on both <theme> and <filename>, plus
+    a realpath-containment check so a basename that survives the pattern but
+    escapes via a symlink is still rejected.
+    """
+    if not THEME_NAME_RE.match(theme):
+        return None
+    if not THEME_FILE_RE.match(filename):
+        return None
+    themes_root = (static_dir / "themes").resolve()
+    candidate_dir = (static_dir / "themes" / theme).resolve()
+    try:
+        candidate_dir.relative_to(themes_root)
+    except ValueError:
+        return None
+    if not candidate_dir.is_dir():
+        return None
+    candidate = (candidate_dir / filename).resolve()
+    try:
+        candidate.relative_to(candidate_dir)
+    except ValueError:
+        return None
+    return candidate
+
+
+# ---------------------------------------------------------------------------
 # Role state derivation (§4.1).
 # ---------------------------------------------------------------------------
 
@@ -853,6 +1005,12 @@ def make_handler(state: ServerState):
             if raw == "/healthz":
                 self._send_json({"ok": True})
                 return
+            if raw == "/themes":
+                self._send_json({
+                    "schema_version": SCHEMA_VERSION,
+                    "themes": state.themes,
+                })
+                return
             if raw.startswith("/role-feed/"):
                 name = raw[len("/role-feed/"):]
                 if not name or "/" in name or not ROLE_NAME_RE.match(name):
@@ -900,6 +1058,25 @@ def make_handler(state: ServerState):
                         self._send_json({"error": "not found"}, status=404)
                         return
                     path = _safe_img_path(basename, state.static_dir)
+                    if path is None or not path.is_file():
+                        self._send_json({"error": "not found"}, status=404)
+                        return
+                    self._send_file(path, _mime_for(path), "max-age=300")
+                    return
+                # /static/themes/<theme>/<file>: theme-pack asset, gated by
+                # dir + file pattern allowlists AND a realpath-containment
+                # check so a basename surviving the pattern via a symlink
+                # cannot escape the theme dir.
+                if sub.startswith("themes/"):
+                    rest = sub[len("themes/"):]
+                    if "/" not in rest:
+                        self._send_json({"error": "not found"}, status=404)
+                        return
+                    theme, _, filename = rest.partition("/")
+                    if "/" in filename or not filename:
+                        self._send_json({"error": "not found"}, status=404)
+                        return
+                    path = _safe_theme_path(theme, filename, state.static_dir)
                     if path is None or not path.is_file():
                         self._send_json({"error": "not found"}, status=404)
                         return
@@ -970,6 +1147,7 @@ def main(argv: Optional[list] = None) -> int:
         index_html=index_html,
         started_ts=started_ts,
         msg_cache=msg_cache,
+        themes=load_themes(static_dir),
     )
 
     try:
@@ -1003,8 +1181,22 @@ def main(argv: Optional[list] = None) -> int:
     def _stop(signum, frame):
         threading.Thread(target=httpd.shutdown, daemon=True).start()
 
+    # SIGHUP rebuilds the theme cache so an operator can drop a new theme into
+    # bin/dashboard/static/themes/ and reload without bouncing the server. The
+    # rebuild runs on a daemon thread to keep the signal handler short.
+    def _reload_themes(signum, frame):
+        def _do():
+            new_themes = load_themes(static_dir)
+            server_state.themes = new_themes
+            print(f"themes: reloaded ({len(new_themes)} theme(s))", file=sys.stderr)
+        threading.Thread(target=_do, daemon=True).start()
+
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    # SIGHUP is POSIX-only; guard for portability even though we only ship
+    # on Linux today.
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, _reload_themes)
 
     try:
         httpd.serve_forever()
