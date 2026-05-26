@@ -101,6 +101,30 @@ slide content, legal analysis, anything the operator briefs.
 - **Domain overlays** (Swiss legal cite-verifier, RFP compliance matrix, etc.)
   are added on demand; not in the substrate.
 
+## Visual dashboard (second screen)
+
+`bin/launch-team.sh` auto-starts `bin/dashboard.sh`, a read-only HTTP viewer
+designed to sit on a second screen during a run. It serves a force-directed
+graph of live roles plus a stats panel from data files under `$TEAM_DIR`
+(roster, ledger, watchdog health, bus log). The launcher prints the URL on
+start, e.g. `dashboard started (pid …) — open http://127.0.0.1:<port>/`.
+The same URL is also written to `$TEAM_DIR/dashboard.url`.
+
+It is loopback-only (127.0.0.1), pure read-only (no buttons), and cleaned up
+by `stop-team.sh`, `panic.sh`, `reset.sh`, and `cleanup.sh`.
+
+Run it standalone (no live team needed; degrades gracefully):
+
+```
+bin/dashboard.sh                       # auto-pick free port; $TEAM_DIR or newest .team-*
+bin/dashboard.sh --port 8765           # fixed port
+bin/dashboard.sh --team-dir .team-r123 # point at a specific run
+bin/dashboard.sh --help                # all options
+```
+
+Disable auto-start: `DASHBOARD_DISABLED=1 bin/run.sh ...`.
+Fixed port at launch: `DASHBOARD_PORT=8765 bin/run.sh ...`.
+
 ## API rate-limit resilience
 
 Transient Anthropic API rate-limit / network errors stall a role's pane with a
