@@ -311,22 +311,25 @@ export class ChatPanel {
       ts: null,
       author_type: 'operator',
       author_name: 'operator',
-      addressed_to,
+      addressed_to: addressed_to || null,
       body,
       _optimistic: true,
     };
     this.entries.push(optimistic);
     this._renderTranscript();
     this._scrollToBottom(true);
+    // The chat panel implicitly targets the communicator via inbound.jsonl
+    // tail (design/communicator-spec.md), so addressed_to is only sent when
+    // the operator explicitly types `@role` / `@orchestrator` / `@operator`.
+    // The server's CHAT_ADDRESSED_TO_RE rejects 'communicator', so omit it
+    // entirely on a bare default send rather than fabricating an invalid value.
+    const payload = { author_name: 'operator', body };
+    if (addressed_to) payload.addressed_to = addressed_to;
     try {
       const r = await fetch('/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          author_name: 'operator',
-          body,
-          addressed_to,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!r.ok && r.status !== 202) {
         optimistic._failed = true;
@@ -338,12 +341,18 @@ export class ChatPanel {
     }
   }
 
+  // Returns { addressed_to, body }. `addressed_to` is null on a bare default
+  // send — the communicator is the implicit target via inbound.jsonl tail per
+  // design/communicator-spec.md § Conversation turn format (valid values are
+  // operator | orchestrator | role:<name> | null; 'communicator' is NOT
+  // valid). A leading `@operator`, `@orchestrator`, or `@<role>` token
+  // overrides the default.
   _parseAddressing(text) {
     const m = text.match(/^\s*@(role:[a-z0-9][a-z0-9-]*|[a-z0-9][a-z0-9-]*)\s+([\s\S]+)$/);
-    if (!m) return { addressed_to: 'communicator', body: text };
+    if (!m) return { addressed_to: null, body: text };
     const tok = m[1];
     const body = m[2];
-    if (tok === 'orchestrator' || tok === 'operator' || tok === 'communicator') {
+    if (tok === 'orchestrator' || tok === 'operator') {
       return { addressed_to: tok, body };
     }
     if (tok.startsWith('role:')) return { addressed_to: tok, body };
