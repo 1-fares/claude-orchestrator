@@ -92,7 +92,9 @@ export function withAlpha(hex, alpha) {
 // ---------------------------------------------------------- theme loader
 
 const STORAGE_KEY = 'b11.theme';
-const DEFAULT_THEME = 'paper-puppet-stage';
+// Default theme picked by the operator. paper-puppet-stage remains
+// selectable; an existing localStorage 'b11.theme' still wins (u12e).
+export const DEFAULT_THEME = 'warm-hive';
 
 // Tiny 1x1 transparent PNG, used as the final image fallback so the
 // onerror handler does not loop forever.
