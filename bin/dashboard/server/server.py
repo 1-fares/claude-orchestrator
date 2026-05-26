@@ -78,6 +78,12 @@ SCHEMA_VERSION history:
        POST /chat, GET /chat/open-question, GET /chat/queue. Reads and writes
        $TEAM_DIR/comm/* with realpath containment. /state.json payload shape
        is unchanged at the field level.
+  4 — per-role `activity` field added to /state.json's roster entries (u24,
+       server half). Values: working|delegating|idle|stalled-api|give-up,
+       with an optional `subagent_count` int when delegating with a parseable
+       count. Sourced by invoking bin/role-activity.sh per role per tick,
+       with a short per-role TTL cache to bound subprocess fan-out. The
+       existing `state` field is unchanged for backward compat.
 """
 
 from __future__ import annotations
@@ -89,6 +95,7 @@ import os
 import re
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -99,7 +106,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlsplit
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 RECENT_WINDOW_SEC = 30.0           # server-side message retention window
 ACTIVE_RECENT_SEC = 3.0            # "active" rule 6: msg within this window
 RING_MAX = 500                     # cache ring size
@@ -173,6 +180,13 @@ CHAT_ADDRESSED_TO_RE = re.compile(
     r"^(operator|orchestrator|role:[a-z0-9][a-z0-9-]{0,39})$"
 )
 
+# Per-role activity classifier (u24). The dashboard tick runs at ~1 s, so per-
+# role subprocess fan-out is acceptable up to the team cap; this TTL just
+# smooths bursts and gives multiple concurrent /state.json polls a free ride.
+ROLE_ACTIVITY_TTL_SEC = 0.5
+ROLE_ACTIVITY_TIMEOUT_SEC = 2.0
+ROLE_ACTIVITY_VALUES = {"working", "delegating", "idle", "stalled-api", "give-up"}
+
 
 # ---------------------------------------------------------------------------
 # Message cache (mutable, single-threaded — no lock needed).
@@ -198,6 +212,10 @@ class ServerState:
     # order. Rebuilt at startup and on SIGHUP. None means "not yet loaded";
     # an empty list means "no themes installed".
     themes: list = field(default_factory=list)
+    # u24 per-role activity classifier cache. Keyed by role name; value is
+    # (deadline_ts, activity, subagent_count_or_None). Repopulated lazily by
+    # _classify_activity on every cache miss / expiry.
+    activity_cache: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -755,6 +773,90 @@ def _safe_theme_path(theme: str, filename: str, static_dir: Path) -> Optional[Pa
 
 
 # ---------------------------------------------------------------------------
+# Per-role activity classifier (u24). Shells out to bin/role-activity.sh, which
+# reads the role's tmux pane and prints one of:
+#   working / delegating:<N> / delegating / idle
+# Exit 0 on classification, non-zero on tmux-capture failure (the caller falls
+# back to the existing api-watchdog state — `state` in build_role).
+# A short per-role TTL bounds subprocess fan-out under bursts of /state.json
+# polls; absent that, every poll spawns one shell-out per role.
+# ---------------------------------------------------------------------------
+
+_ROLE_ACTIVITY_RE = re.compile(r"^(working|delegating(?::(\d+))?|idle)$")
+
+
+def _role_activity_script() -> Optional[Path]:
+    """Resolve bin/role-activity.sh relative to this server.py. server.py is at
+    bin/dashboard/server/server.py, so the helper is two levels up + .."""
+    candidate = Path(__file__).resolve().parent.parent.parent / "role-activity.sh"
+    return candidate if candidate.is_file() else None
+
+
+def _run_role_activity(role: str, script: Path,
+                       warnings: list) -> tuple[Optional[str], Optional[int]]:
+    """Run bin/role-activity.sh <role>. Returns (activity, subagent_count) or
+    (None, None) on failure. Activity is one of `working|delegating|idle`."""
+    try:
+        proc = subprocess.run(
+            ["bash", str(script), role],
+            capture_output=True, text=True,
+            timeout=ROLE_ACTIVITY_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        warnings.append(f"role-activity.sh {role}: {e}")
+        return None, None
+    if proc.returncode != 0:
+        # Non-zero is the "tmux capture failed" path; don't warn (the role may
+        # not have joined yet, the active file may be stale, etc.). Warning
+        # here would spam the dashboard's warnings panel on every tick.
+        return None, None
+    out = (proc.stdout or "").strip()
+    m = _ROLE_ACTIVITY_RE.match(out)
+    if not m:
+        warnings.append(f"role-activity.sh {role}: unexpected output {out!r}")
+        return None, None
+    if out.startswith("delegating"):
+        cnt = int(m.group(2)) if m.group(2) is not None else None
+        return "delegating", cnt
+    return out, None
+
+
+def _classify_activity(role: str, health: Optional[dict], state: ServerState,
+                       now: float, warnings: list) -> tuple[str, Optional[int]]:
+    """Resolve a role's `activity` value with the priority chain:
+      health=give-up    -> "give-up"
+      health=stalled    -> "stalled-api"
+      else              -> bin/role-activity.sh's classification (working/
+                           delegating[:N]/idle), cached briefly per role.
+    On script failure, fall back to "idle" so the panel always has a value
+    rather than rendering a missing field; the existing `state` field still
+    carries the api-watchdog truth for the operator.
+    """
+    if isinstance(health, dict):
+        hs = health.get("state")
+        if hs == "give-up":
+            return "give-up", None
+        if hs == "stalled":
+            return "stalled-api", None
+
+    cached = state.activity_cache.get(role)
+    if cached is not None and cached[0] > now:
+        return cached[1], cached[2]
+
+    script = _role_activity_script()
+    if script is None:
+        state.activity_cache[role] = (now + ROLE_ACTIVITY_TTL_SEC, "idle", None)
+        return "idle", None
+    activity, subagents = _run_role_activity(role, script, warnings)
+    if activity is None:
+        activity = "idle"
+    state.activity_cache[role] = (
+        now + ROLE_ACTIVITY_TTL_SEC, activity, subagents,
+    )
+    return activity, subagents
+
+
+# ---------------------------------------------------------------------------
 # Role state derivation (§4.1).
 # ---------------------------------------------------------------------------
 
@@ -784,7 +886,9 @@ def _last_pause_event(role: str, msgs: list) -> Optional[dict]:
 
 
 def build_role(active_entry: dict, health: Optional[dict], msgs: list,
-               opens: dict, counts_by_role: dict, now: float) -> dict:
+               opens: dict, counts_by_role: dict, now: float,
+               server_state: Optional[ServerState] = None,
+               warnings: Optional[list] = None) -> dict:
     name = active_entry["name"]
     is_orch = (name == "orchestrator")
     role_base = "orchestrator" if is_orch else _role_base(name)
@@ -819,6 +923,20 @@ def build_role(active_entry: dict, health: Optional[dict], msgs: list,
         "sent_1m": 0, "recv_1m": 0, "sent_total": 0, "recv_total": 0,
     })
 
+    # u24 additive `activity` field: working|delegating|idle|stalled-api|give-up
+    # with an optional `subagent_count` int when delegating with a parseable
+    # count. Skip the helper for the synthesised orchestrator entry (no real
+    # pane to capture); the operator's other channels already cover it.
+    if server_state is not None and not is_orch:
+        activity, subagent_count = _classify_activity(
+            name, health, server_state, now, warnings if warnings is not None else []
+        )
+    else:
+        # Orchestrator surface stays as "orchestrator" so the frontend can
+        # render it specially; subagent_count is irrelevant.
+        activity = "orchestrator" if is_orch else "idle"
+        subagent_count = None
+
     return {
         "name": name,
         "role_base": role_base,
@@ -828,6 +946,8 @@ def build_role(active_entry: dict, health: Optional[dict], msgs: list,
         "state": state,
         "state_source": src,
         "state_age_sec": round(age, 2),
+        "activity": activity,
+        "subagent_count": subagent_count,
         "health": health if isinstance(health, dict) else None,
         "counts": counts,
         "last_msg_ts": last_msg["ts"] if last_msg else None,
@@ -898,7 +1018,8 @@ def build_snapshot(state: ServerState, now: float) -> dict:
 
     roster_entries, _synth = ensure_orchestrator(active, present)
     roster = [
-        build_role(entry, health.get(entry["name"]), msgs, opens, counts_by_role, now)
+        build_role(entry, health.get(entry["name"]), msgs, opens,
+                   counts_by_role, now, state, warnings)
         for entry in roster_entries
     ]
 
