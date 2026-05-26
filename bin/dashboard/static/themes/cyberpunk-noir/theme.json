@@ -1,0 +1,8 @@
+{
+  "name": "cyberpunk-noir",
+  "display_name": "Cyberpunk Noir",
+  "summary": "Amber + cyan operatives in a rainy night-navy alley.",
+  "mode": "dark",
+  "default_edge_style": "streak",
+  "default_token_style": "streak"
+}

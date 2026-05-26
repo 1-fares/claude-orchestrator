@@ -1,0 +1,22 @@
+/* steampunk — B11 theme tokens */
+:root[data-theme="steampunk"] {
+  --bg:                #1A130A;
+  --surface:           #251C10;
+  --text:              #E8D8B0;
+  --alert:             #B83A2E;
+  --node-active:       #D69A3C;
+  --node-idle:         #4E6A55;
+  --node-paused:       #C28B3E;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45E2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #D69A3C;
+  --node-dead:         #3A2E1F;
+  --edge-status:       #E8D8B0;
+  --edge-done:         #4E6A55;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #D69A3C;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #4A3826;
+  --selection-cue:     #E8D8B0;
+}

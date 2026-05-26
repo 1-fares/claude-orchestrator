@@ -1,0 +1,22 @@
+/* plushies — B11 theme tokens */
+:root[data-theme="plushies"] {
+  --bg:                #1B130C;
+  --surface:           #261A12;
+  --text:              #F0DCBE;
+  --alert:             #B83A2E;
+  --node-active:       #E1A14C;
+  --node-idle:         #6E7E4D;
+  --node-paused:       #C28A56;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45A2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #E1A14C;
+  --node-dead:         #3A2E22;
+  --edge-status:       #C28A56;
+  --edge-done:         #6E7E4D;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E1A14C;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #4A3826;
+  --selection-cue:     #F0DCBE;
+}

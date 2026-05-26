@@ -1,0 +1,8 @@
+{
+  "name": "plushies",
+  "display_name": "Plushies",
+  "summary": "Photoreal felt plushies on warm walnut wood.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

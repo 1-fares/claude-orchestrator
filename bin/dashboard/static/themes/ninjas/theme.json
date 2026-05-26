@@ -1,0 +1,8 @@
+{
+  "name": "ninjas",
+  "display_name": "Ninjas",
+  "summary": "Chibi ninjas on moonlit roof tiles in night indigo.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

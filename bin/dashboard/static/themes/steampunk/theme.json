@@ -1,0 +1,8 @@
+{
+  "name": "steampunk",
+  "display_name": "Steampunk",
+  "summary": "Brass-goggled chibi inventors in warm gas-lamp light.",
+  "mode": "dark",
+  "default_edge_style": "spark",
+  "default_token_style": "spark"
+}

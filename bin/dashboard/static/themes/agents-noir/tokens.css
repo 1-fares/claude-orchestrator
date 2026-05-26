@@ -1,0 +1,22 @@
+/* agents-noir — B11 theme tokens */
+:root[data-theme="agents-noir"] {
+  --bg:                #0E0E12;
+  --surface:           #1A1A20;
+  --text:              #E8DCC2;
+  --alert:             #B83A2E;
+  --node-active:       #E89A3C;
+  --node-idle:         #6B6B70;
+  --node-paused:       #8E8E94;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45A2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #E89A3C;
+  --node-dead:         #2A2A30;
+  --edge-status:       #B9B0B6;
+  --edge-done:         #6B6B70;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #2A2A30;
+  --selection-cue:     #E8DCC2;
+}

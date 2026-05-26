@@ -1,0 +1,8 @@
+{
+  "name": "retro-aliens",
+  "display_name": "Retro Aliens",
+  "summary": "1950s pulp sci-fi aliens on a starlit spaceship deck.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}
