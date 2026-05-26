@@ -194,6 +194,55 @@ start_api_watchdog() {
   echo "api-watchdog started (pid $!, log: $TEAM_DIR/api-watchdog.log)"
 }
 
+# Ask the operator whether to bring up the visual dashboard. Sits in front of
+# start_dashboard, never replaces its guard. Precedence (highest first):
+#
+#   1) DASHBOARD_DISABLED=1 in env  ->  skip without asking. The env wins so
+#      scripted callers (CI, automated launches, the watchdog respawning) keep
+#      their existing opt-out path.
+#   2) Otherwise prompt "Show the visual dashboard? [Y/n]" with a 5 s timeout.
+#      On a TTY the prompt is visible. On non-TTY stdin (redirect from
+#      /dev/null, here-doc, process substitution) the visible prompt is
+#      suppressed, but `read -t 5` still runs so a piped Y / n answer is
+#      honoured by the smoke harness. EOF or timeout falls back to the Y
+#      default and the dashboard starts.
+#   3) Answer N / n exports DASHBOARD_DISABLED=1 for the rest of the launch so
+#      every later code path that checks the env sees the same opt-out signal.
+#      Answer Y / empty leaves the env alone and start_dashboard runs.
+prompt_dashboard_choice() {
+  if [ "${DASHBOARD_DISABLED:-0}" = "1" ]; then
+    echo "dashboard: skipped (DASHBOARD_DISABLED=1)"
+    return 0
+  fi
+  if [ -t 0 ]; then
+    printf 'Show the visual dashboard? [Y/n] '
+  fi
+  local ans=""
+  if ! read -r -t 5 ans; then
+    # read failed: 5 s timeout on a quiet TTY, or EOF from /dev/null. Either
+    # way, no answer -> Y default. Newline closes the prompt line on TTY.
+    [ -t 0 ] && echo
+    if [ -t 0 ]; then
+      echo "dashboard: accepted (timeout, default Y)"
+    else
+      echo "dashboard: prompt skipped (non-tty, default Y)"
+    fi
+    return 0
+  fi
+  case "$ans" in
+    [Nn]|[Nn][Oo])
+      export DASHBOARD_DISABLED=1
+      echo "dashboard: declined; DASHBOARD_DISABLED=1 for this launch"
+      ;;
+    "")
+      echo "dashboard: accepted (default Y)"
+      ;;
+    *)
+      echo "dashboard: accepted ($ans)"
+      ;;
+  esac
+}
+
 # Start the B11 visual dashboard for this team, once. Same shape as the api
 # watchdog: idempotent (skip if recorded pid is alive), opt-out via
 # DASHBOARD_DISABLED=1, port override via DASHBOARD_PORT. Read-only HTTP server
