@@ -1,0 +1,8 @@
+{
+  "name": "paper-puppet-stage",
+  "display_name": "Paper Puppet Stage",
+  "summary": "Hooded paper marionettes on a tiny lit stage.",
+  "mode": "dark",
+  "default_edge_style": "ribbon",
+  "default_token_style": "spark"
+}

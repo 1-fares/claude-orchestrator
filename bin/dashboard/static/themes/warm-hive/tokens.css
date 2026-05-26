@@ -1,0 +1,22 @@
+/* warm-hive — B11 theme tokens */
+:root[data-theme="warm-hive"] {
+  --bg:                #0F0E1A;
+  --surface:           #1B1929;
+  --text:              #FBEDD0;
+  --alert:             #B85240;
+  --node-active:       #E8B14A;
+  --node-idle:         #7F8E5C;
+  --node-paused:       #6FB6FF;
+  --node-question:     #FFE066;
+  --node-stalled:      #FF9A3C;
+  --node-give-up:      #B85240;
+  --node-orchestrator: #E8B14A;
+  --node-dead:         #4A4458;
+  --edge-status:       #B9B0E0;
+  --edge-done:         #6AE3A1;
+  --edge-question:     #FFE066;
+  --edge-answer:       #F2B500;
+  --edge-priority:     #E8B14A;
+  --edge-default:      #4A3A22;
+  --selection-cue:     #FBEDD0;
+}

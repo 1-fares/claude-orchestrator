@@ -1,0 +1,22 @@
+/* mission-control — B11 theme tokens */
+:root[data-theme="mission-control"] {
+  --bg:                #1A1612;
+  --surface:           #25201A;
+  --text:              #E8DCC2;
+  --alert:             #D9542E;
+  --node-active:       #FFB627;
+  --node-idle:         #4DE0B8;
+  --node-paused:       #6FB6FF;
+  --node-question:     #FFCE5C;
+  --node-stalled:      #D9542E;
+  --node-give-up:      #D9542E;
+  --node-orchestrator: #FFB627;
+  --node-dead:         #4A4034;
+  --edge-status:       #E8DCC2;
+  --edge-done:         #4DE0B8;
+  --edge-question:     #FFCE5C;
+  --edge-answer:       #FFB627;
+  --edge-priority:     #FFB627;
+  --edge-default:      #8C4A2E;
+  --selection-cue:     #4DE0B8;
+}

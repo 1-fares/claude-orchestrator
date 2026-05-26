@@ -1,0 +1,8 @@
+{
+  "name": "warm-hive",
+  "display_name": "Warm Hive",
+  "summary": "Night-honey workshop with refined kawaii bees.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "owl-grove",
+  "display_name": "Owl Grove",
+  "summary": "Little owls in a moss-and-lantern nighttime grove.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

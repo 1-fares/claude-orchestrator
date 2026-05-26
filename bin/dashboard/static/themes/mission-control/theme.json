@@ -1,0 +1,8 @@
+{
+  "name": "mission-control",
+  "display_name": "Mission Control",
+  "summary": "Apollo-style operators on a warm-tan control floor.",
+  "mode": "dark",
+  "default_edge_style": "streak",
+  "default_token_style": "streak"
+}

@@ -1,0 +1,22 @@
+/* paper-puppet-stage — B11 theme tokens */
+:root[data-theme="paper-puppet-stage"] {
+  --bg:                #171A2E;
+  --surface:           #232645;
+  --text:              #E8D8B5;
+  --alert:             #B83A2E;
+  --node-active:       #E89A3C;
+  --node-idle:         #6F8E5A;
+  --node-paused:       #C28B3E;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C28B3E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #A24E2E;
+  --node-dead:         #3A3C55;
+  --edge-status:       #C28B3E;
+  --edge-done:         #6F8E5A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #A24E2E;
+  --edge-default:      #3A3C55;
+  --selection-cue:     #E8D8B5;
+}

@@ -1,0 +1,8 @@
+{
+  "name": "terrarium-spirits",
+  "display_name": "Terrarium Spirits",
+  "summary": "Mushroom-cap spirits in a moss-and-water terrarium.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

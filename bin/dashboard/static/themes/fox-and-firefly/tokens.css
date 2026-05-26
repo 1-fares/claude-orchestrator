@@ -1,0 +1,22 @@
+/* fox-and-firefly — B11 theme tokens */
+:root[data-theme="fox-and-firefly"] {
+  --bg:                #14201C;
+  --surface:           #1E2A24;
+  --text:              #F0DCB4;
+  --alert:             #B83A2E;
+  --node-active:       #E89A3C;
+  --node-idle:         #7C8E4A;
+  --node-paused:       #C9A961;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45A2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #E89A3C;
+  --node-dead:         #3A4A40;
+  --edge-status:       #B9C0A0;
+  --edge-done:         #7C8E4A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #3A4A40;
+  --selection-cue:     #F0DCB4;
+}

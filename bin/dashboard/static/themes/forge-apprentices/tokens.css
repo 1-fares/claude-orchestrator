@@ -1,0 +1,22 @@
+/* forge-apprentices — B11 theme tokens */
+:root[data-theme="forge-apprentices"] {
+  --bg:                #1A140C;
+  --surface:           #251B10;
+  --text:              #F0DCB4;
+  --alert:             #B83A2E;
+  --node-active:       #E89C2B;
+  --node-idle:         #6F8C5A;
+  --node-paused:       #C28B3E;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45E2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #E89C2B;
+  --node-dead:         #4A3A22;
+  --edge-status:       #C28B3E;
+  --edge-done:         #6F8C5A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89C2B;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #5C4A2E;
+  --selection-cue:     #F0DCB4;
+}

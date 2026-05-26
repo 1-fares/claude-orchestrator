@@ -1,0 +1,8 @@
+{
+  "name": "constellation-spirits",
+  "display_name": "Constellation Spirits",
+  "summary": "Glowing star and comet ghost spirits on a night sky.",
+  "mode": "dark",
+  "default_edge_style": "streak",
+  "default_token_style": "streak"
+}

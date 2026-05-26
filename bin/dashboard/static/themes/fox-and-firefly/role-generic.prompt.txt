@@ -1,0 +1,4 @@
+A chibi fox sitting on its haunches, waving one front paw in a friendly greeting, big round dark eyes, alert pointed ears, bushy white-tipped tail behind, small triangular nose, warm welcoming expression. Refined kawaii illustration of a chibi fox with orange-and-white plump body, bushy white-tipped tail, alert pointed ears, big round dark eyes, small triangular nose, chunky matte outlines. Designed to read at 32-48 px. Restrained palette: forest dark background reference, cream highlights, fox amber, deep terra, moss olive, brick red. Transparent background. No text inside the image. No pinks, no candy, no pastel.
+
+Model: gpt-image-1.5; background=transparent; quality=low; size=1024x1024.
+Post: LANCZOS downscale to 128x128, FASTOCTREE 96-color quantize, alpha preserved.

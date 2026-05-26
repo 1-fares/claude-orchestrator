@@ -1,0 +1,22 @@
+/* lantern-festival — B11 theme tokens */
+:root[data-theme="lantern-festival"] {
+  --bg:                #0E0E14;
+  --surface:           #1A1A22;
+  --text:              #FDDCB4;
+  --alert:             #B6432A;
+  --node-active:       #E89A3C;
+  --node-idle:         #6E77E5;
+  --node-paused:       #C45E2E;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45E2E;
+  --node-give-up:      #B6432A;
+  --node-orchestrator: #E89A3C;
+  --node-dead:         #3A3A45;
+  --edge-status:       #B9B0C8;
+  --edge-done:         #C9A961;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #B6432A;
+  --edge-default:      #4A4A55;
+  --selection-cue:     #FDDCB4;
+}

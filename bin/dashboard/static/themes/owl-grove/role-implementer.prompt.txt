@@ -1,0 +1,4 @@
+A chestnut-brown kawaii owl perched on a small mossy branch, holding a small carved wooden mallet horizontally across its chest body with both claws, big expressive eyes looking ahead, small triangular beak, soft round feathered body in chestnut-brown plumage with cream chest, sturdy builder pose. Refined kawaii illustration of a small round owl with big expressive eyes, triangular beak, soft feathered body, chunky matte outlines, perched. Designed to read at 32-48 px. Restrained palette: cool slate background reference, cream highlights, forest amber, olive, terra clay, brick red. Transparent background. No text inside the image. No pinks, no candy, no pastel.
+
+Model: gpt-image-1.5; background=transparent; quality=low; size=1024x1024.
+Post: LANCZOS downscale to 128x128, FASTOCTREE 96-color quantize, alpha preserved.
