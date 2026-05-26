@@ -1,0 +1,4 @@
+A chibi fox standing on its hind legs, holding a slender wooden conductor-baton in one paw raised slightly, with a tiny golden acorn-crown perched on top of its head, body slightly larger and more imposing than average, bushy white-tipped tail behind, big round dark eyes, alert pointed ears, small triangular nose. Refined kawaii illustration of a chibi fox with orange-and-white plump body, bushy white-tipped tail, alert pointed ears, big round dark eyes, small triangular nose, chunky matte outlines. Designed to read at 32-48 px. Restrained palette: forest dark background reference, cream highlights, fox amber, deep terra, moss olive, brick red. Transparent background. No text inside the image. No pinks, no candy, no pastel.
+
+Model: gpt-image-1.5; background=transparent; quality=low; size=1024x1024.
+Post: LANCZOS downscale to 128x128, FASTOCTREE 96-color quantize, alpha preserved.

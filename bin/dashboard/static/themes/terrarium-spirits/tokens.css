@@ -1,0 +1,22 @@
+/* terrarium-spirits — B11 theme tokens */
+:root[data-theme="terrarium-spirits"] {
+  --bg:                #15201A;
+  --surface:           #1F2A22;
+  --text:              #F0DCB4;
+  --alert:             #B83A2E;
+  --node-active:       #E89A3C;
+  --node-idle:         #6F8E5A;
+  --node-paused:       #8E4934;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45A2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #8E4934;
+  --node-dead:         #3A4A36;
+  --edge-status:       #B9C0A0;
+  --edge-done:         #6F8E5A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #8E4934;
+  --edge-default:      #3A4A36;
+  --selection-cue:     #F0DCB4;
+}

@@ -1,0 +1,22 @@
+/* constellation-spirits — B11 theme tokens */
+:root[data-theme="constellation-spirits"] {
+  --bg:                #0D0E1A;
+  --surface:           #181A2A;
+  --text:              #FBEDD0;
+  --alert:             #B83A2E;
+  --node-active:       #FFC44D;
+  --node-idle:         #6A6F8C;
+  --node-paused:       #8A8FB4;
+  --node-question:     #FFE066;
+  --node-stalled:      #E89A3C;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #FFC44D;
+  --node-dead:         #2A2C40;
+  --edge-status:       #B9B0E0;
+  --edge-done:         #C9A961;
+  --edge-question:     #FFE066;
+  --edge-answer:       #FFC44D;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #2A2C40;
+  --selection-cue:     #FBEDD0;
+}

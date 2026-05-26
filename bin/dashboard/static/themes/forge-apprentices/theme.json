@@ -1,0 +1,8 @@
+{
+  "name": "forge-apprentices",
+  "display_name": "Forge Apprentices",
+  "summary": "Goggled chibi smiths at a glowing forge anvil.",
+  "mode": "dark",
+  "default_edge_style": "spark",
+  "default_token_style": "spark"
+}

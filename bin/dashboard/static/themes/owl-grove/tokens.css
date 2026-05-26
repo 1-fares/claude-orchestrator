@@ -1,0 +1,22 @@
+/* owl-grove — B11 theme tokens */
+:root[data-theme="owl-grove"] {
+  --bg:                #1F2735;
+  --surface:           #2A3445;
+  --text:              #F0DCB4;
+  --alert:             #B83A2E;
+  --node-active:       #E89C2B;
+  --node-idle:         #6F8C5A;
+  --node-paused:       #6FA0B6;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C45E2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #E89C2B;
+  --node-dead:         #4A4E5C;
+  --edge-status:       #B9C0A0;
+  --edge-done:         #6F8C5A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89C2B;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #4A4E5C;
+  --selection-cue:     #F0DCB4;
+}
