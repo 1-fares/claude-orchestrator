@@ -10,7 +10,11 @@ hard-restricted to loopback (127.0.0.1, ::1, localhost).
 
 Endpoints:
   GET /              static index.html
-  GET /static/<file> static asset (allow-listed)
+  GET /static/<file> static asset (allow-listed CSS/JS)
+  GET /static/img/<basename>
+                     image asset under bin/dashboard/static/img/. Basename
+                     must match IMG_BASENAME_RE (lowercase png/webp/svg/jpeg
+                     files) and the resolved realpath must stay under that dir.
   GET /state.json    full snapshot, schema_version=1
   GET /role-feed/<name>?limit=N
                      per-role bus traffic feed for the click-to-stream panel
@@ -82,7 +86,16 @@ MIME_BY_EXT = {
     ".html": "text/html; charset=utf-8",
     ".json": "application/json",
     ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
 }
+
+# /static/img/<basename> is served when the basename matches this pattern AND
+# the file's realpath stays under bin/dashboard/static/img/. Extensions are
+# part of the pattern, not arbitrary names.
+IMG_BASENAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}\.(png|webp|svg|jpe?g)$")
 
 
 # ---------------------------------------------------------------------------
@@ -773,6 +786,24 @@ def _safe_static_path(name: str, static_dir: Path) -> Optional[Path]:
     return static_dir / name
 
 
+def _safe_img_path(basename: str, static_dir: Path) -> Optional[Path]:
+    """Resolve /static/img/<basename> safely or return None.
+
+    Refuses anything that does not match IMG_BASENAME_RE, and re-checks the
+    *resolved* path stays under static_dir/img — so a basename that survives
+    the pattern but somehow escapes via a symlink is still rejected.
+    """
+    if not IMG_BASENAME_RE.match(basename):
+        return None
+    img_dir = (static_dir / "img").resolve()
+    candidate = (static_dir / "img" / basename).resolve()
+    try:
+        candidate.relative_to(img_dir)
+    except ValueError:
+        return None
+    return candidate
+
+
 def _mime_for(path: Path) -> str:
     return MIME_BY_EXT.get(path.suffix.lower(), "application/octet-stream")
 
@@ -856,11 +887,28 @@ def make_handler(state: ServerState):
                 })
                 return
             if raw.startswith("/static/"):
-                name = raw[len("/static/"):]
-                if "/" in name or not name:
+                sub = raw[len("/static/"):]
+                if not sub:
                     self._send_json({"error": "not found"}, status=404)
                     return
-                path = _safe_static_path(name, state.static_dir)
+                # /static/img/<basename>: separate, tighter allowlist by
+                # extension + realpath containment, so we do not need to
+                # enumerate every committed PNG by name.
+                if sub.startswith("img/"):
+                    basename = sub[len("img/"):]
+                    if "/" in basename or not basename:
+                        self._send_json({"error": "not found"}, status=404)
+                        return
+                    path = _safe_img_path(basename, state.static_dir)
+                    if path is None or not path.is_file():
+                        self._send_json({"error": "not found"}, status=404)
+                        return
+                    self._send_file(path, _mime_for(path), "max-age=300")
+                    return
+                if "/" in sub:
+                    self._send_json({"error": "not found"}, status=404)
+                    return
+                path = _safe_static_path(sub, state.static_dir)
                 if path is None or not path.is_file():
                     self._send_json({"error": "not found"}, status=404)
                     return
