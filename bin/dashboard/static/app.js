@@ -9,6 +9,7 @@ import {
   cssVar, withAlpha,
 } from './glyphs.js';
 import * as themes from './glyphs.js';
+import { ChatPanel } from './chat.js';
 
 const POLL_MS         = 1500;
 const POLL_HIDDEN_MS  = 10000;
@@ -70,6 +71,7 @@ const graph = new GraphView(el('graph'), {
   onCanvasClick: ()     => closePanel(),
 });
 const sidebar = new Sidebar(el('sidebar'));
+const chat = new ChatPanel({ poll_ms: POLL_MS });
 
 // ---------------------------------------------------------------- theme switcher
 
@@ -414,7 +416,7 @@ async function poll() {
     const resp = await fetch('/state.json', { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const snap = await resp.json();
-    if (snap.schema_version && snap.schema_version > 2) {
+    if (snap.schema_version && snap.schema_version > 4) {
       console.warn('Unknown schema_version', snap.schema_version,
                    '— attempting to render anyway.');
     }
@@ -422,10 +424,12 @@ async function poll() {
     state.lastSnap = snap;
     state.lastSnapAtPerf = state.lastResponseAt;
     render(snap);
+    chat.applySnapshot(snap);
   } catch (err) {
     console.warn('poll failed:', err);
   }
   if (state.panelOpen) refreshFeed();
+  chat.tick();
 }
 
 function render(snap) {
