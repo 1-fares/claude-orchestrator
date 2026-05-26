@@ -3,6 +3,7 @@
 :root[data-theme="photo-figurines"] {
   --bg:                #26190E;
   --surface:           #3A281A;
+  --surface-2:         #3F2C1C;
   --text:              #F0DCBE;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;
@@ -20,4 +21,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #4A3826;
   --selection-cue:     #F0DCBE;
+  --token-ink:         #26190E;
 }

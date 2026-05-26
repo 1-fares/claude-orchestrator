@@ -3,6 +3,7 @@
 :root[data-theme="paper-puppet-stage"] {
   --bg:                #2A1E14;
   --surface:           #3A2A1E;
+  --surface-2:         #4A3624;
   --text:              #E8D8B5;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;
@@ -20,4 +21,5 @@
   --edge-priority:     #A24E2E;
   --edge-default:      #3A3C55;
   --selection-cue:     #E8D8B5;
+  --token-ink:         #2A1E14;
 }

@@ -3,6 +3,7 @@
 :root[data-theme="cyberpunk-noir"] {
   --bg:                #0E1A22;
   --surface:           #182A36;
+  --surface-2:         #1F3A4A;
   --text:              #E8DCC2;
   --alert:             #C45A2E;
   --node-active:       #FFB627;
@@ -20,4 +21,5 @@
   --edge-priority:     #C45A2E;
   --edge-default:      #4A5566;
   --selection-cue:     #4DE0B8;
+  --token-ink:         #0E1A22;
 }

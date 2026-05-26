@@ -3,6 +3,7 @@
 :root[data-theme="fox-and-firefly"] {
   --bg:                #122418;
   --surface:           #1A3024;
+  --surface-2:         #243D2E;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;
@@ -20,4 +21,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #3A4A40;
   --selection-cue:     #F0DCB4;
+  --token-ink:         #122418;
 }
