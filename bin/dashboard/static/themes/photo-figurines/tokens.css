@@ -1,7 +1,8 @@
 /* photo-figurines — B11 theme tokens. Coral = brick-orange hue 10-15. */
+/* chrome rework (u12c): #26190E chrome, text contrast 12.8:1 */
 :root[data-theme="photo-figurines"] {
-  --bg:                #1A140C;
-  --surface:           #251C10;
+  --bg:                #26190E;
+  --surface:           #3A281A;
   --text:              #F0DCBE;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;

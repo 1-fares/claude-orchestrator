@@ -1,7 +1,8 @@
 /* ninjas — B11 theme tokens */
+/* chrome rework (u12c): #0F1A28 chrome, text contrast 13.0:1 */
 :root[data-theme="ninjas"] {
-  --bg:                #0E1426;
-  --surface:           #1A2034;
+  --bg:                #0F1A28;
+  --surface:           #1B2A3A;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;

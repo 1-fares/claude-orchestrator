@@ -1,7 +1,8 @@
 /* agents-noir — B11 theme tokens */
+/* chrome rework (u12c): #1F1F22 chrome, text contrast 12.1:1 */
 :root[data-theme="agents-noir"] {
-  --bg:                #0E0E12;
-  --surface:           #1A1A20;
+  --bg:                #1F1F22;
+  --surface:           #2E2A24;
   --text:              #E8DCC2;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;

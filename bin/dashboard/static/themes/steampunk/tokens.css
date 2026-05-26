@@ -1,7 +1,8 @@
 /* steampunk — B11 theme tokens */
+/* chrome rework (u12c): #221A0E chrome, text contrast 12.2:1 */
 :root[data-theme="steampunk"] {
-  --bg:                #1A130A;
-  --surface:           #251C10;
+  --bg:                #221A0E;
+  --surface:           #2E2210;
   --text:              #E8D8B0;
   --alert:             #B83A2E;
   --node-active:       #D69A3C;

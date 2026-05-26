@@ -1,8 +1,9 @@
 /* comic-adventurers — B11 theme tokens. Crimson = brick-red, hue 0-15. */
+/* chrome rework (u12c): #F4ECDC chrome, text contrast 14.8:1 */
 :root[data-theme="comic-adventurers"] {
-  --bg:                #16182A;
-  --surface:           #1F2240;
-  --text:              #F0DCB4;
+  --bg:                #F4ECDC;
+  --surface:           #E8DEC8;
+  --text:              #1A1828;
   --alert:             #B83A2E;
   --node-active:       #D9892E;
   --node-idle:         #4A6FAB;

@@ -1,7 +1,8 @@
 /* pixar-cgi — B11 theme tokens */
+/* chrome rework (u12c): #173544 chrome, text contrast 9.9:1 */
 :root[data-theme="pixar-cgi"] {
-  --bg:                #16252E;
-  --surface:           #1F303A;
+  --bg:                #173544;
+  --surface:           #214458;
   --text:              #ECE1C8;
   --alert:             #B83A3E;
   --node-active:       #E89A3C;

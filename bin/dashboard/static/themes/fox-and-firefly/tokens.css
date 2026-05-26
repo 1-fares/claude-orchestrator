@@ -1,7 +1,8 @@
 /* fox-and-firefly — B11 theme tokens */
+/* chrome rework (u12c): #122418 chrome, text contrast 12.1:1 */
 :root[data-theme="fox-and-firefly"] {
-  --bg:                #14201C;
-  --surface:           #1E2A24;
+  --bg:                #122418;
+  --surface:           #1A3024;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;

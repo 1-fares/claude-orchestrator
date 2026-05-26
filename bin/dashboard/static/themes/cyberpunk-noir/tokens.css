@@ -1,7 +1,8 @@
 /* cyberpunk-noir — B11 theme tokens. AMBER+CYAN ONLY, NO PINK/MAGENTA. */
+/* chrome rework (u12c): #0E1A22 chrome, text contrast 13.0:1 */
 :root[data-theme="cyberpunk-noir"] {
-  --bg:                #0E1426;
-  --surface:           #1A2034;
+  --bg:                #0E1A22;
+  --surface:           #182A36;
   --text:              #E8DCC2;
   --alert:             #C45A2E;
   --node-active:       #FFB627;
