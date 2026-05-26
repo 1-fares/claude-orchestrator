@@ -291,6 +291,74 @@ first-party substrate is more shippable than a bespoke bus). Independent of B2/B
 
 ---
 
+## B11 - Visual swarm dashboard (second-screen, real-time)
+
+**What.** A read-only, canvas-style live view of the swarm to keep on a second
+screen while the orchestrator runs. Nodes per live role coloured by state
+(active / idle / paused / `question:` outstanding / `stalled-api` / `give-up`);
+edges per recent bus message labelled with the `status:`/`done:`/`question:`/
+`answer:`/`priority:` prefix and direction; a stats panel with per-role message
+counts, units by status (`todo`/`in-progress`/`blocked`/`review`/`done`), a
+timeline of add/retire events, and the run's cap usage. Excalidraw or a similar
+canvas tool, not a TUI.
+
+**Why.** `bin/team-status.sh` and the tmux panes are text-only and scroll past;
+catching "who's stuck" or "who just sent what to whom" needs grep work. With B9
+dynamic scaling making 6-12 roles realistic and B2 pushing toward unattended
+runs, the operator needs an at-a-glance view that survives looking away.
+"On another screen" is the point: the orchestrator pane stays where it is, the
+canvas sits beside it.
+
+**What's there to power it (lowers the cost a lot).**
+- `$TEAM_DIR/active` is the roster (pid, window id, role) and is updated by
+  every `add-role`/`retire-role`/`launch-team`/`stop-team` already.
+- `$TEAM_DIR/state.md` carries units (with `status:` per block), the decision-log,
+  and the `## roster` add/retire timeline.
+- `$TEAM_DIR/health/<role>.json` already records api-watchdog state per role
+  (`ok`/`stalled-api`/`give-up`) with timestamps.
+- `/is` writes a `messages.log` per port that `bin/team-logs.sh` already parses
+  by role; sender/recipient/prefix/time/file-pointer are all in there.
+- Per-run isolation is solid (concurrency fix landed 2026-05-25), so one viewer
+  per `$TEAM_DIR` is well-defined.
+
+**Approaches to evaluate.**
+1. **Static HTML + tiny JSON endpoint.** A `bin/dashboard.sh` that serves
+   `127.0.0.1:<port>/state.json` from a one-shot read of `active` + `state.md` +
+   `health/` + a tail of `messages.log`, plus a self-contained page that polls
+   every 1-2s and lays out a force-directed graph (Cytoscape, vis.js, or
+   D3-force). Most flexible, no external dependencies beyond a browser.
+2. **Excalidraw-as-canvas.** Generate an Excalidraw JSON scene per refresh and
+   load it via the `@excalidraw/excalidraw` library in a page. Aesthetic but
+   higher cost to wire stable node identities through redraws.
+3. **Mermaid live.** A page that re-renders a Mermaid `flowchart`/`sequenceDiagram`
+   on each poll. Cheapest to build, less interactive (no node drag, no zoom).
+4. **Adopt an existing tool.** Briefly evaluate LangGraph Studio / AutoGen Studio
+   / CrewAI's UI to see whether anything maps cleanly onto our `/is` + ledger
+   data without a rewrite. Likely no, but cheap to check first.
+
+Bias toward (1) for ease and control; (2) for the look the operator asked for if
+the wiring is tractable.
+
+**Scope / considerations.**
+- Read-only viewer. The orchestrator drives; the dashboard reflects. (Action
+  buttons belong to B4/notify-hook, not here.)
+- One viewer per `TEAM_RUN_ID`; an inbox-style picker for several concurrent runs
+  (overlap with `bin/inbox.sh` — likely share that data source).
+- Bind to `127.0.0.1` only. Tailnet exposure for B4 is a separate, opt-in step.
+- Cadence 1-2s; the inputs are small files and a log tail.
+- "Idle vs busy" for a role: derive from "no outbound message in N seconds and
+  health=ok"; do not try to read tmux pane content (noisy redraws).
+- Stats panel suggested fields: messages/role over the last minute and total,
+  units by status, queue depth (messages with no answer:), median time to
+  first answer per question:, live count vs cap.
+
+**Depends on / strengthens.** Strengthens B2 (autonomous mode benefits most from
+a glance view since the operator is not in the pane) and B9 (the larger the
+team, the more value). Pairs with B4 (the dashboard URL can be tailnet-reachable
+for phone use). Reuses the same data the api-watchdog and team-status already read.
+
+---
+
 ## Prior-art findings (2026-05-24, reference for remaining items)
 
 ### Strategic headline: Anthropic is building into this space
