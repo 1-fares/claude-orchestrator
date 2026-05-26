@@ -49,7 +49,9 @@ mkdir -p "$TEAM_DIR"
 pf="$TEAM_DIR/orchestrator.prompt"
 cat >"$pf" <<EOF
 You are the orchestrator of a Claude Code dev team. Do these in order:
-1. Join the team bus: /is c orchestrator
+1. Join the team bus using the /is Claude Code skill (a slash command, not a
+   shell binary — do NOT use the Bash tool for this). Invoke it as a slash
+   command response: /is c orchestrator
 2. Read ./CLAUDE.md and ./roles/orchestrator.md
 3. $goal_line
 4. Definition of ready: do your setup first (read the goal, copy

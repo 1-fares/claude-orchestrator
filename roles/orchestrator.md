@@ -8,7 +8,9 @@ integrator's job. Keep your context for orchestration.
 
 ## Bus name
 
-`orchestrator`. Join with `/is c orchestrator`.
+`orchestrator`. Join with `/is c orchestrator` — this is a **Claude Code slash
+command** (the `/is` skill), not a shell binary. Invoke it as a slash command
+response; do NOT use the Bash tool to run it.
 
 ## First: get the goal in-session, then turn it into a ready brief
 
