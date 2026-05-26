@@ -42,12 +42,12 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono",
                Menlo, Consolas, "Liberation Mono", monospace;
 
-  --fs-display: 20px;
-  --fs-h:       13px;
-  --fs-body:    13px;
-  --fs-small:   11px;
-  --fs-label:   11px;
-  --fs-num:     22px;
+  --fs-display: 22px;
+  --fs-h:       15px;
+  --fs-body:    15px;
+  --fs-small:   13px;
+  --fs-label:   13px;
+  --fs-num:     24px;
 
   --fw-regular:  400;
   --fw-medium:   500;
