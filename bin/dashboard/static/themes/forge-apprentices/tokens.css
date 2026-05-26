@@ -1,7 +1,8 @@
 /* forge-apprentices — B11 theme tokens */
+/* chrome rework (u12c): #181008 chrome, text contrast 14.0:1 */
 :root[data-theme="forge-apprentices"] {
-  --bg:                #1A140C;
-  --surface:           #251B10;
+  --bg:                #181008;
+  --surface:           #2A1A0E;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89C2B;

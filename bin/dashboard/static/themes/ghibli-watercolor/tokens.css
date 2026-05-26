@@ -1,8 +1,9 @@
 /* ghibli-watercolor — B11 theme tokens */
+/* chrome rework (u12c): #F5EFE0 chrome, text contrast 12.6:1 */
 :root[data-theme="ghibli-watercolor"] {
-  --bg:                #243524;
-  --surface:           #2A3F2A;
-  --text:              #F4E6CE;
+  --bg:                #F5EFE0;
+  --surface:           #E8E0CE;
+  --text:              #1F2D1F;
   --alert:             #B83A2E;
   --node-active:       #E0A040;
   --node-idle:         #7C8E4A;

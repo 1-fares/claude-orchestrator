@@ -1,7 +1,8 @@
 /* paper-puppet-stage — B11 theme tokens */
+/* chrome rework (u12c): #2A1E14 chrome, text contrast 11.5:1 */
 :root[data-theme="paper-puppet-stage"] {
-  --bg:                #171A2E;
-  --surface:           #232645;
+  --bg:                #2A1E14;
+  --surface:           #3A2A1E;
   --text:              #E8D8B5;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;

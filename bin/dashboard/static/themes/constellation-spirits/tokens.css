@@ -1,7 +1,8 @@
 /* constellation-spirits — B11 theme tokens */
+/* chrome rework (u12c): #161420 chrome, text contrast 15.7:1 */
 :root[data-theme="constellation-spirits"] {
-  --bg:                #0D0E1A;
-  --surface:           #181A2A;
+  --bg:                #161420;
+  --surface:           #221A2E;
   --text:              #FBEDD0;
   --alert:             #B83A2E;
   --node-active:       #FFC44D;
