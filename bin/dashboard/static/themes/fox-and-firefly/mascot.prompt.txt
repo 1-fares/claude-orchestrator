@@ -1,0 +1,4 @@
+A single chibi fox curled up asleep with its bushy white-tipped tail wrapped around itself, eyes closed peacefully, small triangular nose, alert pointed ears folded back slightly, one tiny bright-yellow firefly micro-dot hovering near its ear casting warm amber light on the fur. Sleepy pose, forest-clearing setting suggested by ambient warmth (but transparent background). Refined kawaii illustration of a chibi fox with orange-and-white plump body, bushy white-tipped tail, alert pointed ears, big round dark eyes, small triangular nose, chunky matte outlines. Designed to read at 32-48 px. Restrained palette: forest dark background reference, cream highlights, fox amber, deep terra, moss olive, brick red. Transparent background. No text inside the image. No pinks, no candy, no pastel.
+
+Model: gpt-image-1.5; background=transparent; quality=low; size=1024x1024.
+Post: LANCZOS downscale to 256x256, FASTOCTREE 96-color quantize, alpha preserved.

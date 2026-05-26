@@ -1,0 +1,8 @@
+{
+  "name": "lantern-festival",
+  "display_name": "Lantern Festival",
+  "summary": "Smiling paper lanterns glowing on a dark night street.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

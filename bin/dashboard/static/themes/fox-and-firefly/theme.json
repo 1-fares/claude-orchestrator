@@ -1,0 +1,8 @@
+{
+  "name": "fox-and-firefly",
+  "display_name": "Fox and Firefly",
+  "summary": "Chibi foxes in a forest clearing with drifting fireflies.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}
