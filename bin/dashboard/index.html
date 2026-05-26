@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Swarm dashboard</title>
   <link rel="stylesheet" href="/static/tokens.css">
+  <!-- u13: the active theme's color tokens load via #theme-tokens. The
+       default href is set programmatically by app.js after the theme
+       registry is fetched, so localStorage persistence wins on first
+       paint. Until then the base tokens.css renders a dark neutral. -->
+  <link rel="stylesheet" id="theme-tokens" href="">
   <link rel="stylesheet" href="/static/app.css">
   <link rel="icon" type="image/png" href="/static/img/mascot.png">
 </head>
@@ -12,7 +17,7 @@
   <div id="app">
     <header id="header">
       <div class="brand">
-        <img class="logo" src="/static/img/role-orchestrator.png" alt="">
+        <span class="brand-glyph" aria-hidden="true">✦</span>
         <span class="title">Swarm</span>
         <span class="run-id">run-id: <span id="hdr-run-id">—</span></span>
       </div>
@@ -32,14 +37,32 @@
           <span class="dot" id="hdr-fresh-dot"></span>
           <span id="hdr-fresh-text">connecting…</span>
         </span>
+        <label class="theme-switcher">
+          <span class="theme-switcher-label">Theme</span>
+          <select id="theme-select" aria-label="Theme">
+          </select>
+        </label>
       </div>
     </header>
+
+    <section id="mission-strip" data-empty="true">
+      <div class="mission-cluster mission-left">
+        <span class="mission-label">Goal</span>
+        <span class="mission-goal" id="mission-goal">—</span>
+      </div>
+      <div class="mission-cluster mission-center">
+        <span class="mission-status" id="mission-status">—</span>
+      </div>
+      <div class="mission-cluster mission-right" id="mission-badges">
+        <!-- badges injected by app.js when counts > 0 -->
+      </div>
+    </section>
 
     <main id="main">
       <div id="graph-wrap">
         <div id="graph"></div>
         <div id="empty">
-          <img class="empty-mascot" id="empty-mascot" src="/static/img/mascot.png" alt="">
+          <img class="empty-mascot" id="empty-mascot" alt="">
           <div class="empty-title">Waiting for team</div>
           <div class="empty-meta">
             <div><span class="key">team-dir:</span> <span id="empty-team-dir">(unknown)</span></div>
@@ -53,13 +76,13 @@
     </main>
 
     <footer id="legend">
-      <span class="legend-item"><span class="swatch" style="background:var(--state-active-color)"></span><span class="label-name">active</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--state-idle-color)"></span><span class="label-name">idle</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--state-paused-color)"></span><span class="label-name">paused</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--state-question-color)"></span><span class="label-name">question</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--state-stalled-api-color)"></span><span class="label-name">stalled-api</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--state-give-up-color)"></span><span class="label-name">give-up</span></span>
-      <span class="legend-item"><span class="swatch" style="background:var(--state-dead-color)"></span><span class="label-name">dead</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-active)"></span><span class="label-name">active</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-idle)"></span><span class="label-name">idle</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-paused)"></span><span class="label-name">paused</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-question)"></span><span class="label-name">question</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-stalled)"></span><span class="label-name">stalled-api</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-give-up)"></span><span class="label-name">give-up</span></span>
+      <span class="legend-item"><span class="swatch" style="background:var(--node-dead)"></span><span class="label-name">dead</span></span>
       <span class="legend-divider"></span>
       <span class="legend-item"><span class="label-name">click any agent for live feed</span></span>
     </footer>
@@ -76,8 +99,13 @@
         <span class="panel-last-activity" id="agent-panel-last-activity">last activity: —</span>
       </div>
     </div>
-    <div id="agent-panel-feed">
-      <img class="panel-mascot" id="agent-panel-mascot" src="/static/img/mascot.png" alt="" data-faint="false">
+    <!-- u13 fix for the v1 f1 bug: empty-state is a SIBLING of the feed
+         list, not inside it. The poll loop only wipes #agent-panel-feed
+         contents; the mascot element below survives. -->
+    <div id="agent-panel-feed"></div>
+    <div id="agent-panel-empty" hidden>
+      <img class="panel-mascot" id="agent-panel-mascot" alt="">
+      <div class="panel-empty-line" id="agent-panel-empty-line">No bus messages yet.</div>
     </div>
   </aside>
 
