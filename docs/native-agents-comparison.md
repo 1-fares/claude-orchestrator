@@ -124,7 +124,7 @@ Four claims, all checked against *local* Agent Teams:
 
 | Claim | Verdict |
 | :-- | :-- |
-| "Needs an API key" | False. Runs on your subscription. (API-key billing applies to cloud Managed Agents; the Agent SDK has its own billing path, see the SDK section below.) |
+| "Needs an API key" | False. Runs on your subscription. (API-key-only applies to the Agent SDK before its 2026-06-15 subscription credit, and to cloud Managed Agents.) |
 | "Bypass perms = more freedom" | Available in both: teammates inherit the lead's mode, including `--dangerously-skip-permissions`. The orchestrator edge is *granularity* (per-role settings/worktree), not raw bypass. |
 | "Local files, no upload" | Both have native local FS. Not an Agent Teams con (it is a Managed Agents con). |
 | "My MCP servers / skills" | Teammates load local project/user MCP + skills like any session. Caveat: a subagent definition's `mcpServers`/`skills` frontmatter is ignored when it runs as a teammate. |
@@ -133,34 +133,6 @@ So billing, local files, MCP, and bypass are **equal** against local Agent Teams
 The orchestrator's defensible edge is the discipline + lifecycle layer (gates,
 audit ledger, integrator/scope, resume, multi-team, watchdog, free idle roles),
 not the substrate.
-
-## Agent SDK: a fourth option (library, not infrastructure)
-
-The Claude Agent SDK is a Python/TypeScript library exposing the same primitives
-Claude Code is built on: model loop with tool use, FS, bash, MCP, hooks,
-subagents. Not a product to compare against; a substrate this orchestrator
-could be rewritten on top of. Each role becomes an in-process agent loop, the
-`/is` bus becomes function calls or a queue, gates/ledger/watchdog/integrator
-become normal code.
-
-Gains from such a rewrite: a real programming model, arbitrary topologies
-(nested teams, many concurrent teams), hostable as a service, testable
-orchestration logic. Losses: the human-in-the-loop ergonomics that come free
-with Claude Code sessions (`bin/attach.sh` into any role's terminal, scroll
-back, hand-correct), plus you rebuild the per-session conversational loop
-yourself.
-
-**Cost asymmetry (the load-bearing reason not to rewrite today).** Each role is
-currently a Claude Code session and draws from your main subscription usage
-limits, a large pool on Max 20x. Starting 2026-06-15 the SDK draws from a
-dedicated, capped monthly Agent SDK credit ($20 Pro / $100 Max 5x / $200
-Max 20x); overflow falls back to API pay-as-you-go if `usage credits` is
-enabled, otherwise requests stop until the cycle refreshes. For sustained
-multi-role runs an SDK rewrite is meaningfully more expensive on a subscription
-than the current Claude-Code-sessions substrate. The 2026-06-15 change is a
-*restructuring* (SDK previously drew from the main subscription pool), not the
-arrival of subscription support; framing it as "subscription credit arrives" is
-incorrect.
 
 ## This orchestrator: pros / cons
 
@@ -231,5 +203,5 @@ time), so the substrate keeps real advantages today.
 - Subagents: <https://code.claude.com/docs/en/sub-agents>
 - Agent team token cost + idle-token warning: <https://code.claude.com/docs/en/costs>
 - Subscription billing for Claude Code: <https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan>
-- Agent SDK dedicated monthly credit, starting 2026-06-15: <https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan>
+- Agent SDK subscription credit (2026-06-15): <https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan>
 - Cost of parallel sessions: <https://www.cloudzero.com/blog/claude-code-agents/>
