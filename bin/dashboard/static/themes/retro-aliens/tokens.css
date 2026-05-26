@@ -1,0 +1,22 @@
+/* retro-aliens — B11 theme tokens */
+:root[data-theme="retro-aliens"] {
+  --bg:                #0E1A28;
+  --surface:           #182438;
+  --text:              #F0DCB4;
+  --alert:             #CC5442;
+  --node-active:       #E89A3C;
+  --node-idle:         #5C9098;
+  --node-paused:       #5C9098;
+  --node-question:     #F5C46A;
+  --node-stalled:      #CC5442;
+  --node-give-up:      #CC5442;
+  --node-orchestrator: #E89A3C;
+  --node-dead:         #2A3848;
+  --edge-status:       #B9C8D0;
+  --edge-done:         #8DA55B;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #CC5442;
+  --edge-default:      #2A3848;
+  --selection-cue:     #F0DCB4;
+}

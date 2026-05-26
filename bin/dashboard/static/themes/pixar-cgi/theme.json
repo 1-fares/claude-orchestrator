@@ -1,0 +1,8 @@
+{
+  "name": "pixar-cgi",
+  "display_name": "Pixar CGI",
+  "summary": "Polished bronze-and-cream chibi robots in soft 3D light.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

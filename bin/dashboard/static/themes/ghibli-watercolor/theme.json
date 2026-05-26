@@ -1,0 +1,8 @@
+{
+  "name": "ghibli-watercolor",
+  "display_name": "Ghibli Watercolor",
+  "summary": "Watercolor woodland spirits in sunlit forest light.",
+  "mode": "dark",
+  "default_edge_style": "solid",
+  "default_token_style": "spark"
+}

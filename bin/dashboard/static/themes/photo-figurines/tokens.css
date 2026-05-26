@@ -1,0 +1,22 @@
+/* photo-figurines — B11 theme tokens. Coral = brick-orange hue 10-15. */
+:root[data-theme="photo-figurines"] {
+  --bg:                #1A140C;
+  --surface:           #251C10;
+  --text:              #F0DCBE;
+  --alert:             #B83A2E;
+  --node-active:       #E89A3C;
+  --node-idle:         #2A4356;
+  --node-paused:       #4A6878;
+  --node-question:     #F5C46A;
+  --node-stalled:      #C65A2E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #E89A3C;
+  --node-dead:         #3A2E22;
+  --edge-status:       #C28A56;
+  --edge-done:         #6F8E5A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #E89A3C;
+  --edge-priority:     #B83A2E;
+  --edge-default:      #4A3826;
+  --selection-cue:     #F0DCBE;
+}

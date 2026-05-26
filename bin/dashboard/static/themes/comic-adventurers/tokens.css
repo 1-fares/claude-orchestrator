@@ -1,0 +1,22 @@
+/* comic-adventurers — B11 theme tokens. Crimson = brick-red, hue 0-15. */
+:root[data-theme="comic-adventurers"] {
+  --bg:                #16182A;
+  --surface:           #1F2240;
+  --text:              #F0DCB4;
+  --alert:             #B83A2E;
+  --node-active:       #D9892E;
+  --node-idle:         #4A6FAB;
+  --node-paused:       #C28B3E;
+  --node-question:     #F5C46A;
+  --node-stalled:      #D9892E;
+  --node-give-up:      #B83A2E;
+  --node-orchestrator: #C8322E;
+  --node-dead:         #3A4055;
+  --edge-status:       #F0DCB4;
+  --edge-done:         #6F8E5A;
+  --edge-question:     #F5C46A;
+  --edge-answer:       #D9892E;
+  --edge-priority:     #C8322E;
+  --edge-default:      #3A4055;
+  --selection-cue:     #F0DCB4;
+}

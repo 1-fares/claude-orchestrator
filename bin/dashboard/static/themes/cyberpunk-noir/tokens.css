@@ -1,0 +1,22 @@
+/* cyberpunk-noir — B11 theme tokens. AMBER+CYAN ONLY, NO PINK/MAGENTA. */
+:root[data-theme="cyberpunk-noir"] {
+  --bg:                #0E1426;
+  --surface:           #1A2034;
+  --text:              #E8DCC2;
+  --alert:             #C45A2E;
+  --node-active:       #FFB627;
+  --node-idle:         #5E94AB;
+  --node-paused:       #6FB6E8;
+  --node-question:     #FFCE5C;
+  --node-stalled:      #C45A2E;
+  --node-give-up:      #C45A2E;
+  --node-orchestrator: #FFB627;
+  --node-dead:         #3A4458;
+  --edge-status:       #E8DCC2;
+  --edge-done:         #4DE0B8;
+  --edge-question:     #FFCE5C;
+  --edge-answer:       #FFB627;
+  --edge-priority:     #C45A2E;
+  --edge-default:      #4A5566;
+  --selection-cue:     #4DE0B8;
+}
