@@ -70,7 +70,7 @@ const graph = new GraphView(el('graph'), {
   onNodeClick:   (name) => openPanel(name),
   onCanvasClick: ()     => closePanel(),
 });
-const sidebar = new Sidebar(el('sidebar'));
+const sidebar = new Sidebar(el('left-sidebar'), el('right-sidebar'));
 const chat = new ChatPanel({ poll_ms: POLL_MS });
 
 // ---------------------------------------------------------------- theme switcher
