@@ -206,6 +206,12 @@ export class ChatPanel {
     this.open = true;
     this.lastOpener = opener || this.dom.btn;
     this.dom.panel.dataset.open = 'true';
+    // f5-aria-inert: HTML5 `inert` removes the subtree from the a11y tree
+    // AND blocks focus when the panel is hidden; clearing it lets the
+    // panel's descendants take focus. aria-hidden=false is kept alongside
+    // for screen readers on older browsers that don't yet honour `inert`.
+    this.dom.panel.inert = false;
+    this.dom.panel.removeAttribute('inert');
     this.dom.panel.setAttribute('aria-hidden', 'false');
     this.dom.btn.setAttribute('aria-expanded', 'true');
     document.body.dataset.chat = 'open';
@@ -220,12 +226,20 @@ export class ChatPanel {
     if (!this.open) return;
     this.open = false;
     delete this.dom.panel.dataset.open;
-    this.dom.panel.setAttribute('aria-hidden', 'true');
-    this.dom.btn.setAttribute('aria-expanded', 'false');
-    delete document.body.dataset.chat;
+    // f5-aria-inert: move focus BEFORE applying inert/aria-hidden so the
+    // active element is never a descendant of a hidden subtree (Chrome's
+    // "Blocked aria-hidden on focused element" warning closes here). The
+    // synchronous focus call beats the inert flip so any focused
+    // descendant (e.g. the chat textarea) is no longer focused by the time
+    // inert removes it from the focus order.
     const focusTarget = (this.lastOpener && this.lastOpener.focus)
       ? this.lastOpener : this.dom.btn;
-    queueMicrotask(() => focusTarget.focus());
+    try { focusTarget.focus(); } catch (_) {}
+    this.dom.panel.setAttribute('aria-hidden', 'true');
+    this.dom.panel.inert = true;
+    this.dom.panel.setAttribute('inert', '');
+    this.dom.btn.setAttribute('aria-expanded', 'false');
+    delete document.body.dataset.chat;
   }
 
   // ----------------------------------------------------------------- polling
