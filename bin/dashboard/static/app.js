@@ -42,6 +42,10 @@ const ui = {
   freshDot:     el('hdr-fresh-dot'),
   freshText:    el('hdr-fresh-text'),
   warnPill:     el('hdr-warn-pill'),
+  warnPanel:    el('warnings-panel'),
+  warnList:     el('warnings-list'),
+  warnEmpty:    el('warnings-empty'),
+  warnClose:    el('warnings-close'),
   empty:        el('empty'),
   emptyReason:  el('empty-reason'),
   emptyTeamDir: el('empty-team-dir'),
@@ -392,6 +396,196 @@ function mkCountSeg(kind, count, hover) {
   return seg;
 }
 
+// ---------------------------------------------------------------- U3 warnings panel
+//
+// The /state.json `warnings` field today is an opaque list of free-text
+// strings emitted by the server's various parsers ($TEAM_DIR/active,
+// state.md, health/*.json, messages.log). u3-f1-warning-taxonomy (filed
+// as a follow-up) will move severity / category / suggested-action onto
+// the server side. Until then, classifyWarning() pattern-matches the
+// string body and synthesizes a v1 entry the panel can render. Operator-
+// dismissed warnings are tracked client-side via localStorage so a
+// transient bus-log glitch the operator already noted stops nagging.
+
+const WARN_DISMISS_KEY = 'b11-warnings-dismissed';
+
+function warningHash(s) {
+  // FNV-1a 32-bit hash, returned as 8-char hex. Stable across reloads so
+  // a dismissed warning stays dismissed.
+  let h = 0x811c9dc5 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  return ('00000000' + h.toString(16)).slice(-8);
+}
+
+function classifyWarning(text) {
+  const s = String(text || '');
+  let category = 'general';
+  let severity = 'warning';
+  let title = s.length > 80 ? s.slice(0, 79) + '…' : s;
+  let action = 'Recheck after the next /state.json poll; persistent warnings warrant a closer look.';
+  if (/messages\.log/.test(s)) {
+    category = 'bus log';
+    title = 'Bus log issue';
+    action = 'Verify the inter-session bus is healthy. Stale / malformed entries usually self-clear; persistent failures mean the bus server cannot read its log.';
+    if (/not readable/.test(s)) severity = 'error';
+  } else if (/state\.md/.test(s)) {
+    category = 'ledger';
+    title = 'state.md parse warning';
+    action = 'Open $TEAM_DIR/state.md and fix the flagged line. The ledger is the single source of truth — the orchestrator and the gates both read it.';
+  } else if (/active/.test(s) && /malformed/.test(s)) {
+    category = 'roster';
+    title = '$TEAM_DIR/active malformed line';
+    action = 'Open $TEAM_DIR/active and fix the flagged line; the roster panel will refresh on the next poll.';
+  } else if (/health\//.test(s)) {
+    category = 'watchdog';
+    title = 'api-watchdog health JSON invalid';
+    action = 'A role health file is unreadable. Usually transient (in-flight write); inspect $TEAM_DIR/health/<role>.json if it persists.';
+  } else if (/conversation\.jsonl|open-question\.json|question-queue\.jsonl/.test(s)) {
+    category = 'communicator';
+    title = 'Communicator surface read failure';
+    action = 'A /chat backing file is unreadable. Restart the communicator if persistent.';
+  }
+  return { text: s, hash: warningHash(s), category, severity, title, action };
+}
+
+const warnings = (() => {
+  let dismissed = new Set();
+  try {
+    const raw = window.localStorage?.getItem(WARN_DISMISS_KEY);
+    if (raw) dismissed = new Set(JSON.parse(raw));
+  } catch (_) {}
+  let lastList = [];
+  let open = false;
+  let lastOpener = null;
+
+  function persist() {
+    try {
+      window.localStorage?.setItem(WARN_DISMISS_KEY,
+        JSON.stringify([...dismissed]));
+    } catch (_) {}
+  }
+
+  function visible() {
+    return lastList
+      .map(classifyWarning)
+      .filter((w) => !dismissed.has(w.hash));
+  }
+
+  function applySnapshot(rawList) {
+    lastList = Array.isArray(rawList) ? rawList : [];
+    // Garbage-collect dismissed hashes that no longer appear in the live
+    // list so localStorage doesn't grow unbounded across runs.
+    const live = new Set(lastList.map((s) => warningHash(String(s))));
+    let changed = false;
+    for (const h of [...dismissed]) {
+      if (!live.has(h)) { dismissed.delete(h); changed = true; }
+    }
+    if (changed) persist();
+    renderPill();
+    if (open) renderPanel();
+  }
+
+  function renderPill() {
+    const v = visible();
+    const pill = ui.warnPill;
+    if (!pill) return;
+    if (v.length === 0) {
+      pill.hidden = true;
+      pill.classList.remove('visible');
+      pill.textContent = '';
+      if (open) close();
+      return;
+    }
+    pill.hidden = false;
+    pill.classList.add('visible');
+    pill.textContent = `⚠ ${v.length} warning${v.length > 1 ? 's' : ''}`;
+    pill.setAttribute('aria-label', `Open warnings panel, ${v.length} ${v.length > 1 ? 'warnings' : 'warning'}`);
+  }
+
+  function renderPanel() {
+    const list = ui.warnList;
+    if (!list) return;
+    const v = visible();
+    if (v.length === 0) {
+      list.replaceChildren();
+      if (ui.warnEmpty) ui.warnEmpty.hidden = false;
+      return;
+    }
+    if (ui.warnEmpty) ui.warnEmpty.hidden = true;
+    list.replaceChildren(...v.map((w) => {
+      const row = mkEl('article', { cls: 'warning-row', attrs: { role: 'listitem' } });
+      row.dataset.severity = w.severity;
+      const head = mkEl('header', { cls: 'warning-head' });
+      head.appendChild(mkEl('span', { cls: 'warning-sev', text: w.severity }));
+      head.appendChild(mkEl('span', { cls: 'warning-cat', text: w.category }));
+      head.appendChild(mkEl('h3', { cls: 'warning-title', text: w.title }));
+      const dismiss = mkEl('button', { cls: 'warning-dismiss', text: 'Dismiss' });
+      dismiss.type = 'button';
+      dismiss.setAttribute('aria-label', `Dismiss ${w.title}`);
+      dismiss.addEventListener('click', () => {
+        dismissed.add(w.hash);
+        persist();
+        renderPill();
+        renderPanel();
+      });
+      head.appendChild(dismiss);
+      row.appendChild(head);
+      row.appendChild(mkEl('pre', { cls: 'warning-body', text: w.text }));
+      row.appendChild(mkEl('p', { cls: 'warning-action', text: w.action }));
+      return row;
+    }));
+  }
+
+  function open_(opener) {
+    if (open) return;
+    open = true;
+    lastOpener = opener || ui.warnPill;
+    const p = ui.warnPanel;
+    p.dataset.open = 'true';
+    p.setAttribute('aria-hidden', 'false');
+    p.removeAttribute('inert');
+    p.inert = false;
+    ui.warnPill?.setAttribute('aria-expanded', 'true');
+    renderPanel();
+    queueMicrotask(() => ui.warnClose?.focus());
+  }
+
+  function close() {
+    if (!open) return;
+    open = false;
+    const p = ui.warnPanel;
+    // f5-aria-inert lesson: focus out of the subtree BEFORE applying inert.
+    const focusTarget = (lastOpener && lastOpener.focus) ? lastOpener : ui.warnPill;
+    try { focusTarget?.focus(); } catch (_) {}
+    delete p.dataset.open;
+    p.setAttribute('aria-hidden', 'true');
+    p.inert = true;
+    p.setAttribute('inert', '');
+    ui.warnPill?.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggle(opener) { open ? close() : open_(opener); }
+
+  ui.warnPill?.addEventListener('click', (e) => toggle(e.currentTarget));
+  ui.warnClose?.addEventListener('click', () => close());
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && open) {
+      e.preventDefault();
+      close();
+    }
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (!open) return;
+    const within = ui.warnPanel.contains(e.target) || ui.warnPill?.contains(e.target);
+    if (!within) close();
+  });
+
+  return { applySnapshot, open: open_, close, toggle };
+})();
+
 // ---------------------------------------------------------------- helpers
 
 function mkEl(tag, opts = {}, children = []) {
@@ -466,15 +660,10 @@ function render(snap) {
   ui.roster.textContent = String(run.roster_count ?? 0);
   ui.rosterCap.textContent = String(run.roster_cap ?? 12);
 
-  const warns = snap.warnings || [];
-  if (warns.length) {
-    ui.warnPill.classList.add('visible');
-    ui.warnPill.textContent =
-      `${warns.length} warning${warns.length > 1 ? 's' : ''}`;
-    ui.warnPill.title = warns.join('\n');
-  } else {
-    ui.warnPill.classList.remove('visible');
-  }
+  // U3: warning pill is now a button that opens the warnings panel. The
+  // pill is hidden when zero warnings are live (after dismissals); the
+  // visible count is the non-dismissed count, not the raw server total.
+  warnings.applySnapshot(snap.warnings || []);
 
   const empty = (run.roster_count == null || run.roster_count === 0);
   if (empty) {

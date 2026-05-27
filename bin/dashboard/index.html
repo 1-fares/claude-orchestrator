@@ -32,7 +32,13 @@
         </div>
       </div>
       <div class="header-right">
-        <span class="warn-pill" id="hdr-warn-pill" title=""></span>
+        <button class="warn-pill" id="hdr-warn-pill"
+                type="button"
+                aria-haspopup="dialog"
+                aria-controls="warnings-panel"
+                aria-expanded="false"
+                aria-label="Open warnings panel"
+                hidden></button>
         <span class="freshness">
           <span class="dot" id="hdr-fresh-dot"></span>
           <span id="hdr-fresh-text">connecting…</span>
@@ -117,6 +123,21 @@
       <img class="panel-mascot" id="agent-panel-mascot" alt="">
       <div class="panel-empty-line" id="agent-panel-empty-line">No bus messages yet.</div>
     </div>
+  </aside>
+
+  <aside id="warnings-panel"
+         role="dialog"
+         aria-modal="false"
+         aria-label="Warnings"
+         aria-hidden="true"
+         inert>
+    <header id="warnings-panel-header">
+      <h2 class="panel-title-h2">Warnings</h2>
+      <button class="panel-close" id="warnings-close"
+              type="button" aria-label="Close warnings">×</button>
+    </header>
+    <div id="warnings-list" role="list"></div>
+    <div id="warnings-empty" hidden>No warnings.</div>
   </aside>
 
   <aside id="chat-panel"
