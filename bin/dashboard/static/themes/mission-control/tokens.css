@@ -1,9 +1,10 @@
 /* mission-control — B11 theme tokens */
 /* chrome rework (u12c): #1A1612 chrome, text contrast 13.2:1 */
+/* U1 chrome lightening (round 3 phase C): #26201A chrome, AAA */
 :root[data-theme="mission-control"] {
-  --bg:                #1A1612;
-  --surface:           #25201A;
-  --surface-2:         #322B22;
+  --bg:                #26201A;
+  --surface:           #332C24;
+  --surface-2:         #403628;
   --text:              #E8DCC2;
   --alert:             #D9542E;
   --node-active:       #FFB627;
@@ -21,5 +22,5 @@
   --edge-priority:     #FFB627;
   --edge-default:      #8C4A2E;
   --selection-cue:     #4DE0B8;
-  --token-ink:         #1A1612;
+  --token-ink:         #26201A;
 }

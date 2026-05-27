@@ -1,9 +1,10 @@
 /* fox-and-firefly — B11 theme tokens */
 /* chrome rework (u12c): #122418 chrome, text contrast 12.1:1 */
+/* U1 chrome lightening (round 3 phase C): #1C3324 chrome, AAA */
 :root[data-theme="fox-and-firefly"] {
-  --bg:                #122418;
-  --surface:           #1A3024;
-  --surface-2:         #243D2E;
+  --bg:                #1C3324;
+  --surface:           #264332;
+  --surface-2:         #325240;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;
@@ -21,5 +22,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #3A4A40;
   --selection-cue:     #F0DCB4;
-  --token-ink:         #122418;
+  --token-ink:         #1C3324;
 }
