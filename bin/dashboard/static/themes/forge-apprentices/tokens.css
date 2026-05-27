@@ -1,9 +1,10 @@
 /* forge-apprentices — B11 theme tokens */
 /* chrome rework (u12c): #181008 chrome, text contrast 14.0:1 */
+/* U1 chrome lightening (round 3 phase C): #251A0C chrome, AAA */
 :root[data-theme="forge-apprentices"] {
-  --bg:                #181008;
-  --surface:           #2A1A0E;
-  --surface-2:         #3A2614;
+  --bg:                #251A0C;
+  --surface:           #3A2516;
+  --surface-2:         #4D3520;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89C2B;
@@ -21,5 +22,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #5C4A2E;
   --selection-cue:     #F0DCB4;
-  --token-ink:         #181008;
+  --token-ink:         #251A0C;
 }

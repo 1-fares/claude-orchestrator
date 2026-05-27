@@ -1,9 +1,10 @@
 /* cyberpunk-noir — B11 theme tokens. AMBER+CYAN ONLY, NO PINK/MAGENTA. */
 /* chrome rework (u12c): #0E1A22 chrome, text contrast 13.0:1 */
+/* U1 chrome lightening (round 3 phase C): #172732 chrome, AAA */
 :root[data-theme="cyberpunk-noir"] {
-  --bg:                #0E1A22;
-  --surface:           #182A36;
-  --surface-2:         #1F3A4A;
+  --bg:                #172732;
+  --surface:           #243A4A;
+  --surface-2:         #2D4A5E;
   --text:              #E8DCC2;
   --alert:             #C45A2E;
   --node-active:       #FFB627;
@@ -21,5 +22,5 @@
   --edge-priority:     #C45A2E;
   --edge-default:      #4A5566;
   --selection-cue:     #4DE0B8;
-  --token-ink:         #0E1A22;
+  --token-ink:         #172732;
 }
