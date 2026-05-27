@@ -60,6 +60,46 @@ done
 [ "$#" -ge 2 ] || usage
 goal="$1"; shift
 
+# --- M1: curated-role minimum gate ---------------------------------------
+# A team run requires more than the workers the operator names on the CLI.
+# The orchestrator is started separately by bin/start-orchestrator.sh; the
+# user-communicator is the team's continuous liaison to the operator and must
+# be on the bus for a healthy run. Both belong to the "curated minimum": the
+# launcher warns when the role-list arg omits one, and (for communicator)
+# auto-spawns at the end via start_communicator. The orchestrator-self-record
+# is done by start-orchestrator.sh and asserted by the post-spawn sanity
+# check below.
+#
+# Background: on 2026-05-26 the post-crash recovery flow relaunched 8 worker
+# roles but skipped communicator because (a) the operator's role-list arg did
+# not include it, and (b) at the time of the crash the launcher had no
+# curated-minimum enforcement. This gate prevents recurrence.
+CURATED_MINIMUM=(orchestrator communicator)
+in_argv() {
+  local needle="$1"; shift
+  for r in "$@"; do [ "$r" = "$needle" ] && return 0; done
+  return 1
+}
+for c in "${CURATED_MINIMUM[@]}"; do
+  if in_argv "$c" "$@"; then continue; fi
+  case "$c" in
+    orchestrator)
+      # Not spawned by us; start-orchestrator.sh owns it. Just warn so the
+      # operator notices when an out-of-band orchestrator path was used.
+      echo "WARN: curated role 'orchestrator' not in role list; start-orchestrator.sh should have it on the bus already"
+      ;;
+    communicator)
+      if [ "${COMMUNICATOR_DISABLED:-0}" = "1" ]; then
+        echo "WARN: curated role 'communicator' not in role list AND COMMUNICATOR_DISABLED=1; team will run without it"
+      else
+        echo "WARN: curated role 'communicator' not in role list; will be auto-included via the curated-minimum gate (bin/communicator.sh)"
+      fi
+      ;;
+  esac
+done
+unset -f in_argv
+# -------------------------------------------------------------------------
+
 if ! workdir_abs="$(cd "$workdir" 2>/dev/null && pwd)"; then
   echo "workdir is not a directory: $workdir" >&2; exit 1
 fi
@@ -177,3 +217,20 @@ start_communicator() {
 
 prompt_communicator_choice
 start_communicator
+
+# --- M1: post-spawn curated-role sanity check ----------------------------
+# Walk the curated minimum and warn for each role that did not land in
+# $TEAM_DIR/active after this launch. The format matches the brief so the
+# operator can grep / parse it. This is a soft warning, not an error: the
+# launcher still exits cleanly so it can be wired into automation.
+if [ -f "$TEAM_DIR/active" ]; then
+  for c in "${CURATED_MINIMUM[@]}"; do
+    if ! awk -F'\t' -v r="$c" '$3 == r {found=1} END {exit !found}' \
+            "$TEAM_DIR/active" 2>/dev/null; then
+      echo "WARN: curated role '$c' not in active roster; spawn it with bin/add-role.sh $c"
+    fi
+  done
+else
+  echo "WARN: \$TEAM_DIR/active not present after spawn; curated-role sanity check skipped"
+fi
+# -------------------------------------------------------------------------
