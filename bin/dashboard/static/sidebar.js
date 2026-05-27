@@ -58,16 +58,26 @@ function mkEl(tag, opts = {}, children = []) {
 }
 
 export class Sidebar {
-  constructor(rootEl) {
-    this.root = rootEl;
-    this.root.replaceChildren(
+  // U4 layout reorg: roster sits in the LEFT rail, units + timeline in the
+  // RIGHT rail. The first argument is the left-rail root, the second the
+  // right-rail root. The two-argument shape preserves a single Sidebar
+  // instance owning all the panels.
+  constructor(leftEl, rightEl) {
+    this.leftRoot  = leftEl;
+    this.rightRoot = rightEl;
+    this.leftRoot.replaceChildren(
       mkEl('section', { cls: 'panel', id: 'roster-panel' }, [
         mkEl('h2', { cls: 'panel-title', text: 'Roster' }),
         (this.rosterEl = mkEl('div', { cls: 'roster-list', id: 'roster-list' })),
       ]),
+    );
+    this.rightRoot.replaceChildren(
       mkEl('section', { cls: 'panel', id: 'units-panel' }, [
         mkEl('h2', { cls: 'panel-title', text: 'Units' }),
-        (this.unitsSumEl = mkEl('div', { cls: 'units-summary', id: 'units-summary' })),
+        // U4: the redundant "33/47 done" summary block lived here; the M2
+        // mission strip's counts pill (top of viewport) now carries that
+        // KPI, so the sidebar's units panel keeps only the per-bucket
+        // progress bar and legend that are NOT in the strip.
         (this.unitsBarEl = mkEl('div', { cls: 'units-bar', id: 'units-bar' })),
         (this.unitsLegEl = mkEl('div', { cls: 'units-legend', id: 'units-legend' })),
       ]),
@@ -146,14 +156,6 @@ export class Sidebar {
 
   _renderUnits(counts) {
     const total = UNIT_ORDER.reduce((acc, k) => acc + (counts[k] || 0), 0);
-    const done = counts.done || 0;
-    this.unitsSumEl.replaceChildren(
-      mkEl('div', { cls: 'units-summary-row' }, [
-        mkEl('span', { cls: 'big-num', text: total ? String(done) : '0' }),
-        mkEl('span', { cls: 'big-of',  text: `/ ${total || 0}` }),
-        mkEl('span', { cls: 'big-label', text: total ? 'done' : 'units' }),
-      ]),
-    );
 
     this.unitsBarEl.replaceChildren();
     for (const k of UNIT_ORDER) {
