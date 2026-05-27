@@ -189,6 +189,21 @@
 
   <div id="toast-stack" aria-live="polite"></div>
 
+  <!-- U7 hover preview popover: single reused DOM element, snapped to the
+       cursor on hover-over-token. role=tooltip; linked via aria-describedby
+       on the focused token (canvas hit-target). -->
+  <div id="token-popover"
+       role="tooltip"
+       aria-hidden="true"
+       hidden>
+    <div class="token-popover-head">
+      <span class="token-popover-prefix" id="token-popover-prefix">·</span>
+      <span class="token-popover-pair"   id="token-popover-pair">— → —</span>
+      <span class="token-popover-ts"     id="token-popover-ts"></span>
+    </div>
+    <pre class="token-popover-body" id="token-popover-body"></pre>
+  </div>
+
   <script type="module" src="/static/app.js"></script>
 </body>
 </html>

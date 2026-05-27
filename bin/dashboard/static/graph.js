@@ -42,6 +42,20 @@ const ORBIT_PERIOD_MS     = 2400;     // delegating-orbit revolution (design/u24
 const ORBIT_GAP_PX        = 9;        // distance from disc edge to orbit ring
 const ORBIT_DOT_R_PX      = 3.5;      // 7 px diameter
 const ORBIT_PHASE_STEP_MS = 370;      // (role-index * 0.37 s) % period; desyncs N orbits
+
+// U7 message-token info layer (design/u7-token-info-layer.md).
+const HALO_SIZE_TABLE     = [        // [thresholdChars, haloPx]
+  [32,   0],
+  [128,  4],
+  [512,  8],
+  [2048, 12],
+  [Infinity, 14],
+];
+const QUESTION_FADE_MS    = 800;
+const QUESTION_LANE_PX    = 6;
+const QUESTION_VISIBLE_PER_PAIR = 3;
+const POPOVER_DWELL_MS    = 200;
+const POPOVER_HIT_GRACE_MS = 200;
 const ORBIT_FADE_MS       = 200;      // u32-f1: enter/exit opacity tween (spec §1)
 
 // Image cache: url → HTMLImageElement. A theme change invalidates entries
@@ -55,6 +69,15 @@ function loadImage(url) {
   return img;
 }
 function clearImageCache() { imageCache.clear(); }
+
+// U7: halo radius from message body length per spec §1 piecewise table.
+function haloRadiusFor(bodyLen) {
+  if (!Number.isFinite(bodyLen) || bodyLen <= 0) return 4;  // medium default
+  for (const [cap, r] of HALO_SIZE_TABLE) {
+    if (bodyLen < cap) return r;
+  }
+  return 14;
+}
 
 // u24: derive the three-way activity behaviour (working / delegating / idle)
 // from the server's optional `activity` field; fall back to the legacy `state`
@@ -140,6 +163,18 @@ export class GraphView {
     this.lastTokenLandedAt = 0;
     // Heartbeat: last time a (from,to) edge launched a token (real or synth).
     this.edgeLastEmit = new Map();
+    // U7: open-question records keyed by `${from}->${to}`, FIFO list per
+    // pair. Each entry: { msgId, prefix, from, to, bornAt, fadeOutAt? }.
+    // Cleared on matching `answer:` from receiver → sender or on role retirement.
+    this.openQuestions = new Map();
+    // U7: hover-popover state. `popoverTarget` is the token / question
+    // record currently dwelt on; `popoverShownAt` is when the popover
+    // became visible; `popoverHideAfter` lets the cursor briefly leave
+    // the canvas and return without flicker.
+    this.popoverTarget    = null;
+    this.popoverDwellFrom = 0;
+    this.popoverEl        = null;
+    this._messagesById    = new Map();   // id → last-seen /state.json message rec
     // Re-clear the image cache on theme change so canvas redraws pull
     // the new theme's PNGs on the next animation frame.
     this._unsubTheme = onThemeChange(() => clearImageCache());
@@ -435,6 +470,7 @@ export class GraphView {
     for (const m of (snap.messages || [])) {
       if (!m || !m.id || this.seenMsgIds.has(m.id)) continue;
       this.seenMsgIds.add(m.id);
+      this._messagesById.set(m.id, m);
       if (m.kind === 'broadcast') {
         this._kickHalo(m.from, now);
         continue;
@@ -447,7 +483,18 @@ export class GraphView {
       const toRt   = this.nodeRuntime.get(m.to);
       if (fromRt) fromRt.lastSeenActive = now;
       if (toRt)   toRt.lastSeenActive   = now;
-      this._spawnToken(m.from, m.to, m.prefix || 'other', now);
+      this._spawnToken(m.from, m.to, m.prefix || 'other', now,
+                       /*synthetic*/ false, m.id, m.body_length);
+      // U7: question trail bookkeeping. A `question:` from A→B opens an
+      // entry on the (A→B) pair; an `answer:` from B→A pops the oldest
+      // open entry on the (A→B) pair and starts an 800 ms fade-out.
+      this._trackOpenQuestion(m, now);
+    }
+    this._reapClosedQuestions(now);
+    // U7: prune the message cache so it does not grow unbounded.
+    if (this._messagesById.size > SEEN_MSG_LIMIT) {
+      const live = [...this._messagesById.entries()].slice(-Math.floor(SEEN_MSG_LIMIT / 2));
+      this._messagesById = new Map(live);
     }
     if (this.seenMsgIds.size > SEEN_MSG_LIMIT) {
       const trimmed = [...this.seenMsgIds].slice(-Math.floor(SEEN_MSG_LIMIT / 2));
@@ -468,18 +515,70 @@ export class GraphView {
     }
   }
 
+  // ------------------------------------------------------------------ U7 question trail
+
+  _trackOpenQuestion(m, now) {
+    if (!m || !m.prefix) return;
+    if (m.prefix === 'question') {
+      const key = this._dirKey(m.from, m.to);
+      let q = this.openQuestions.get(key);
+      if (!q) { q = []; this.openQuestions.set(key, q); }
+      q.push({ msgId: m.id, from: m.from, to: m.to, bornAt: now });
+      return;
+    }
+    if (m.prefix === 'answer') {
+      // FIFO match against the reverse-direction open-question queue.
+      const reverseKey = this._dirKey(m.to, m.from);
+      const q = this.openQuestions.get(reverseKey);
+      if (!q || !q.length) return;
+      const closing = q.shift();
+      closing.fadeOutAt = now;
+      // Park the closing entry on a separate fade-queue so the draw loop
+      // still renders it through the 800 ms fade window.
+      let fq = this.openQuestions.get(reverseKey + ':fade');
+      if (!fq) { fq = []; this.openQuestions.set(reverseKey + ':fade', fq); }
+      fq.push(closing);
+      if (!q.length) this.openQuestions.delete(reverseKey);
+    }
+  }
+
+  _reapClosedQuestions(now) {
+    // Drop fade-out entries past their 800 ms window. Also drop entries
+    // whose endpoints no longer resolve (a role retired with an open
+    // question — silent fade per spec §2 "pair matching").
+    for (const [key, list] of [...this.openQuestions.entries()]) {
+      const isFade = key.endsWith(':fade');
+      const keep = list.filter((q) => {
+        if (isFade) return (now - q.fadeOutAt) < QUESTION_FADE_MS;
+        if (!this.layout.has(q.from) || !this.layout.has(q.to)) {
+          // Endpoint gone: convert to a fade-out so the trail vanishes
+          // gracefully instead of popping.
+          q.fadeOutAt = now;
+          const dst = key + ':fade';
+          let fq = this.openQuestions.get(dst);
+          if (!fq) { fq = []; this.openQuestions.set(dst, fq); }
+          fq.push(q);
+          return false;
+        }
+        return true;
+      });
+      if (keep.length === 0) this.openQuestions.delete(key);
+      else this.openQuestions.set(key, keep);
+    }
+  }
+
   // ------------------------------------------------------------------ tokens
 
   // v2 (master spec section 6 "Message-token rhythm"): one token in flight
   // per (from→to) at a time. New traffic on the same edge queues; a queue
   // tail beyond QUEUE_VISIBLE_CAP coalesces into a single `×N` badge.
-  _spawnToken(from, to, prefix, now, synthetic = false) {
+  _spawnToken(from, to, prefix, now, synthetic = false, msgId = null, bodyLen = null) {
     if (!this.layout.has(from) || !this.layout.has(to)) return;
     const key = this._dirKey(from, to);
     const inFlight = this.tokens.find(
       t => t.from === from && t.to === to);
     if (!inFlight) {
-      this._launchToken(from, to, prefix, now, synthetic);
+      this._launchToken(from, to, prefix, now, synthetic, msgId, bodyLen);
       return;
     }
     // Queue behind the in-flight token.
@@ -490,10 +589,10 @@ export class GraphView {
       tail.count = (tail.count || 1) + 1;
       return;
     }
-    q.push({ from, to, prefix, count: 1, synthetic });
+    q.push({ from, to, prefix, count: 1, synthetic, msgId, bodyLen });
   }
 
-  _launchToken(from, to, prefix, now, synthetic) {
+  _launchToken(from, to, prefix, now, synthetic, msgId = null, bodyLen = null) {
     const A = this.layout.get(from);
     const B = this.layout.get(to);
     if (!A || !B) return;
@@ -508,6 +607,8 @@ export class GraphView {
       laneSign,
       count: 1,
       synthetic,
+      msgId,
+      bodyLen,
     });
     this.edgeLastEmit.set(this._dirKey(from, to), now);
     this._kickHalo(from, now);
@@ -571,9 +672,12 @@ export class GraphView {
     this._emitHeartbeats(now);
     this._drawEdges(now);
     this._drawTraces(now);
+    this._drawQuestionTrails(now);   // U7: persistent dashed line for open Qs
     this._drawNodes(now);
     this._drawTokens(now);
     this._drawRestingMascot(now);
+
+    this._updatePopover(now);
 
     requestAnimationFrame(this._tickBound);
   }
@@ -885,6 +989,30 @@ export class GraphView {
       ctx.lineTo(x, y);
       ctx.stroke();
 
+      // U7: body-length halo around the disc (spec §1). Radius scales
+      // piecewise with token bodyLen so a ping reads small and a long-form
+      // file pointer reads large; radial gradient draws once per frame per
+      // visible token, which the spec's FPS budget covers.
+      tk._haloR = (tk.bodyLen != null) ? haloRadiusFor(tk.bodyLen)
+                                       : (tk.synthetic ? 0 : 4);
+      if (tk._haloR > 0) {
+        const haloAlpha = parseFloat(cssVar('--token-halo-alpha')) || 0.5;
+        const inner = TOKEN_RADIUS_PX;
+        const outer = TOKEN_RADIUS_PX + tk._haloR;
+        const grad = ctx.createRadialGradient(x, y, inner, x, y, outer);
+        grad.addColorStop(0, withAlpha(tint, haloAlpha));
+        grad.addColorStop(1, withAlpha(tint, 0));
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, outer, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+
+      // Stash the resolved screen-space coords so the hover hit-test in
+      // _hoverAt() does not recompute the easing curve per pointer move.
+      tk._x = x;
+      tk._y = y;
+
       // Token disc.
       ctx.save();
       ctx.shadowColor = cssVar('--token-glow') || 'rgba(255,255,255,0.55)';
@@ -947,12 +1075,200 @@ export class GraphView {
         if (!q || !q.length) continue;
         const head = q.shift();
         if (!q.length) this.pending.delete(key);
-        this._launchToken(head.from, head.to, head.prefix, now, head.synthetic);
+        this._launchToken(head.from, head.to, head.prefix, now,
+                          head.synthetic, head.msgId, head.bodyLen);
         // Carry the queued ×N badge onto the freshly launched token.
         const justSpawned = this.tokens[this.tokens.length - 1];
         if (justSpawned && head.count > 1) justSpawned.count = head.count;
       }
     }
+  }
+
+  // ------------------------------------------------------------------ U7 question trails
+
+  _drawQuestionTrails(now) {
+    const ctx = this.ctx;
+    const dashStr = (cssVar('--question-trail-dash') || '6 4').trim();
+    const dash = dashStr.split(/[\s,]+/).map((s) => parseFloat(s) || 0)
+                        .filter((n) => n > 0);
+    if (!dash.length) dash.push(6, 4);
+    const baseAlpha = parseFloat(cssVar('--question-trail-alpha')) || 0.25;
+    const tint = cssVar('--edge-question') || '#F5C46A';
+    const chipAlpha = parseFloat(cssVar('--question-chip-alpha')) || 0.6;
+    const ink = cssVar('--token-ink') || '#1A1730';
+
+    const drawOne = (q, alphaScale, pair, idxInPair, count) => {
+      const A = this.layout.get(q.from);
+      const B = this.layout.get(q.to);
+      if (!A || !B) return;
+      const laneSign = (q.from < q.to) ? 1 : -1;
+      const lane = laneSign * (QUESTION_LANE_PX + idxInPair * QUESTION_LANE_PX);
+      const [ax, ay, bx, by] = laneEndpoints(A, B, lane);
+      ctx.save();
+      if (this.reducedMotion) {
+        ctx.setLineDash([]);                  // solid line
+      } else {
+        ctx.setLineDash(dash);
+      }
+      ctx.strokeStyle = withAlpha(tint, baseAlpha * alphaScale);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.restore();
+
+      // ? chip near the receiver. Stacks N visible chips; the 4th and
+      // later aggregate as ?×N on the topmost chip.
+      if (idxInPair < QUESTION_VISIBLE_PER_PAIR) {
+        const chipR = 9;
+        const ratio = 0.92;
+        const cx = ax + (bx - ax) * ratio;
+        const cy = ay + (by - ay) * ratio;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, chipR, 0, 2 * Math.PI);
+        ctx.fillStyle = withAlpha(tint, chipAlpha * alphaScale);
+        ctx.fill();
+        ctx.fillStyle = withAlpha(ink, alphaScale);
+        ctx.font = `800 12px ${cssVar('--font-sans')}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const label = (count > QUESTION_VISIBLE_PER_PAIR && idxInPair === 0)
+          ? `?×${count}` : '?';
+        ctx.fillText(label, cx, cy + 1);
+        ctx.restore();
+      }
+    };
+
+    // Live open questions: solid alphaScale = 1.
+    for (const [key, list] of this.openQuestions) {
+      if (key.endsWith(':fade')) continue;
+      for (let i = 0; i < list.length; i++) {
+        drawOne(list[i], 1.0, key, i, list.length);
+      }
+    }
+    // Fade-out queue: alphaScale linearly drops 1 → 0 across QUESTION_FADE_MS.
+    for (const [key, list] of this.openQuestions) {
+      if (!key.endsWith(':fade')) continue;
+      for (let i = 0; i < list.length; i++) {
+        const age = now - list[i].fadeOutAt;
+        if (age >= QUESTION_FADE_MS) continue;
+        const k = 1 - (age / QUESTION_FADE_MS);
+        drawOne(list[i], this.reducedMotion ? (age < 200 ? k : 0) : k,
+                key, i, list.length);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ U7 hover popover
+
+  _updatePopover(now) {
+    const el = this._popoverElement();
+    if (!el) return;
+    const target = this._hoverAt(this._lastPointer);
+    if (target && target !== this.popoverTarget) {
+      this.popoverTarget = target;
+      this.popoverDwellFrom = now;
+      el.hidden = true;
+      return;
+    }
+    if (!target) {
+      // Grace period so the cursor can slip momentarily off the disc.
+      if (this.popoverTarget &&
+          (now - (this.popoverHideAfter || 0)) > POPOVER_HIT_GRACE_MS) {
+        this.popoverTarget = null;
+        this._hidePopover();
+      }
+      return;
+    }
+    this.popoverHideAfter = now;
+    if ((now - this.popoverDwellFrom) >= POPOVER_DWELL_MS) {
+      this._showPopover(target);
+    }
+  }
+
+  _popoverElement() {
+    if (!this.popoverEl) {
+      this.popoverEl = document.getElementById('token-popover');
+      if (this.popoverEl) {
+        // Hide on click outside; Esc dismisses too.
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && this.popoverTarget) {
+            e.preventDefault();
+            this.popoverTarget = null;
+            this._hidePopover();
+          }
+        });
+        // Cache the pointer in canvas-space coords for hit-testing.
+        this._lastPointer = null;
+        const captureMove = (e) => {
+          const rect = this.canvas.getBoundingClientRect();
+          this._lastPointer = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top,
+            client: { x: e.clientX, y: e.clientY },
+          };
+        };
+        const clearPointer = () => { this._lastPointer = null; };
+        this.canvas.addEventListener('mousemove', captureMove);
+        this.overlay.addEventListener('mousemove', captureMove);
+        this.canvas.addEventListener('mouseleave', clearPointer);
+      }
+    }
+    return this.popoverEl;
+  }
+
+  _hoverAt(pt) {
+    if (!pt) return null;
+    // Token hit: nearest in-flight token within TOKEN_RADIUS_PX + halo.
+    for (const tk of this.tokens) {
+      if (tk._x == null) continue;
+      const r = TOKEN_RADIUS_PX + (tk._haloR || 0) + 2;
+      if (Math.hypot(pt.x - tk._x, pt.y - tk._y) <= r) return { kind: 'token', token: tk };
+    }
+    return null;
+  }
+
+  _showPopover(target) {
+    const el = this.popoverEl;
+    if (!el) return;
+    const pt = this._lastPointer;
+    if (!pt) return;
+    const tk = target.token;
+    const pi = prefixInfo(tk.prefix);
+    const setT = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+    setT('token-popover-prefix', pi.glyph);
+    setT('token-popover-pair',   `${tk.from} → ${tk.to}`);
+    // Times: render the relative age if we know the spawn frame; the
+    // absolute ts is not in the canvas record, so the spec's second-level
+    // tooltip is a follow-up (logged in u7-f1 if surfacing is wanted).
+    const ageMs = performance.now() - tk.spawn;
+    setT('token-popover-ts', `${(ageMs / 1000).toFixed(1)}s ago`);
+    const body = document.getElementById('token-popover-body');
+    if (body) {
+      const m = tk.msgId ? this._messagesById.get(tk.msgId) : null;
+      const text = (m && (m.body_preview || m.body)) || '(message body not in payload; open the role feed for full text)';
+      body.textContent = String(text).slice(0, 800);
+    }
+    el.style.left = (pt.client.x + 12) + 'px';
+    el.style.top  = (pt.client.y +  8) + 'px';
+    el.removeAttribute('hidden');
+    el.setAttribute('aria-hidden', 'false');
+    // Viewport clamp.
+    const r = el.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) {
+      el.style.left = (window.innerWidth - r.width - 8) + 'px';
+    }
+    if (r.bottom > window.innerHeight - 8) {
+      el.style.top = (window.innerHeight - r.height - 8) + 'px';
+    }
+  }
+
+  _hidePopover() {
+    if (!this.popoverEl) return;
+    this.popoverEl.setAttribute('hidden', '');
+    this.popoverEl.setAttribute('aria-hidden', 'true');
   }
 
   // Resting-state mascot: when no token has landed for REST_MASCOT_AFTER_MS
