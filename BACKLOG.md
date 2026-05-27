@@ -1,10 +1,108 @@
 # Backlog
 
-Forward-looking work items, last updated 2026-05-25. Not yet scheduled. B3 is
+Forward-looking work items, last updated 2026-05-27. Not yet scheduled. B3 is
 discussion-only for now (no changes until agreed). Prior-art research precedes
 build on all of them: adopt or integrate mature existing tools rather than
 reinvent. **B9 (dynamic team scaling) is the priority next build per the operator
-(2026-05-25); design + policy resolved below.**
+(2026-05-25); design + policy resolved below.** **B12 (2026-06-15 Agent SDK
+credit pool) is a time-bound prep item added 2026-05-27.**
+
+---
+
+## B12 - Exploit the 2026-06-15 Agent SDK credit pool
+
+**Status: research done, prep work pending.** Time-bound: the new credit pool
+opens on 2026-06-15. Eligible users must claim it once through their Claude
+account; it then refreshes monthly with the billing cycle and does not roll over.
+
+**The finding (verified 2026-05-27).** Anthropic is splitting subscription
+billing into two buckets on 2026-06-15. Verbatim from the help-centre article:
+
+> Starting June 15, 2026, Claude Agent SDK and `claude -p` usage no longer
+> counts toward your Claude plan's usage limits. Your subscription usage limits
+> stay the same and stay reserved for interactive use of Claude Code, Claude
+> Cowork, and Claude.
+
+The new pool covers Agent SDK calls (Python/TS) in your own projects, `claude -p`
+non-interactive mode, the Claude Code GitHub Actions integration, and
+third-party apps that authenticate with a Claude subscription (Zed, OpenClaw,
+etc.). It does **not** cover interactive Claude Code, Claude.ai web/desktop,
+Cowork, or features that draw from usage credits.
+
+Per-tier monthly credit: Pro $20, Max 5x $100, **Max 20x $200**, Team Standard
+$20, Team Premium $100, Enterprise usage-based $20, Enterprise Premium $200.
+Operator is on Max 20x, so the available walled-off SDK budget is $200/month
+(at standard API rates), additive on top of the existing interactive
+subscription usage. Overage falls through to usage credits (the prepaid
+balance enabled at `claude.ai → Settings → Usage`) at standard API rates, or
+fails outright if usage credits are not enabled. Per-user (not pooled across a
+team), no rollover.
+
+**Why this matters here.** Today the orchestrator spawns role sessions as
+ordinary subscription-authenticated `claude` processes (`bin/lib/team-spawn.sh`).
+Every role's tokens draw from the same interactive Max 20x pool the operator
+also uses by hand for Claude Code and Claude.ai. After 2026-06-15 there is a
+second, walled-off $200/month pool for programmatic and SDK-authenticated work
+that is *not* available to the existing role launch path. Routing eligible
+work onto that pool is free headroom: roughly $200/month of API-priced
+inference per user that would otherwise either eat into the interactive quota
+or never be spent at all (the credit does not roll over).
+
+**Concrete prep work to evaluate, in order of bluntness.**
+
+1. **Identify which roles or sub-tasks are pool-eligible.** The pool only
+   accepts Agent SDK calls and `claude -p` (non-interactive). Interactive
+   `claude` sessions in tmux do not qualify. So the candidates are: (a) any
+   role whose run can be reframed as a non-interactive `claude -p` invocation
+   with the prompt fed on stdin/file, (b) any deterministic batch job that the
+   orchestrator currently shells out for (verifier output summarisation,
+   triage of bus messages, scope-check explanations, structured ledger
+   updates, etc.) which could be a `claude -p` or short SDK call, (c) gate
+   helpers (`bin/gates/llm-judge`, `rubric-judge`, `cite-support`) that are
+   already one-shot LLM calls.
+2. **Route those calls via subscription-authenticated SDK / `claude -p`.**
+   Switch the eligible call sites to authenticate against the Max 20x
+   subscription (the default for `claude` on the operator's machine) rather
+   than against a Console API key, so they draw from the new $200 pool. For
+   any call site that already exists as Anthropic Messages API code under a
+   Console key, evaluate whether moving to subscription-auth SDK is a net win
+   given the per-user cap, latency, and observability tradeoffs.
+3. **Cap detection and graceful fallback.** When the $200 monthly pool runs
+   out the SDK either falls back to usage credits (prepaid, billable) or
+   fails. Decide which we want for the orchestrator: fail fast (cost-safe but
+   may stall a run mid-flight) or fall through to usage credits with a hard
+   monthly ceiling configured in `claude.ai → Settings → Usage`. Document in
+   the role files and STATUS.md.
+4. **One-time claim.** Operator must claim the credit through their Claude
+   account on or after 2026-06-15. Note in the runbook; failing to claim
+   means $0 in the pool that month.
+5. **Multi-user / shared-machine note.** The credit is per Claude account,
+   not pooled. If the orchestrator pattern is ever run by another user on a
+   different subscription, each user has their own $200; the credits do not
+   sum across accounts.
+
+**What this does NOT touch.**
+
+- Claude Managed Agents. That product authenticates with a Console API key,
+  bills against the Console balance (tokens at standard rates + $0.08 per
+  session-hour of `running` time), and is unaffected by the 2026-06-15 change.
+  If we ever adopt Managed Agents for cloud-side role execution (the B2
+  direction noted in the cross-cutting findings), that is a separate funding
+  decision against the Console balance, not against the new SDK pool.
+- Interactive Claude Code role sessions. They keep drawing from the
+  subscription's interactive pool as today.
+- Background sessions (`claude --bg`, `claude agents`). They are local,
+  subscription-authenticated, and count as interactive use for billing
+  purposes; not eligible for the new pool.
+
+**Sources verified 2026-05-27.**
+
+- [Use the Claude Agent SDK with your Claude plan (Anthropic help centre)](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
+- [Manage usage credits for paid Claude plans](https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans)
+- [What is the Max plan?](https://support.claude.com/en/articles/11049741-what-is-the-max-plan) (confirms Max 20x = $200/month web; no $300 tier)
+- [Claude API pricing, Managed Agents section](https://platform.claude.com/docs/en/about-claude/pricing) (Managed Agents = $0.08/session-hour + tokens, API-billed)
+- [Claude Managed Agents overview](https://platform.claude.com/docs/en/managed-agents/overview) (requires Claude API key)
+- [InfoWorld: Anthropic puts Claude agents on a meter across its subscriptions](https://www.infoworld.com/article/4171274/anthropic-puts-claude-agents-on-a-meter-across-its-subscriptions.html)
 
 ---
 
