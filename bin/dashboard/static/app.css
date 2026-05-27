@@ -1469,6 +1469,60 @@ html, body {
   overflow: hidden;
 }
 
+/* ============================================================ U7 hover popover */
+#token-popover {
+  position: fixed;
+  z-index: 60;
+  background: var(--popover-bg);
+  color: var(--popover-text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-3) var(--space-4);
+  box-shadow: var(--shadow-popover);
+  max-width: 320px;
+  max-height: 240px;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: var(--font-sans);
+  font-size: var(--type-medium);
+}
+#token-popover[hidden] { display: none; }
+.token-popover-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--type-small);
+}
+.token-popover-prefix {
+  font-size: 16px;
+  line-height: 1;
+}
+.token-popover-pair {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  font-size: var(--type-small);
+}
+.token-popover-ts {
+  color: var(--ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--type-small);
+  font-variant-numeric: tabular-nums;
+}
+.token-popover-body {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
 /* ============================================================ Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
