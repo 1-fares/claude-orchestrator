@@ -289,6 +289,16 @@ export class GraphView {
       button.style.top  = (pos.y - hitSize / 2) + 'px';
       button.style.width  = hitSize + 'px';
       button.style.height = hitSize + 'px';
+      // u32-f2: subagent pill is a DOM overlay (top: -6 / right: -6 from the
+      // node bounding box per design/u24-delegating-visual.md §2). The bbox
+      // is the role-disc circle inscribed in `hitSize`; its top-right corner
+      // in overlay coords sits at (pos.x + baseR, pos.y - baseR). The pill
+      // anchors there with the spec's -6 px offset on each axis.
+      const pill = this._pillEl(r.name);
+      if (pill) {
+        pill.style.left = (pos.x + pos.baseR + 6) + 'px';
+        pill.style.top  = (pos.y - pos.baseR - 6) + 'px';
+      }
     }
   }
 
@@ -298,6 +308,10 @@ export class GraphView {
 
   _buttonEl(name) {
     return this.overlay.querySelector(`button[data-role="${cssEsc(name)}"]`);
+  }
+
+  _pillEl(name) {
+    return this.overlay.querySelector(`[data-role-pill="${cssEsc(name)}"]`);
   }
 
   // ------------------------------------------------------------------ snapshot
@@ -314,10 +328,12 @@ export class GraphView {
     this.roster = roster;
     this.rosterByName = new Map(roster.map(r => [r.name, r]));
 
-    // Sync DOM children: add/remove role label + button.
+    // Sync DOM children: add/remove role label + button + pill (u32-f2).
     const wanted = new Set(roster.map(r => r.name));
     for (const child of [...this.overlay.children]) {
-      const name = child.dataset.role || child.dataset.roleLabel;
+      const name = child.dataset.role
+                || child.dataset.roleLabel
+                || child.dataset.rolePill;
       if (name && !wanted.has(name)) {
         child.remove();
         this.nodeRuntime.delete(name);
@@ -355,6 +371,24 @@ export class GraphView {
       btn.setAttribute('aria-label', btn.title);
       if (this.selectedRole === r.name) btn.dataset.selected = 'true';
       else delete btn.dataset.selected;
+
+      // u32-f2: subagent-count pill is a DOM overlay (was a canvas circle).
+      // The rounded-rect honours --radius-pill and expands past 18 px for
+      // multi-digit labels; spec recipe in design/u24-delegating-visual.md §2.
+      const pillLabel = (act === 'delegating') ? subagentBadge(r) : null;
+      let pill = this._pillEl(r.name);
+      if (pillLabel) {
+        if (!pill) {
+          pill = document.createElement('div');
+          pill.className = 'role-pill';
+          pill.dataset.rolePill = r.name;
+          pill.setAttribute('aria-hidden', 'true');
+          this.overlay.appendChild(pill);
+        }
+        pill.textContent = pillLabel;
+      } else if (pill) {
+        pill.remove();
+      }
 
       // Spawn runtime entry for new nodes; preserve phase if already there.
       const isDeleg = act === 'delegating';
@@ -772,32 +806,10 @@ export class GraphView {
         ctx.strokeStyle = withAlpha(inkCol, 0.55 * orbitAlpha);
         ctx.stroke();
       }
-      const pillLabel = (activity === 'delegating') ? subagentBadge(r) : null;
-      if (pillLabel) {
-        // N pill, top-right corner. Hidden when count is truly 0 (spec §2).
-        // When count is unknown (server emitted plain `delegating` without
-        // :N), pillLabel is '⚙' at the same geometry. Survives reduced-motion
-        // as a non-text shape channel.
-        const label = pillLabel;
-        const px = R * 0.78, py = -R * 0.78;
-        const pillR = R * 0.32;
-        const pillBg = cssVar('--surface-2') || stateColor;
-        const pillInk = cssVar('--token-ink') || '#1A1730';
-        const borderCol = cssVar('--state-active-color')
-                       || cssVar('--node-active') || stateColor;
-        ctx.beginPath();
-        ctx.arc(px, py, pillR, 0, 2 * Math.PI);
-        ctx.fillStyle = pillBg;
-        ctx.fill();
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = withAlpha(borderCol, 0.75);
-        ctx.stroke();
-        ctx.fillStyle = pillInk;
-        ctx.font = `800 ${Math.round(R * 0.36)}px ${cssVar('--font-sans')}`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, px, py + 1);
-      }
+      // u32-f2: the pill render moved out of the canvas into a DOM overlay
+      // managed in update() + _syncOverlayPositions. The canvas-circle drew
+      // a fixed-radius disc that cramped two-digit labels; the DOM rounded-
+      // rect expands past 18 px for multi-digit counts per spec §2.
 
       // 7) Selection cue: 3 px solid offset ring outside the state ring,
       //    coloured per-theme via --selection-cue. The cue is NEVER in any
