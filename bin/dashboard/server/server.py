@@ -84,6 +84,14 @@ SCHEMA_VERSION history:
        count. Sourced by invoking bin/role-activity.sh per role per tick,
        with a short per-role TTL cache to bound subprocess fan-out. The
        existing `state` field is unchanged for backward compat.
+  5 — mission-strip status taxonomy (M2, server half). /state.json gains
+       `unit_counts` (done / in_progress / deferred / blocked_role /
+       blocked_operator / blocked_watchdog / total), `goal_what` (the
+       state.md `what:` line collapsed to a single string), and `team_idle`
+       (bool: in_progress==0 AND blocked_operator==0). Replaces the prior
+       reliance on the flat `units.counts` map for the strip's "stuck or
+       idle" decision. The flat counts stay in /state.json unchanged for
+       backward compat.
 """
 
 from __future__ import annotations
@@ -106,7 +114,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlsplit
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 RECENT_WINDOW_SEC = 30.0           # server-side message retention window
 ACTIVE_RECENT_SEC = 3.0            # "active" rule 6: msg within this window
 RING_MAX = 500                     # cache ring size
@@ -294,10 +302,49 @@ _ALLOWED_STATUSES = {
     "integrating", "done", "deferred",
 }
 
+# M2 unit-count taxonomy buckets. The flat counts in /state.json keep the raw
+# state.md statuses; these buckets are the operator-facing groupings (the
+# mission-strip "what's the team doing right now" answer). blocked_operator
+# and blocked_watchdog are not derived from state.md alone; they merge in
+# bus opens, $TEAM_DIR/PENDING.md presence, and health/<role>.json state.
+_IN_PROGRESS_STATUSES = {"assigned", "acked", "in-progress", "integrating", "review"}
+_BLOCKED_ROLE_RE = re.compile(r"^blocked-on:")
+
+
+def _collapse_what(block: str) -> Optional[str]:
+    """Extract the `what:` line (and any indented continuations) out of the
+    `## goal` section's body and collapse to a single whitespace-normalised
+    string. Returns None when no `what:` key is present.
+    """
+    lines = block.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"^what:\s*(.*)$", line)
+        if m:
+            buf = [m.group(1).strip()]
+            j = i + 1
+            while j < len(lines):
+                nxt = lines[j]
+                if not nxt.strip():
+                    break
+                # Indented continuation (any amount of leading whitespace) OR
+                # an explicit blank line break.
+                if nxt[0:1] in (" ", "\t"):
+                    buf.append(nxt.strip())
+                    j += 1
+                else:
+                    break
+            joined = " ".join(p for p in buf if p)
+            joined = re.sub(r"\s+", " ", joined).strip()
+            return joined or None
+        i += 1
+    return None
+
 
 def parse_state_md(team_dir: Optional[str], warnings: list) -> dict:
     counts = {s: 0 for s in _ALLOWED_STATUSES}
-    out = {"counts": counts, "list": [], "timeline": []}
+    out = {"counts": counts, "list": [], "timeline": [], "goal_what": None}
     if not team_dir:
         return out
     path = os.path.join(team_dir, "state.md")
@@ -332,12 +379,25 @@ def parse_state_md(team_dir: Optional[str], warnings: list) -> dict:
             d.strip() for d in kvs.get("depends-on", "-").split(",")
             if d.strip() and d.strip() != "-"
         ]
+        # `raw_status` carries the blocked-on:<role> form intact so M2's
+        # blocked_role bucket can distinguish role-blocked units from generic
+        # blocked; the flat `status` field stays collapsed for backward compat.
         out["list"].append({
             "id": uid,
             "owner": kvs.get("owner"),
             "status": status,
+            "raw_status": raw_status,
             "depends_on": depends,
         })
+
+    # M2: pull the `what:` line out of the `## goal` block, collapsing
+    # indented continuation lines into a single whitespace-normalised string.
+    goal_m = re.search(r"^##\s+goal\s*$", text, re.MULTILINE)
+    if goal_m:
+        next_hdr = _RE_SECTION.search(text, goal_m.end())
+        goal_end = next_hdr.start() if next_hdr else len(text)
+        block = text[goal_m.end():goal_end]
+        out["goal_what"] = _collapse_what(block)
 
     # Roster section: timeline.
     roster_m = re.search(r"^##\s+roster\s*$", text, re.MULTILINE)
@@ -1058,6 +1118,39 @@ def build_snapshot(state: ServerState, now: float) -> dict:
     elapsed = int(max(candidates)) if candidates else int(now - state.started_ts)
     elapsed = max(0, elapsed)
 
+    # M2 unit-count taxonomy + goal_what + team_idle. blocked_role comes from
+    # state.md's raw_status (blocked-on:<role>); blocked_operator merges in
+    # operator-attention signals (open questions, PENDING.md, give-up roles);
+    # blocked_watchdog reads the api-watchdog's stalled-api signal from health.
+    unit_list = units["list"]
+    done_n = sum(1 for u in unit_list if u["status"] == "done")
+    in_progress_n = sum(1 for u in unit_list if u["status"] in _IN_PROGRESS_STATUSES)
+    deferred_n = sum(1 for u in unit_list if u["status"] == "deferred")
+    blocked_role_n = sum(
+        1 for u in unit_list if _BLOCKED_ROLE_RE.match(u.get("raw_status", ""))
+    )
+    pending_path = os.path.join(team_dir, "PENDING.md") if team_dir else None
+    pending_present = bool(pending_path and os.path.isfile(pending_path))
+    give_up_n = sum(
+        1 for h in health.values()
+        if isinstance(h, dict) and h.get("state") == "give-up"
+    )
+    stalled_n = sum(
+        1 for h in health.values()
+        if isinstance(h, dict) and h.get("state") == "stalled"
+    )
+    blocked_operator_n = len(opens) + (1 if pending_present else 0) + give_up_n
+    unit_counts = {
+        "done": done_n,
+        "in_progress": in_progress_n,
+        "deferred": deferred_n,
+        "blocked_role": blocked_role_n,
+        "blocked_operator": blocked_operator_n,
+        "blocked_watchdog": stalled_n,
+        "total": len(unit_list),
+    }
+    team_idle = in_progress_n == 0 and blocked_operator_n == 0
+
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": True,
@@ -1076,6 +1169,9 @@ def build_snapshot(state: ServerState, now: float) -> dict:
         },
         "roster": roster,
         "units": {"counts": units["counts"], "list": units["list"]},
+        "unit_counts": unit_counts,
+        "goal_what": units.get("goal_what"),
+        "team_idle": team_idle,
         "messages": msgs[-SERIALIZE_MAX:],
         "timeline": units["timeline"],
         "empty_reason": reason,
