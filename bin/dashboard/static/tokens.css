@@ -71,6 +71,16 @@
   --node-halo:    rgba(255,255,255,0.20);
   --node-shadow:  0 4px 14px rgba(0,0,0,0.40);
 
+  /* U7 message-token info layer (design/u7-token-info-layer.md §4) */
+  --token-halo-alpha:      0.5;
+  --question-trail-alpha:  0.25;
+  --question-trail-dash:   6 4;
+  --question-chip-alpha:   0.6;
+  --popover-bg:            var(--surface-2);
+  --popover-text:          var(--text);
+  --shadow-popover:        0 6px 18px rgba(0,0,0,0.45);
+  --focus-ring:            var(--selection-cue, var(--text));
+
   /* motion durations (master spec section 6) */
   --motion-breathe-dur:   1.6s;
   --motion-pulse-dur:     3s;

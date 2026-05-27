@@ -23,4 +23,11 @@
   --edge-default:      #3A4A36;
   --selection-cue:     #F4E6CE;
   --token-ink:         #1F2D1F;
+  /* U7 light-theme overrides (design/u7-token-info-layer.md §4.c). The
+     cream chrome eats the bright-yellow --edge-question at 25% alpha,
+     so question-trail and halo alphas bump up on this theme only. */
+  --question-trail-alpha: 0.55;
+  --token-halo-alpha:     0.7;
+  --shadow-popover:       0 6px 18px rgba(31,45,31,0.30);
+  --focus-ring:           #1F2D1F;
 }
