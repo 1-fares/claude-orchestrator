@@ -281,7 +281,10 @@ export class GraphView {
       const label = this._labelEl(r.name);
       const button = this._buttonEl(r.name);
       if (!pos || !label || !button) continue;
-      const labelOffsetY = pos.baseR + 14;
+      // U6: 22 px gap from disc edge to label baseline (was 14 px) gives
+      // every role its own vertical lane and stops dense clusters from
+      // colliding with the disc above the next ring's labels.
+      const labelOffsetY = pos.baseR + 22;
       label.style.left = pos.x + 'px';
       label.style.top  = (pos.y + labelOffsetY) + 'px';
       const hitSize = (pos.baseR * 2) + 14;
