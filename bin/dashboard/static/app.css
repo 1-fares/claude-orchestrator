@@ -771,6 +771,64 @@ html, body {
 .mission-badge[data-kind="question"]     { color: var(--node-question); background: rgba(245,196,106,0.14); }
 .mission-badge[data-kind="stalled-api"]  { color: var(--node-stalled);  background: rgba(196,90,46,0.16); }
 
+/* M2 mission strip taxonomy: status-line kinds + 4-bucket counts pill. */
+.mission-status[data-kind="blocked-operator"] {
+  color: var(--node-question);
+  font-weight: var(--fw-bold);
+}
+.mission-status[data-kind="team-idle-deferred"] {
+  color: var(--text);
+  font-weight: var(--fw-bold);
+}
+.mission-status[data-kind="in-progress"] {
+  color: var(--ink-secondary);
+}
+.mission-status[data-kind="idle"] {
+  color: var(--ink-tertiary);
+  font-size: var(--type-medium);
+}
+
+.mission-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 12px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-sans);
+  font-size: var(--type-medium);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid transparent;
+}
+.mission-count[data-empty="true"] { opacity: 0.45; }
+.mission-count .count-num   { font-size: var(--type-primary); }
+.mission-count .count-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  font-weight: var(--fw-bold);
+}
+.mission-count[data-kind="done"] {
+  color: var(--edge-done);
+  background: color-mix(in srgb, var(--edge-done) 14%, transparent);
+  border-color: color-mix(in srgb, var(--edge-done) 32%, transparent);
+}
+.mission-count[data-kind="in-progress"] {
+  color: var(--node-active);
+  background: color-mix(in srgb, var(--node-active) 14%, transparent);
+  border-color: color-mix(in srgb, var(--node-active) 32%, transparent);
+}
+.mission-count[data-kind="deferred"] {
+  color: var(--ink-secondary);
+  background: color-mix(in srgb, var(--ink-secondary) 14%, transparent);
+  border-color: color-mix(in srgb, var(--ink-secondary) 32%, transparent);
+}
+.mission-count[data-kind="blocked"] {
+  color: var(--alert);
+  background: color-mix(in srgb, var(--alert) 14%, transparent);
+  border-color: color-mix(in srgb, var(--alert) 32%, transparent);
+}
+
 /* ============================================================ Theme switcher */
 
 .theme-switcher {
