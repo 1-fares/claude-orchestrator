@@ -42,6 +42,7 @@ const ORBIT_PERIOD_MS     = 2400;     // delegating-orbit revolution (design/u24
 const ORBIT_GAP_PX        = 9;        // distance from disc edge to orbit ring
 const ORBIT_DOT_R_PX      = 3.5;      // 7 px diameter
 const ORBIT_PHASE_STEP_MS = 370;      // (role-index * 0.37 s) % period; desyncs N orbits
+const ORBIT_FADE_MS       = 200;      // u32-f1: enter/exit opacity tween (spec §1)
 
 // Image cache: url → HTMLImageElement. A theme change invalidates entries
 // via clearImageCache() so the next render fetches the new-theme assets.
@@ -356,6 +357,7 @@ export class GraphView {
       else delete btn.dataset.selected;
 
       // Spawn runtime entry for new nodes; preserve phase if already there.
+      const isDeleg = act === 'delegating';
       if (!this.nodeRuntime.has(r.name)) {
         this.nodeRuntime.set(r.name, {
           phase0: Math.random() * Math.PI * 2,
@@ -363,9 +365,27 @@ export class GraphView {
           flashScale: 1.0,
           haloUntil: 0,
           lastSeenActive: r.state === 'active' ? now : 0,
+          // u32-f1 orbit fade: track the most recent delegating ↔ not-deleg
+          // flip so _drawNodes can interpolate alpha across ORBIT_FADE_MS.
+          // A node that joins already-delegating skips the tween (its first
+          // frame snaps to target so we don't fake a fade for state we never
+          // observed entering).
+          orbitTarget:  isDeleg ? 1.0 : 0.0,
+          orbitFromAlpha: isDeleg ? 1.0 : 0.0,
+          orbitChangeAt: -ORBIT_FADE_MS,
         });
-      } else if (r.state === 'active') {
-        this.nodeRuntime.get(r.name).lastSeenActive = now;
+      } else {
+        const rt = this.nodeRuntime.get(r.name);
+        if (r.state === 'active') rt.lastSeenActive = now;
+        const target = isDeleg ? 1.0 : 0.0;
+        if (target !== rt.orbitTarget) {
+          // Use the in-flight alpha at the moment of the flip as the new
+          // tween's start point. This keeps a mid-fade-out → fade-in (or vice
+          // versa) continuous instead of snapping to the other endpoint.
+          rt.orbitFromAlpha = this._currentOrbitAlpha(rt, now);
+          rt.orbitTarget = target;
+          rt.orbitChangeAt = now;
+        }
       }
     }
 
@@ -461,6 +481,21 @@ export class GraphView {
     const rt = this.nodeRuntime.get(name);
     if (!rt) return;
     rt.haloUntil = Math.max(rt.haloUntil, now + TOKEN_DUR_MAX_MS + HALO_LINGER_MS);
+  }
+
+  // u32-f1: resolve the current orbit alpha for a role. Linear interpolation
+  // from `orbitFromAlpha` (the value at the moment of the last flip) toward
+  // `orbitTarget` (1.0 or 0.0) across ORBIT_FADE_MS. Reduced-motion path
+  // snaps without tween. A missing runtime entry (defensive default in
+  // _drawNodes) reads as 0 so we never draw a ghost orbit.
+  _currentOrbitAlpha(rt, now) {
+    if (!rt || rt.orbitTarget == null) return 0;
+    if (this.reducedMotion) return rt.orbitTarget;
+    const dt = now - (rt.orbitChangeAt || 0);
+    if (dt >= ORBIT_FADE_MS) return rt.orbitTarget;
+    const k = Math.max(0, Math.min(1, dt / ORBIT_FADE_MS));
+    const from = (rt.orbitFromAlpha == null) ? 0 : rt.orbitFromAlpha;
+    return from + (rt.orbitTarget - from) * k;
   }
 
   _dirKey(a, b) { return `${a}->${b}`; }
@@ -703,7 +738,13 @@ export class GraphView {
       //     --state-active-color (or --node-active) / --surface-2 /
       //     --token-ink — no hardcoded hex.
       const activity = activityFor(r);
-      if (activity === 'delegating') {
+      // u32-f1: orbit visibility tweens over ORBIT_FADE_MS on every
+      // delegating ↔ not-delegating flip; outside the tween window the alpha
+      // sits at its target (1.0 while delegating, 0.0 otherwise). When both
+      // alpha and target are zero, skip the draw entirely so a non-delegating
+      // node costs nothing extra.
+      const orbitAlpha = this._currentOrbitAlpha(rt, now);
+      if (orbitAlpha > 0.001) {
         const orbitR = R + ORBIT_GAP_PX;
         const roleIdx = this.roster.indexOf(r);
         // Phase: role-index offset desyncs N concurrent orbits so the canvas
@@ -725,10 +766,10 @@ export class GraphView {
         const inkCol = cssVar('--token-ink') || '#1A1730';
         ctx.beginPath();
         ctx.arc(dx, dy, ORBIT_DOT_R_PX, 0, 2 * Math.PI);
-        ctx.fillStyle = withAlpha(activeCol, 0.85);
+        ctx.fillStyle = withAlpha(activeCol, 0.85 * orbitAlpha);
         ctx.fill();
         ctx.lineWidth = 1;
-        ctx.strokeStyle = withAlpha(inkCol, 0.55);
+        ctx.strokeStyle = withAlpha(inkCol, 0.55 * orbitAlpha);
         ctx.stroke();
       }
       const pillLabel = (activity === 'delegating') ? subagentBadge(r) : null;
