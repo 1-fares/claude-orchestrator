@@ -1,9 +1,10 @@
 /* paper-puppet-stage — B11 theme tokens */
 /* chrome rework (u12c): #2A1E14 chrome, text contrast 11.5:1 */
+/* U1 chrome lightening (round 3 phase C): #352618 chrome, AAA */
 :root[data-theme="paper-puppet-stage"] {
-  --bg:                #2A1E14;
-  --surface:           #3A2A1E;
-  --surface-2:         #4A3624;
+  --bg:                #352618;
+  --surface:           #4A3624;
+  --surface-2:         #5A4430;
   --text:              #E8D8B5;
   --alert:             #B83A2E;
   --node-active:       #E89A3C;
@@ -21,5 +22,5 @@
   --edge-priority:     #A24E2E;
   --edge-default:      #3A3C55;
   --selection-cue:     #E8D8B5;
-  --token-ink:         #2A1E14;
+  --token-ink:         #352618;
 }

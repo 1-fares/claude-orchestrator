@@ -1,9 +1,10 @@
 /* warm-hive — B11 theme tokens */
 /* chrome rework (u12c): #14110A chrome, text contrast 16.3:1 */
+/* U1 chrome lightening (round 3 phase C): #221C10 chrome, AAA */
 :root[data-theme="warm-hive"] {
-  --bg:                #14110A;
-  --surface:           #1F1A12;
-  --surface-2:         #2E2618;
+  --bg:                #221C10;
+  --surface:           #2E2618;
+  --surface-2:         #3D3322;
   --text:              #FBEDD0;
   --alert:             #B85240;
   --node-active:       #E8B14A;
@@ -21,5 +22,5 @@
   --edge-priority:     #E8B14A;
   --edge-default:      #4A3A22;
   --selection-cue:     #FBEDD0;
-  --token-ink:         #14110A;
+  --token-ink:         #221C10;
 }

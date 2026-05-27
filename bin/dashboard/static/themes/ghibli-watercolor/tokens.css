@@ -1,9 +1,10 @@
 /* ghibli-watercolor — B11 theme tokens */
 /* chrome rework (u12c): #F5EFE0 chrome, text contrast 12.6:1 */
+/* U1 chrome retune (round 3 phase C): warmer washi-paper cream, AAA */
 :root[data-theme="ghibli-watercolor"] {
-  --bg:                #F5EFE0;
-  --surface:           #E8E0CE;
-  --surface-2:         #DCD2BA;
+  --bg:                #F7F0DD;
+  --surface:           #ECE2C8;
+  --surface-2:         #E0D4B4;
   --text:              #1F2D1F;
   --alert:             #B83A2E;
   --node-active:       #E0A040;

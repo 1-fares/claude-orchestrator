@@ -1,9 +1,10 @@
 /* owl-grove — B11 theme tokens */
 /* chrome rework (u12c): #1A2B3A chrome, text contrast 10.8:1 */
+/* U1 chrome lightening (round 3 phase C): #27384A chrome, AAA */
 :root[data-theme="owl-grove"] {
-  --bg:                #1A2B3A;
-  --surface:           #243648;
-  --surface-2:         #2E4258;
+  --bg:                #27384A;
+  --surface:           #33485A;
+  --surface-2:         #3E536B;
   --text:              #F0DCB4;
   --alert:             #B83A2E;
   --node-active:       #E89C2B;
@@ -21,5 +22,5 @@
   --edge-priority:     #B83A2E;
   --edge-default:      #4A4E5C;
   --selection-cue:     #F0DCB4;
-  --token-ink:         #1A2B3A;
+  --token-ink:         #27384A;
 }
