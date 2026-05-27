@@ -302,68 +302,94 @@ function renderFeedError(reason) {
 // ---------------------------------------------------------------- mission strip
 
 function renderMissionStrip(snap) {
+  // M2: server (SCHEMA 5) now emits `unit_counts` (6 buckets + total),
+  // `goal_what`, and `team_idle`. The mission strip reads those three fields
+  // directly; the old client-side derivation from snap.units.list +
+  // snap.units.counts stays as a graceful fallback so an older server still
+  // renders something coherent (the legacy "33/47 done" line shows up there).
   const goalEl   = ui.missionGoal;
   const statusEl = ui.missionStatus;
   const badgesEl = ui.missionBadges;
   if (!goalEl || !statusEl || !badgesEl) return;
-  // Derive a digest client-side from /state.json (master spec section 6
-  // says either parser or endpoint; this is the parser path).
-  const units = snap?.units || {};
-  const counts = units.counts || {};
-  const list   = units.list || [];
-  const unitTotal = list.length || Object.values(counts).reduce((a, b) => a + (b || 0), 0);
-  const unitDone  = counts.done || 0;
-  const unitInProgress = list.filter(u => u.status === 'in-progress')
-    .map(u => u.id);
-  const blockerCount = counts.blocked || 0;
-  const stalledApiCount = (snap?.roster || [])
-    .filter(r => r.state === 'stalled-api').length;
-  const questionCount = (snap?.roster || [])
-    .reduce((acc, r) => acc + (r.open_question_ids?.length || 0), 0);
 
-  // Goal: pulled from the run dir if /state.json carries it; in the
-  // round-2 server it lives in state.md but is not surfaced in
-  // /state.json. Until u14 exposes a digest, show a graceful default
-  // assembled from snap.run.run_id + roster_count.
-  const goalText =
-    (snap?.goal_what || snap?.run?.goal_what) ||
-    `Active swarm · ${snap?.run?.roster_count ?? 0} roles`;
+  const uc = snap?.unit_counts || null;
+  const legacyCounts = snap?.units?.counts || {};
+  const legacyList   = snap?.units?.list   || [];
+  const total = (uc?.total != null) ? uc.total
+              : (legacyList.length || Object.values(legacyCounts).reduce((a, b) => a + (b || 0), 0));
+  const done        = (uc?.done        != null) ? uc.done        : (legacyCounts.done || 0);
+  const inProgress  = (uc?.in_progress != null) ? uc.in_progress
+                    : legacyList.filter(u => u.status === 'in-progress').length;
+  const deferred    = (uc?.deferred    != null) ? uc.deferred    : (legacyCounts.deferred || 0);
+  const blkRole     = (uc?.blocked_role     != null) ? uc.blocked_role     : (legacyCounts.blocked || 0);
+  const blkOperator = (uc?.blocked_operator != null) ? uc.blocked_operator
+                    : (snap?.roster || []).reduce((acc, r) => acc + (r.open_question_ids?.length || 0), 0);
+  const blkWatchdog = (uc?.blocked_watchdog != null) ? uc.blocked_watchdog
+                    : (snap?.roster || []).filter(r => r.state === 'stalled-api').length;
+  const blockedAll  = blkRole + blkOperator + blkWatchdog;
+  const teamIdle    = (snap?.team_idle != null)
+    ? !!snap.team_idle
+    : (inProgress === 0 && blkOperator === 0);
+
+  // Goal: prefer the new `goal_what` field; fall back to the legacy nested
+  // location or a synthetic placeholder.
+  const goalText = snap?.goal_what
+    || snap?.run?.goal_what
+    || `Active swarm · ${snap?.run?.roster_count ?? 0} roles`;
   goalEl.textContent = goalText;
+  goalEl.title = goalText;        // hover-to-expand for truncated values
 
-  const inProgressLine = unitInProgress[0]
-    ? `${unitInProgress[0]} in progress, ${unitDone}/${unitTotal} units done`
-    : (unitDone === unitTotal && unitTotal > 0
-        ? `${unitDone}/${unitTotal} units done`
-        : `${unitDone}/${unitTotal} units done, ${unitInProgress.length} in progress`);
-  statusEl.textContent = blockerCount
-    ? `${inProgressLine} — ${blockerCount} blocker${blockerCount > 1 ? 's' : ''}`
-    : `${inProgressLine}, no blockers`;
+  // Status line, priority order:
+  //   1. team_idle → "Team idle — N deferred for round 3" (large, neutral)
+  //   2. blocked_operator > 0 → "N open questions for you" (warm yellow)
+  //   3. in_progress > 0 → "N units in flight" (neutral)
+  //   4. else → "Team idle" (small)
+  let statusText = '';
+  let statusKind = 'idle';
+  if (teamIdle && deferred > 0) {
+    statusText = `Team idle — ${deferred} deferred for round 3`;
+    statusKind = 'team-idle-deferred';
+  } else if (blkOperator > 0) {
+    statusText = `${blkOperator} open question${blkOperator > 1 ? 's' : ''} for you`;
+    statusKind = 'blocked-operator';
+  } else if (inProgress > 0) {
+    statusText = `${inProgress} unit${inProgress > 1 ? 's' : ''} in flight`;
+    statusKind = 'in-progress';
+  } else {
+    statusText = 'Team idle';
+    statusKind = 'idle';
+  }
+  statusEl.textContent = statusText;
+  statusEl.title = statusText;
+  statusEl.dataset.kind = statusKind;
 
-  const badges = [];
-  if (blockerCount > 0) {
-    badges.push(mkBadge('blocker', '⚠', blockerCount));
-  }
-  if (questionCount > 0) {
-    badges.push(mkBadge('question', '?', questionCount));
-  }
-  if (stalledApiCount > 0) {
-    badges.push(mkBadge('stalled-api', '⟳', stalledApiCount));
-  }
-  badgesEl.replaceChildren(...badges);
+  // 4-bucket counts pill (done / in_progress / deferred / blocked). Hover
+  // breakdown lives in the title attribute on each segment so the operator
+  // can see the underlying split (role / operator / watchdog) without
+  // mousing into a sub-menu.
+  badgesEl.replaceChildren(
+    mkCountSeg('done',        done,        `${done} done`),
+    mkCountSeg('in-progress', inProgress,  `${inProgress} in progress`),
+    mkCountSeg('deferred',    deferred,    `${deferred} deferred`),
+    mkCountSeg('blocked',     blockedAll,
+               `${blockedAll} blocked — role ${blkRole} · operator ${blkOperator} · watchdog ${blkWatchdog}`),
+  );
 
   // Show the strip only when there's any data to display.
-  ui.missionStrip.dataset.empty = (unitTotal === 0 && !snap?.run?.roster_count)
+  ui.missionStrip.dataset.empty = (total === 0 && !snap?.run?.roster_count)
     ? 'true' : 'false';
 }
 
-function mkBadge(kind, glyph, count) {
-  const chip = mkEl('span', { cls: 'mission-badge', text: '' });
-  chip.dataset.kind = kind;
-  chip.append(
-    mkEl('span', { cls: 'badge-glyph', text: glyph }),
-    mkEl('span', { cls: 'badge-count', text: String(count) }),
+function mkCountSeg(kind, count, hover) {
+  const seg = mkEl('span', { cls: 'mission-count' });
+  seg.dataset.kind = kind;
+  if (count === 0) seg.dataset.empty = 'true';
+  seg.title = hover;
+  seg.append(
+    mkEl('span', { cls: 'count-num',   text: String(count) }),
+    mkEl('span', { cls: 'count-label', text: kind === 'in-progress' ? 'in flight' : kind }),
   );
-  return chip;
+  return seg;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -416,7 +442,7 @@ async function poll() {
     const resp = await fetch('/state.json', { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const snap = await resp.json();
-    if (snap.schema_version && snap.schema_version > 4) {
+    if (snap.schema_version && snap.schema_version > 5) {
       console.warn('Unknown schema_version', snap.schema_version,
                    '— attempting to render anyway.');
     }
