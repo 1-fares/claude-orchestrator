@@ -73,7 +73,13 @@ if [ "$mode" = foreground ]; then
   echo "tmux session '$TEAM_SESSION' (watch with: bin/team-status.sh). Exit with /exit."
   echo
   cd "$repo"
-  exec claude $flags --model opus "$(cat "$pf")"
+  # M1 (curated-role sanity): record the orchestrator's own active entry BEFORE
+  # exec'ing claude, so the post-spawn sanity gates and the dashboard's roster
+  # view see the orchestrator like any other role. exec replaces the shell so
+  # the current pid ($$) becomes claude's pid. tmux_window column is '-' for
+  # the foreground variant (no team-tmux pane).
+  printf '%s\t%s\torchestrator\n' "$$" "-" >> "$TEAM_DIR/active"
+  exec ${CLAUDE_BIN:-claude} $flags --model opus "$(cat "$pf")"
 fi
 
 # Default (tmux) mode: orchestrator as window 0 of the team session; roles join
@@ -82,7 +88,35 @@ command -v tmux >/dev/null || { echo "tmux not installed (use --foreground)" >&2
 launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT")"
 [ -n "${TEAM_RUN_ID:-}" ] && launch="$launch TEAM_RUN_ID=$(printf %q "$TEAM_RUN_ID")"
 launch="$launch && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
-tmux new-session -d -s "$TEAM_SESSION" -n orchestrator "bash -lc $(printf %q "$launch")"
+# Detach the tmux server from this shell's systemd user-session scope. May 2026
+# incident: every transient `tmux-spawn-*.scope` got cleaned up simultaneously
+# by the user manager, taking the whole team down. setsid puts the new tmux
+# server in a new session/process group with no controlling terminal, so a
+# session-cleanup event in this shell can't sweep it. systemd-run --user would
+# work too but requires DBus inside WSL and is brittler.
+#
+# Important: setsid invokes the binary directly, so it skips the `tmux()`
+# shell-function wrapper defined in team-env.sh that adds `-L $TEAM_TMUX`. We
+# must pass `-L` here explicitly via the real tmux binary, or the new session
+# lands on the default socket. `TEAM_TMUX_BIN` is exported by team-env.sh.
+if command -v setsid >/dev/null 2>&1; then
+  setsid "$TEAM_TMUX_BIN" -L "$TEAM_TMUX" new-session -d -s "$TEAM_SESSION" \
+    -n orchestrator "bash -lc $(printf %q "$launch")" </dev/null >/dev/null 2>&1
+else
+  tmux new-session -d -s "$TEAM_SESSION" -n orchestrator "bash -lc $(printf %q "$launch")"
+fi
+# M1 (curated-role sanity): record the orchestrator's pane in $TEAM_DIR/active
+# so the post-spawn sanity gates and the dashboard's roster view see it the
+# same way as any worker role. setsid swallowed -P -F output above, so we
+# query tmux directly once the session is up.
+o_info="$("$TEAM_TMUX_BIN" -L "$TEAM_TMUX" display-message \
+            -t "$TEAM_SESSION:orchestrator" -p '#{pane_pid} #{window_id}' 2>/dev/null \
+          || true)"
+if [ -n "$o_info" ]; then
+  o_pid="${o_info%% *}"
+  o_wid="${o_info##* }"
+  printf '%s\t%s\torchestrator\n' "$o_pid" "$o_wid" >> "$TEAM_DIR/active"
+fi
 echo "Orchestrator + roles will share tmux session '$TEAM_SESSION' (bus port $TEAM_PORT)."
 echo "Attach now and talk to the orchestrator (Ctrl-b <number> switches to roles):"
 echo "  bin/attach.sh"
