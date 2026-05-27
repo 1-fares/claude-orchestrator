@@ -50,6 +50,16 @@ function authorTintVar(bucket) {
   }
 }
 
+// u32-f3: orchestrator chips share the --node-orchestrator hue with the
+// communicator but must read as dimmer (design/u29-chat-visual.md §2,
+// "0.65 alpha"). Resolve the bucket's tint and apply the per-bucket alpha
+// in one step so every caller (bar, chip, toast border) reads the same.
+function authorTintColor(bucket) {
+  const raw = cssVar(authorTintVar(bucket)) || cssVar('--ink-tertiary');
+  if (bucket === 'orchestrator') return withAlpha(raw, 0.65);
+  return raw;
+}
+
 function prefixTintVar(p) {
   if (!p) return null;
   return `--prefix-${p}-color`;
@@ -457,8 +467,7 @@ export class ChatPanel {
 
   _renderEntry(e) {
     const bucket = authorBucket(e.author_type);
-    const tintVar = authorTintVar(bucket);
-    const tint = cssVar(tintVar) || cssVar('--ink-tertiary');
+    const tint = authorTintColor(bucket);
     const row = mkEl('div', {
       cls: 'chat-row',
       data: {
@@ -581,7 +590,7 @@ export class ChatPanel {
     const stack = this.dom.toastStack;
     if (!stack) return;
     const bucket = authorBucket(e.author_type);
-    const tint = cssVar(authorTintVar(bucket)) || cssVar('--accent');
+    const tint = authorTintColor(bucket);
     const isQ = e.prefix && PUSH_PREFIXES.has(e.prefix);
     const border = isQ
       ? (cssVar(prefixTintVar(e.prefix)) || tint)
