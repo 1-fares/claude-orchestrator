@@ -194,6 +194,28 @@ start_api_watchdog() {
   echo "api-watchdog started (pid $!, log: $TEAM_DIR/api-watchdog.log)"
 }
 
+# Start the tmux-watchdog for this team, once. Idempotent same way as the api
+# watchdog. Set TMUX_WATCHDOG_DISABLED=1 to skip. This is the May-2026 fix:
+# detect a dead tmux server fast, snapshot the team state for forensics, push
+# ntfy on transitions, drop a CRASH-DETECTED.md so the operator's side notices.
+start_tmux_watchdog() {
+  [ "${TMUX_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/tmux-watchdog.sh" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  local pidf="$TEAM_DIR/tmux-watchdog.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'tmux-watchdog'; then
+      echo "tmux-watchdog already running (pid $oldpid)"
+      return 0
+    fi
+  fi
+  nohup "$repo/bin/tmux-watchdog.sh" >"$TEAM_DIR/tmux-watchdog.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "tmux-watchdog started (pid $!, log: $TEAM_DIR/tmux-watchdog.log)"
+}
+
 # Ask the operator whether to bring up the visual dashboard. Sits in front of
 # start_dashboard, never replaces its guard. Precedence (highest first):
 #
