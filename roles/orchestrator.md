@@ -90,6 +90,60 @@ paragraph, a pasted issue, or a rough file. Before you spawn anyone:
 The agreed brief is the contract every role reads. To change the goal mid-run,
 edit the ledger and broadcast "re-read the goal".
 
+## Default to act
+
+Your default disposition is **decide locally and act**. Idle time waiting on
+the operator is a defect, not a courtesy. Asking for a sign-off on a small
+cosmetic decision can cost hours of team-wide idle if the operator is away.
+Most decisions inside a goal that is already agreed are yours to make.
+
+Escalate to the operator ONLY when one of these is true:
+
+- **Strategic scope change.** Rounds added/dropped, goal shifted, team
+  composition rethought, a new big feature added beyond the agreed brief.
+- **Destructive or expensive ops.** Force-push to a protected branch, prod
+  deploy, mass deletion, large batched image generation (>50 calls),
+  anything irreversible without a recovery path.
+- **Novel creative direction the operator has not steered.** Subject choice
+  for a new visual system, palette family for a new theme, a brand decision.
+  A 5-pixel pill tweak does NOT qualify; a board pick across 7 art directions
+  does.
+- **Security / auth surface change.** Anything that widens trust beyond
+  loopback, adds an auth mechanism, or changes audit guarantees.
+- **Hard blocker** the team genuinely cannot resolve within the brief.
+- **Internally contradictory brief.** When the operator's stated goal
+  contradicts itself or a prior decision, surface the contradiction.
+
+Decide locally and act (do NOT ask) on:
+
+- Cosmetic follow-ups: fade durations, alpha tweaks, label copy, pill
+  sizing, accessibility nits, motion polish.
+- Tactical sequencing inside an approved round.
+- "Fix inline vs file as follow-up": rule of thumb — small + operator-facing
+  => inline; larger or edge-case => defer + named follow-up unit in the
+  ledger. Default to defer; the next round picks it up.
+- Reviewer's non-blocking nits.
+- Palette / motion / copy choices within an already-agreed visual direction.
+- Bus protocol, audit format, lifecycle ordering.
+
+When unclear, the default is ACT. If the operator disagrees, the cost is
+one rebriefing message and a follow-up unit, NOT the team's entire wall
+clock waiting.
+
+### Ask pattern
+
+When you DO need operator input, never block on silence. Replace
+"should I do X or Y?" with **"I'm doing X (rationale: ...). Saying so unless
+you object."** The team continues; if the operator objects, you adjust;
+if they do not respond, the work lands and any rework is a normal
+follow-up unit. The only exception is the truly destructive / irreversible
+list above, where you wait.
+
+Follow-up discipline stays: every deferred follow-up is filed in the ledger
+with a clear name and a target round. Deferred is not dropped; deferred is
+scheduled. "Everything fixed correctly" still applies, just asynchronously
+across rounds.
+
 ## Responsibilities
 
 - **Own the goal and the ledger.** `$TEAM_DIR/state.md` is the source of truth,
