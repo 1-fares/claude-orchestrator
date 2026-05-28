@@ -33,9 +33,10 @@ file and goal are given by absolute path. The orchestrator (bus name
 - **The ledger is the source of truth.** Team state lives in `$TEAM_DIR/state.md`
   (`.team/state.md` in legacy single-team mode, `.team-<run-id>/state.md` per run,
   so concurrent runs in one clone never share a ledger): per-unit status, scope,
-  deps, plus a decision-log, not in any one session's context. The orchestrator
-  maintains it; append the why of your decisions. Likewise write briefs to
-  `$TEAM_DIR/tasks/<unit>.md` and all role artifacts under `$TEAM_DIR/`.
+  deps, a decision-log, and a `## roster` of add/retire events, not in any one
+  session's context. The orchestrator maintains it; append the why of your
+  decisions. Likewise write briefs to `$TEAM_DIR/tasks/<unit>.md` and all role
+  artifacts under `$TEAM_DIR/`.
 - **Handoffs are structured.** Work is assigned as a `tasks/<unit>.md` brief
   (from `tasks/_TEMPLATE.md`) whose `verify:`, `scope:`, `off-limits:` lines feed
   the gates.
@@ -88,6 +89,17 @@ file and goal are given by absolute path. The orchestrator (bus name
   `uv run <cmd>` to run anything (e.g. `uv run pytest`, `uv run python app.py`).
   Do not use bare `pip`, `python -m venv`, or a global interpreter. Verify
   commands run under `uv run` so dependencies resolve.
+- **Default to act on tactical decisions.** Idle time waiting on the
+  orchestrator or operator is a defect, not a courtesy. Inside an already-agreed
+  brief, decide locally and continue. Escalate as a `question:` only on
+  strategic scope change, destructive or irreversible ops, novel creative
+  direction not yet steered, security or auth surface change, a hard blocker, or
+  an internally contradictory brief. When unclear, the default is act; the
+  operator can rebrief and any rework is a normal follow-up unit, never the
+  team's wall clock. Full rationale and the ask pattern
+  (`"I'm doing X, rationale: ..., saying so unless you object"`) in
+  `docs/default-to-act.md`. Binds the orchestrator and the communicator most
+  strongly; working roles apply the same spirit toward the orchestrator.
 - **Pragmatic solutions over dead-ends.** When something fails or is blocked,
   do not stop at "cannot be done; the API / permissions / owner will not allow
   it." Diagnose the cause, then build or propose the path a competent human
@@ -110,7 +122,9 @@ file is the portable version of the same discipline.
 - `roles/<role>.md`: per-role prompt; reused across all goals.
 - `goals/<name>.md`: per-feature brief; the only thing that changes between runs.
 - `tasks/<unit>.md`: per-unit structured handoff (from `tasks/_TEMPLATE.md`).
-- `templates/state.md`: canonical format for the run ledger (`.team/state.md`).
+- `templates/state.md`: canonical format for the run ledger
+  (`$TEAM_DIR/state.md`, i.e. `.team-<run-id>/state.md` per run, or `.team/state.md`
+  in legacy single-team mode).
 - `bin/run.sh`: the one-command entry point. Starts the orchestrator and attaches;
   the orchestrator then asks for the working tree and goal **in the session**
   (visible, recorded, recoverable), not via shell prompts. Recovery-aware: offers
@@ -130,7 +144,7 @@ file is the portable version of the same discipline.
   double-spawn,
   reuse-before-spawn hint, decision-log + roster line, ntfy) or retire one role
   (graceful single-role teardown scoped to that role, refuses if it owns
-  in-flight units unless `--force` re-files them, archives to `retired/`). Both
+  in-progress units unless `--force` re-files them, archives to `retired/`). Both
   reuse the shared single-role spawn/teardown discipline in `bin/lib/` and the
   same hard safety scoping as `cleanup.sh`. Prefer a bus `pause:` over retire for
   a temporarily-idle role.
@@ -165,6 +179,23 @@ file is the portable version of the same discipline.
   rate-limited. Tier-3 awareness is pull-only: the orchestrator reads
   `$TEAM_DIR/health/` to decide. Patterns at `bin/api-watchdog.patterns`.
   Disable with `API_WATCHDOG_DISABLED=1`.
+- `bin/tmux-watchdog.sh`: detects the tmux server itself going away (systemd
+  scope cleanup, WSL2 suspend/resume, daemon-reload from other tooling) and
+  flips `$TEAM_DIR/health/tmux.json` to `state=crashed`, drops
+  `$TEAM_DIR/CRASH-DETECTED.md` with the recovery command, and pushes `ntfy`.
+  Also takes a forensic snapshot of every window every 60s into
+  `$TEAM_DIR/snapshots/`. Does NOT auto-restart the team; recovery still goes
+  through the operator. Auto-started by `launch-team.sh`. Disable with
+  `TMUX_WATCHDOG_DISABLED=1`. Background and recovery flow in
+  `docs/incident-2026-05-26-tmux-scope-cleanup.md`.
+- `bin/communicator.sh`: opens a Claude Code session in the `communicator` role,
+  the team's two-way operator liaison (spec at `roles/user-communicator.md`).
+  One bus identity per run, multiple front-ends share state under
+  `$TEAM_DIR/comm/`. Idempotent: a second invocation reattaches the existing
+  tmux window. `bin/dashboard.sh`: read-only HTTP viewer (force-graph + stats +
+  operator chat panel for the communicator) on `127.0.0.1`. Auto-started by
+  `launch-team.sh`; URL in `$TEAM_DIR/dashboard.url`. Disable with
+  `DASHBOARD_DISABLED=1`.
 - **Non-code substrate.** `roles/` ships generic non-code roles, structural
   pipeline references that codify lane discipline (`researcher`, `writer`,
   `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`, `doc-integrator`),
@@ -178,6 +209,7 @@ file is the portable version of the same discipline.
   `md-lint`, `office-wellformed`, `llm-judge`, `rubric-judge`, `cite-support`);
   a goal's `tasks/<unit>.md` `verify:` line wires one of these.
 
-This is a template, cloned once per project (see [README.md](./README.md)
-"Distribution"), not a shared home for every project's goals. Implementation is
-staged; see [STATUS.md](./STATUS.md) for what is built versus pending.
+This is a template, cloned once per project (see [README.md](./README.md) for
+the install and run flow), not a shared home for every project's goals.
+Implementation is staged; see [STATUS.md](./STATUS.md) for what is built versus
+pending.

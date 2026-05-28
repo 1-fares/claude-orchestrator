@@ -34,3 +34,7 @@ tasks-archive/
 # Personal infra tooling, hardcoded to a private deployment (resource names,
 # regions, alarm/metric names). Kept local, not shipped with the template.
 bin/preflight-cutover-observation.sh
+
+# Operator's working notes for resuming a paused run. Personal to one run id;
+# not part of the template.
+RESUME-HERE.md
