@@ -71,6 +71,17 @@ if [ -f "$wd_pidf" ]; then
   rm -f "$wd_pidf"
 fi
 
+# Kill the tmux watchdog (May-2026 addition).
+tw_pidf="$TEAM_DIR/tmux-watchdog.pid"
+if [ -f "$tw_pidf" ]; then
+  tw_pid="$(cat "$tw_pidf" 2>/dev/null || true)"
+  if [ -n "$tw_pid" ] && kill -0 "$tw_pid" 2>/dev/null; then
+    kill -TERM "$tw_pid" 2>/dev/null || true
+    echo "stopped tmux-watchdog (pid $tw_pid)"; killed=1
+  fi
+  rm -f "$tw_pidf"
+fi
+
 # Kill the dashboard server, if launch-team.sh started one for this run. The
 # server's serve_forever loop does not unwind on plain SIGTERM, so we escalate
 # to SIGKILL after a short grace window rather than leave a stray listener bound

@@ -134,6 +134,18 @@ if [ -f "$wd_pidf" ]; then
   fi
 fi
 
+# 3b'. tmux watchdog (May-2026 addition: detects dead tmux server).
+tw_pidf="$TEAM_DIR/tmux-watchdog.pid"
+if [ -f "$tw_pidf" ]; then
+  tw_pid="$(cat "$tw_pidf" 2>/dev/null || true)"
+  if [ -n "$tw_pid" ] && kill -0 "$tw_pid" 2>/dev/null; then
+    tag "kill tmux-watchdog (pid $tw_pid)"
+    [ "$DRY" = 0 ] && { kill -TERM "$tw_pid" 2>/dev/null || true; sleep 1; kill -KILL "$tw_pid" 2>/dev/null || true; rm -f "$tw_pidf"; }
+  else
+    [ "$DRY" = 0 ] && rm -f "$tw_pidf"
+  fi
+fi
+
 # 3c. Dashboard server (if launch-team.sh started one for this clone's team).
 db_pidf="$TEAM_DIR/dashboard.pid"
 if [ -f "$db_pidf" ]; then
