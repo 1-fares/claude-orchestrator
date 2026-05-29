@@ -173,11 +173,14 @@ file is the portable version of the same discipline.
   in one scan loop. (a) **API-stall:** a role idled at the prompt by a transient
   Anthropic rate-limit / network error, auto-sends `try again` with exponential
   backoff (default 30/60/120/300/600s, max 5 retries). (b) **Stuck (wedged):** a
-  role that is busy (spinner up) but whose pane has not changed for
-  `STUCK_THRESHOLD_SEC` (default 480s), it is hung on a tool call (classically a
-  chrome-devtools MCP call after the debug Chrome dies). An API-stall detector
-  alone cannot see this, a spinner reads as healthy, so a wedge silently stalls
-  the run. Recovery ladder: first an Escape + nudge to the role's own pane
+  role that is busy (spinner up) but shows no liveness for `STUCK_THRESHOLD_SEC`
+  (default 480s), it is hung on a tool call (classically a chrome-devtools MCP
+  call after the debug Chrome dies). Liveness = the pane content changed OR the
+  streaming token counter advanced; the token counter climbs during a long
+  legitimate think (so a think is not mistaken for a wedge) but freezes on a
+  hung call. The elapsed timer is ignored, it ticks even when wedged. An
+  API-stall detector alone cannot see this, a spinner reads as healthy, so a
+  wedge silently stalls the run. Recovery ladder: first an Escape + nudge to the role's own pane
   (gentle, autonomous, preserves context), then after `STUCK_MAX_NUDGES`
   (default 2) failed attempts it marks the role `stuck-giveup` and messages the
   orchestrator to retire+respawn it (or writes `PENDING.md` if the stuck role is
