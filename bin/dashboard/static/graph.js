@@ -567,6 +567,19 @@ export class GraphView {
     }
   }
 
+  // U8: per-role count of LIVE (unanswered) open questions addressed to that
+  // role. Sources the same openQuestions Map the U7 trail uses, so the badge
+  // count and the on-edge ? chips never disagree. ':fade' (just-answered)
+  // keys are excluded so the count drops the instant an answer lands.
+  _openQuestionCounts() {
+    const counts = new Map();
+    for (const [key, list] of this.openQuestions) {
+      if (key.endsWith(':fade')) continue;
+      for (const q of list) counts.set(q.to, (counts.get(q.to) || 0) + 1);
+    }
+    return counts;
+  }
+
   // ------------------------------------------------------------------ tokens
 
   // v2 (master spec section 6 "Message-token rhythm"): one token in flight
@@ -741,6 +754,7 @@ export class GraphView {
 
   _drawNodes(now) {
     const ctx = this.ctx;
+    const qCounts = this._openQuestionCounts();   // U8: per-role open-Q counts
     for (const r of this.roster) {
       const pos = this.layout.get(r.name);
       if (!pos) continue;
@@ -870,6 +884,34 @@ export class GraphView {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(badge, bx, by + 1);
+      }
+
+      // 6a) U8 open-question count badge (top-LEFT corner; mirror of the
+      //     state badge). Counts unanswered questions addressed TO this role
+      //     (openQuestions Map, addressee side). Question-colour disc +
+      //     --bg numeral, capped 9+, hidden at 0, static (no pulse) in every
+      //     motion mode — design/phase-e-design-confirm-addendum.md §1.
+      //     Convention: top-right = "what I am", top-left = "what's owed to
+      //     me". This is the filled-disc recipe (legible on every theme,
+      //     ghibli included), NOT the U7 thin-trail/edge-chip recipe.
+      const qCount = qCounts.get(r.name) || 0;
+      if (qCount > 0) {
+        const qx = -R * 0.78, qy = -R * 0.78;
+        ctx.fillStyle = cssVar('--state-question-color')
+                     || cssVar('--edge-question') || '#F5C46A';
+        ctx.beginPath();
+        ctx.arc(qx, qy, R * 0.32, 0, 2 * Math.PI);
+        ctx.fill();
+        const qLabel = qCount > 9 ? '9+' : String(qCount);
+        // Single digit at the state-badge size; shrink "9+" so two glyphs
+        // stay inside the disc without growing it (addendum: cap 9+, do not
+        // grow the disc).
+        const qFs = Math.round(R * (qLabel.length > 1 ? 0.34 : 0.42));
+        ctx.fillStyle = cssVar('--bg');
+        ctx.font = `700 ${qFs}px ${cssVar('--font-sans')}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(qLabel, qx, qy + 1);
       }
 
       // 6b) Delegating: one orbiting satellite disc + a top-right N pill
