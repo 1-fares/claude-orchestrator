@@ -110,8 +110,9 @@ export class ChatPanel {
     this.notifPref      = (window.localStorage?.getItem(NOTIF_OPT_IN_KEY)) || '';
 
     this.dom = {
-      btn:        el('chat-button'),
-      badge:      el('chat-unread-badge'),
+      btn:        el('chat-bubble'),          // u10: relocated to bottom-right
+      badge:      el('chat-bubble-badge'),
+      live:       el('chat-bubble-live'),     // u10: aria-live unread announcer
       panel:      el('chat-panel'),
       close:      el('chat-close'),
       transcript: el('chat-transcript'),
@@ -589,15 +590,23 @@ export class ChatPanel {
 
   _renderUnread() {
     const b = this.dom.badge;
-    if (!b) return;
-    if (this.unread <= 0) {
-      b.hidden = true;
-      b.textContent = '0';
-    } else {
-      b.hidden = false;
-      b.textContent = this.unread > 99 ? '99+' : String(this.unread);
+    if (b) {
+      if (this.unread <= 0) {
+        b.hidden = true;
+        b.textContent = '0';
+      } else {
+        b.hidden = false;
+        // u10: cap at "9+" to mirror the u29 §9 favicon-badge recipe so the
+        // bubble badge and favicon overlay read as the same signal.
+        b.textContent = this.unread > 9 ? '9+' : String(this.unread);
+      }
     }
     this.dom.btn.setAttribute('aria-label', `Open chat, ${this.unread} unread`);
+    // u10: announce the count change once via the aria-live sibling; the
+    // badge itself is aria-hidden so the number is not read twice.
+    if (this.dom.live) {
+      this.dom.live.textContent = `Chat — ${this.unread} unread`;
+    }
   }
 
   _showToast(e) {
