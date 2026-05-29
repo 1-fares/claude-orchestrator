@@ -773,6 +773,34 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+/* u9-per-role-chat-ui: "Message {role}" affordance in the role-feed panel
+   header. Opens the chat composer pre-addressed to the role. Tinted with the
+   communicator/orchestrator hue (--node-orchestrator) so it reads as the same
+   "talk to an agent" surface as the U10 chat bubble. */
+.panel-msg-role {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: 6px 14px;
+  background: color-mix(in srgb, var(--node-orchestrator) 16%, transparent);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--node-orchestrator) 44%, transparent);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--type-medium);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+.panel-msg-role:hover {
+  background: color-mix(in srgb, var(--node-orchestrator) 26%, transparent);
+}
+.panel-msg-role:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-ring-focus);
+}
+.panel-msg-role-glyph { font-size: 15px; line-height: 1; }
+
 #agent-panel-feed {
   position: relative;
   flex: 1;

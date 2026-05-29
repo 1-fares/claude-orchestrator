@@ -223,6 +223,26 @@ export class ChatPanel {
     });
   }
 
+  // u9-per-role-chat-ui: open the composer pre-addressed to one role. The
+  // prefill is a literal "@<name> " written into the textarea, NOT a direct
+  // addressed_to override — so submission routes through the same
+  // _parseAddressing path as a hand-typed @mention. "@orchestrator" maps to
+  // addressed_to=orchestrator; any other "@<name>" maps to role:<name>
+  // (incl. communicator -> role:communicator), per _parseAddressing. Does not
+  // send; focus lands in the composer with the cursor after the space.
+  openForRole(roleName) {
+    if (!roleName) return;
+    this.open_(this.dom.btn);
+    const input = this.dom.input;
+    input.value = `@${roleName} `;
+    this._autoresize();
+    queueMicrotask(() => {
+      input.focus();
+      const end = input.value.length;
+      try { input.setSelectionRange(end, end); } catch (_) {}
+    });
+  }
+
   close() {
     if (!this.open) return;
     this.open = false;
