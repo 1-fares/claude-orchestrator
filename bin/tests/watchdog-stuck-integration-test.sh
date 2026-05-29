@@ -44,6 +44,11 @@ $TM new-session -d -s "$TEAM_SESSION" -n stuckrole \
 # A genuinely-working role: pane content changes every second.
 $TM new-window -t "$TEAM_SESSION" -n busyrole \
   "bash -c 'i=0; while true; do printf \"● step %d done, continuing… esc to interrupt\n\" \$i; i=\$((i+1)); sleep 1; done'"
+# A long-THINK role: body is STATIC but the token counter climbs each tick.
+# Must read as alive via the token readout, never flagged stuck (the
+# false-positive case a body-only fingerprint would wrongly trip).
+$TM new-window -t "$TEAM_SESSION" -n thinkrole \
+  "bash -c 'stty -echo 2>/dev/null; i=340; while true; do clear; printf \"● analyzing screenshot for the alert-hue check…\n· Thinking… (15m 0s · ↓ %d.0k tokens · esc to interrupt)\n────\n❯ \n\" \$i; i=\$((i+1)); sleep 1; done'"
 sleep 1
 
 echo "step 1: first scan (content just observed; not yet stuck)"
@@ -71,6 +76,13 @@ grep -q "STUCK-GIVEUP" "$TEAM_DIR/audit/api-watchdog/stuckrole.log" 2>/dev/null 
 echo "control: a genuinely-progressing busy role is NEVER flagged stuck"
 sb="$(state_of busyrole)"
 [ "$sb" = "active" ] && ok "busyrole stays active (pane changing each tick)" || bad "busyrole wrongly '$sb'"
+
+echo "control: a long THINK (static body, climbing tokens) is NEVER flagged stuck"
+# It has been frozen-bodied well past the threshold by now; token liveness must
+# keep it active.
+scan
+st="$(state_of thinkrole)"
+[ "$st" = "active" ] && ok "thinkrole stays active (token readout advancing)" || bad "thinkrole wrongly '$st' (token-liveness regression)"
 
 echo
 if [ "$fail" = 0 ]; then echo "PASS: stuck detection + recovery ladder"; exit 0
