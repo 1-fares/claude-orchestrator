@@ -76,6 +76,15 @@
   --question-trail-alpha:  0.25;
   --question-trail-dash:   6 4;
   --question-chip-alpha:   0.6;
+  /* U7-f2 question hue + silhouette (design §4.c). Colours fall back to
+     the theme's question edge; stroke tokens are no-ops on dark themes
+     (transparent / 0 width). ghibli-watercolor overrides all six. */
+  --question-trail-color:        var(--edge-question);
+  --question-chip-color:         var(--edge-question);
+  --question-chip-stroke:        transparent;
+  --question-chip-stroke-width:  0;
+  --question-trail-stroke:       transparent;
+  --question-trail-stroke-width: 0;
   --popover-bg:            var(--surface-2);
   --popover-text:          var(--text);
   --shadow-popover:        0 6px 18px rgba(0,0,0,0.45);

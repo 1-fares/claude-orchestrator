@@ -1093,9 +1093,25 @@ export class GraphView {
                         .filter((n) => n > 0);
     if (!dash.length) dash.push(6, 4);
     const baseAlpha = parseFloat(cssVar('--question-trail-alpha')) || 0.25;
-    const tint = cssVar('--edge-question') || '#F5C46A';
     const chipAlpha = parseFloat(cssVar('--question-chip-alpha')) || 0.6;
     const ink = cssVar('--token-ink') || '#1A1730';
+    // U7-f2 (design/u7-token-info-layer.md §4.c): the trail and chip read
+    // dedicated colour tokens, falling back to --edge-question on the dark
+    // themes that don't override them, plus an optional silhouette stroke.
+    // The stroke tokens are transparent / 0-width on the 8 dark themes, so
+    // the silhouette pass is skipped there and the trail renders exactly as
+    // before; ghibli-watercolor enables a 1px --text outline for WCAG-AA.
+    // asHex guards against browsers that leave var() unresolved on a custom
+    // property (an unresolved "var(--x)" string is invalid as a canvas style).
+    const edgeQ = cssVar('--edge-question') || '#F5C46A';
+    const textInk = cssVar('--text') || '#EDEAD8';
+    const asHex = (v, fb) => (v && v.charAt(0) === '#') ? v : fb;
+    const trailColor   = asHex(cssVar('--question-trail-color'), edgeQ);
+    const chipColor    = asHex(cssVar('--question-chip-color'), edgeQ);
+    const trailStroke  = asHex(cssVar('--question-trail-stroke'), textInk);
+    const trailStrokeW = parseFloat(cssVar('--question-trail-stroke-width')) || 0;
+    const chipStroke   = asHex(cssVar('--question-chip-stroke'), textInk);
+    const chipStrokeW  = parseFloat(cssVar('--question-chip-stroke-width')) || 0;
 
     const drawOne = (q, alphaScale, pair, idxInPair, count) => {
       const A = this.layout.get(q.from);
@@ -1110,8 +1126,24 @@ export class GraphView {
       } else {
         ctx.setLineDash(dash);
       }
-      ctx.strokeStyle = withAlpha(tint, baseAlpha * alphaScale);
-      ctx.lineWidth = 1.5;
+      // Silhouette pass underneath (ghibli only; trailStrokeW is 0 on the
+      // dark themes, so this block is skipped and they render unchanged).
+      // Drawn opaque (alphaScale only, no baseAlpha) even though the fill
+      // keeps the 0.55 trail alpha — the silhouette is the load-bearing
+      // WCAG-AA contrast layer per design §4.c.
+      if (trailStrokeW > 0) {
+        ctx.strokeStyle = withAlpha(trailStroke, alphaScale);
+        ctx.lineWidth = trailStrokeW;             // 1px --text outline
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+      }
+      // Fill pass, centred on top: a thin ochre core (half the silhouette
+      // width, i.e. 0.5px) when a silhouette is present, otherwise the
+      // original 1.5px solid trail used by the 8 dark themes.
+      ctx.strokeStyle = withAlpha(trailColor, baseAlpha * alphaScale);
+      ctx.lineWidth = trailStrokeW > 0 ? trailStrokeW * 0.5 : 1.5;
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       ctx.lineTo(bx, by);
@@ -1128,8 +1160,14 @@ export class GraphView {
         ctx.save();
         ctx.beginPath();
         ctx.arc(cx, cy, chipR, 0, 2 * Math.PI);
-        ctx.fillStyle = withAlpha(tint, chipAlpha * alphaScale);
+        ctx.fillStyle = withAlpha(chipColor, chipAlpha * alphaScale);
         ctx.fill();
+        // Chip border silhouette (ghibli only; chipStrokeW is 0 on dark).
+        if (chipStrokeW > 0) {
+          ctx.lineWidth = chipStrokeW;
+          ctx.strokeStyle = withAlpha(chipStroke, alphaScale);
+          ctx.stroke();
+        }
         ctx.fillStyle = withAlpha(ink, alphaScale);
         ctx.font = `800 12px ${cssVar('--font-sans')}`;
         ctx.textAlign = 'center';

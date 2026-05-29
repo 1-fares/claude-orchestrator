@@ -30,4 +30,13 @@
   --token-halo-alpha:     0.7;
   --shadow-popover:       0 6px 18px rgba(31,45,31,0.30);
   --focus-ring:           #1F2D1F;
+  /* U7-f2 (design §4.c): the alpha bump alone cannot clear WCAG-AA on cream
+     (yellow-on-cream ~1.42:1). Swap the question hue to deep ochre and add a
+     1px --text silhouette stroke as the load-bearing contrast layer. */
+  --question-trail-color:        #B07A18;  /* ~3.27:1 vs --bg #F7F0DD */
+  --question-chip-color:         #B07A18;
+  --question-chip-stroke:        var(--text);
+  --question-chip-stroke-width:  1px;
+  --question-trail-stroke:       var(--text);
+  --question-trail-stroke-width: 1px;
 }
