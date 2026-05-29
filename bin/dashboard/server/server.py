@@ -92,6 +92,16 @@ SCHEMA_VERSION history:
        reliance on the flat `units.counts` map for the strip's "stuck or
        idle" decision. The flat counts stay in /state.json unchanged for
        backward compat.
+
+  Additive field, no version bump (u7-f1): each /state.json `messages` entry
+  now carries `body_length` (int char count of the body), read by the
+  frontend token halo (graph.js haloRadiusFor / tk.bodyLen via m.body_length)
+  so the halo scales with message length. Deliberately NOT a SCHEMA_VERSION
+  bump: the field is gracefully optional (the frontend falls back to the
+  medium halo when absent), and a server-only bump past 5 would trip the
+  frontend's `schema_version > 5` console.warn guard (app.js), which is out of
+  this server-only unit's scope. Revisit as a 5->6 bump if/when the frontend
+  ceiling is raised in the same change.
 """
 
 from __future__ import annotations
@@ -494,14 +504,23 @@ def _record_to_msg(rec: dict) -> Optional[dict]:
         # each fanned-out row; the recipient list is reconstructed by the
         # client from the message stream itself if needed.
         fanout = rec.get("broadcast_fanout") or rec.get("to_list") or None
+    text = rec.get("text", "")
     return {
         "id": rec.get("msg_id") or "",
         "ts": ts,
         "from": rec.get("from_name"),
         "to": rec.get("to") if kind == "direct" else (rec.get("to") or None),
         "kind": kind,
-        "prefix": _classify(rec.get("text", "")),
+        "prefix": _classify(text),
         "broadcast_fanout": fanout,
+        # u7-f1: char length of the message body. The frontend token halo
+        # (graph.js haloRadiusFor / tk.bodyLen, read from m.body_length) scales
+        # with it; absent -> medium fallback. Additive + gracefully optional.
+        # Deliberately NOT a SCHEMA_VERSION bump (see the SCHEMA note below):
+        # a server-only bump past 5 would trip the frontend's
+        # `schema_version > 5` console.warn guard (app.js), and raising that
+        # ceiling is out of this server-only unit's scope.
+        "body_length": len(text) if isinstance(text, str) else 0,
     }
 
 
