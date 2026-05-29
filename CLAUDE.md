@@ -169,16 +169,28 @@ file is the portable version of the same discipline.
   `TEAM_RUN_ID` = today's per-clone behavior (state in `.team/`).
 - `bin/preflight-deploy.sh`, `bin/panic.sh`, `bin/watchdog.sh`, `bin/worktree.sh`,
   `bin/trust-workdir.sh` (pre-accept the workspace-trust prompt for a dir).
-- `bin/api-watchdog.sh`: detects role sessions stalled on transient Anthropic
-  API rate-limit / network errors, auto-sends `try again` with exponential
-  backoff (default 30/60/120/300/600s, max 5 retries), writes per-role state to
-  `$TEAM_DIR/health/<role>.json`, and pushes `ntfy` notifications on state
-  changes when `NTFY_URL` is set (first stall, recovery, give-up). Started
-  automatically by `launch-team.sh`; cleaned up by `stop-team.sh` / `panic.sh` /
-  `cleanup.sh`. Pure shell, makes no Claude API call, so cannot itself be
-  rate-limited. Tier-3 awareness is pull-only: the orchestrator reads
-  `$TEAM_DIR/health/` to decide. Patterns at `bin/api-watchdog.patterns`.
-  Disable with `API_WATCHDOG_DISABLED=1`.
+- `bin/api-watchdog.sh`: the team's liveness watchdog. Covers two failure modes
+  in one scan loop. (a) **API-stall:** a role idled at the prompt by a transient
+  Anthropic rate-limit / network error, auto-sends `try again` with exponential
+  backoff (default 30/60/120/300/600s, max 5 retries). (b) **Stuck (wedged):** a
+  role that is busy (spinner up) but whose pane has not changed for
+  `STUCK_THRESHOLD_SEC` (default 480s), it is hung on a tool call (classically a
+  chrome-devtools MCP call after the debug Chrome dies). An API-stall detector
+  alone cannot see this, a spinner reads as healthy, so a wedge silently stalls
+  the run. Recovery ladder: first an Escape + nudge to the role's own pane
+  (gentle, autonomous, preserves context), then after `STUCK_MAX_NUDGES`
+  (default 2) failed attempts it marks the role `stuck-giveup` and messages the
+  orchestrator to retire+respawn it (or writes `PENDING.md` if the stuck role is
+  the orchestrator itself). Writes per-role state to `$TEAM_DIR/health/<role>.json`
+  (`active`/`stalled-api`/`stuck`/`stuck-giveup`/`give-up`) and pushes `ntfy` on
+  state changes. The pure pane detectors live in `bin/lib/watchdog-detect.sh`
+  (unit-tested by `bin/tests/watchdog-detect-test.sh`; end-to-end recovery by
+  `bin/tests/watchdog-stuck-integration-test.sh`). Started automatically by
+  `launch-team.sh`; cleaned up by `stop-team.sh` / `panic.sh` / `cleanup.sh`.
+  Pure shell, makes no Claude API call, so cannot itself be rate-limited. Tier-3
+  awareness is pull-only: the orchestrator reads `$TEAM_DIR/health/` to decide.
+  Patterns at `bin/api-watchdog.patterns`. Disable the whole watchdog with
+  `API_WATCHDOG_DISABLED=1`, or just stuck detection with `STUCK_WATCHDOG_DISABLED=1`.
 - `bin/tmux-watchdog.sh`: detects the tmux server itself going away (systemd
   scope cleanup, WSL2 suspend/resume, daemon-reload from other tooling) and
   flips `$TEAM_DIR/health/tmux.json` to `state=crashed`, drops
