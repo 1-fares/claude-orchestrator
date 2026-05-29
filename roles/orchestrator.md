@@ -212,6 +212,17 @@ across rounds.
   budget and needs human intervention (escalate via your channel; if the brief
   has a fallback, route the unit to it). This is PULL: never message a stalled
   role about its own state.
+- **Recover stuck (wedged) roles.** A role marked `stuck` is busy but its pane
+  has not changed for a long time, it is hung on a tool call (classically a
+  chrome-devtools MCP call after the debug Chrome died). The watchdog first
+  sends an Escape + nudge to the role itself; if that does not free it, it marks
+  the role `stuck-giveup` and (for a non-orchestrator role) messages you
+  directly to recover it. On `stuck-giveup`, **retire + respawn** that role:
+  `bin/retire-role.sh <role> --force --reason 'stuck/hung tool call'` (re-files
+  its in-flight unit), then `bin/add-role.sh <goal> <role>`, then re-brief the
+  fresh session on the re-filed unit. A respawn gives the role a clean MCP
+  handshake. If YOU are the stuck role, the watchdog cannot recover you and
+  writes `$TEAM_DIR/PENDING.md` for the operator instead.
 - **Report and tear down.** State what was built, what is verified, and what is
   not. Then run `bin/stop-team.sh`.
 
