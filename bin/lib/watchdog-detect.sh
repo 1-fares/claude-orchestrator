@@ -49,3 +49,13 @@ _is_busy_text() { tail -25 | grep -qiE "$BUSY_RE"; }
 _fingerprint_text() {
   grep -avE "$VOLATILE_RE" | tail -n 40 | cksum | cut -d' ' -f1
 }
+
+# _token_readout: stdin = pane text -> the most recent streaming token readout
+# shown in the spinner (e.g. "↓ 34.4k tokens" / "↑ 46.0k tokens"), or empty if
+# none is on screen. This advances while the model streams or THINKS but is
+# frozen when wedged on a hung tool call, so it is the liveness signal that
+# keeps a long legitimate think from being mistaken for a wedge. (The elapsed
+# timer is NOT a liveness signal: it ticks even when wedged.)
+_token_readout() {
+  grep -oE '[↑↓] ?[0-9.]+[kKmM]? tokens' | tail -1
+}

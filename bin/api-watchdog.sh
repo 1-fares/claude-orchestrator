@@ -114,9 +114,10 @@ persist() {
          --arg nudge_fp "$nudge_fp" \
          --argjson nudge_count "$nudge_count" \
          --argjson last_nudge "$last_nudge" \
+         --arg tok "${tok:-}" \
          '{state:$state, retries:$retries, last_retry_at:$last_retry, since:$since,
            last_seen:$last_seen, fp:$fp, fp_since:$fp_since, nudge_fp:$nudge_fp,
-           nudge_count:$nudge_count, last_nudge_at:$last_nudge}' \
+           nudge_count:$nudge_count, last_nudge_at:$last_nudge, tok:$tok}' \
     > "$f"
 }
 
@@ -162,6 +163,7 @@ scan_once() {
       state="$(printf '%s' "$visible" | _classify_text)"
       busy=0; printf '%s' "$visible" | _is_busy_text && busy=1
       fp="$(printf '%s' "$visible" | _fingerprint_text)"
+      tok="$(printf '%s' "$visible" | _token_readout)"
 
       hf="$health_dir/$name.json"
       af="$audit_dir/$name.log"
@@ -171,6 +173,7 @@ scan_once() {
       last_retry=$(read_field "$hf" last_retry_at 0)
       since=$(read_field "$hf" since 0)
       prev_fp=$(read_field "$hf" fp "")
+      prev_tok=$(read_field "$hf" tok "")
       fp_since=$(read_field "$hf" fp_since 0)
       nudge_fp=$(read_field "$hf" nudge_fp "")
       nudge_count=$(read_field "$hf" nudge_count 0)
@@ -207,9 +210,16 @@ scan_once() {
         continue
       fi
 
-      # --- B. STUCK path (busy spinner, but pane content frozen) -------------
+      # --- B. STUCK path (busy spinner, but no liveness) ---------------------
+      # Liveness = pane content changed OR the streaming token count advanced.
+      # The token readout climbs while the model streams or THINKS but freezes
+      # on a hung tool call, so a long legitimate think (static body, climbing
+      # tokens) is correctly treated as alive, not wedged.
+      alive=0
+      [ "$fp" != "$prev_fp" ] && alive=1
+      [ -n "$tok" ] && [ "$tok" != "$prev_tok" ] && alive=1
       if [ "$busy" = 1 ] && [ "$stuck_disabled" != 1 ]; then
-        if [ "$fp" != "$prev_fp" ]; then
+        if [ "$alive" = 1 ]; then
           # Real progress (or the model responding to our nudge): reset tracking.
           if [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ]; then
             echo "$(iso "$nowts") [$name] RECOVERED-STUCK (pane progressing again)" >> "$af"

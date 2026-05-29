@@ -90,6 +90,28 @@ eq "wedged classifies active (the blind spot api-stall can't see)" "$(wedged_a |
 eq "idle classifies active"        "$(idle    | _classify_text)" "active"
 eq "stalled classifies stalled-api" "$(stalled | _classify_text)" "stalled-api"
 
+# A long legitimate THINK: body static, but the token counter climbs. The
+# daemon must read this as alive (not wedged) via the token readout, even
+# though the fingerprint is static.
+think_a() { cat <<'EOF'
+● Analyzing the integrator node screenshot for the alert-hue check…
+· Thinking… (8m 02s · ↓ 34.4k tokens · esc to interrupt)
+────────────────────────────────────────────────────────────────────────────
+❯
+EOF
+}
+think_b() { cat <<'EOF'
+● Analyzing the integrator node screenshot for the alert-hue check…
+· Thinking… (12m 40s · ↓ 46.0k tokens · esc to interrupt)
+────────────────────────────────────────────────────────────────────────────
+❯
+EOF
+}
+echo "token-readout liveness (keeps a long think from reading as a wedge):"
+eq "long think fingerprint is static (body unchanged)" "$(think_a | _fingerprint_text)" "$(think_b | _fingerprint_text)"
+ne "but token readout advances => alive" "$(think_a | _token_readout)" "$(think_b | _token_readout)"
+eq "wedge token readout is frozen => not alive" "$(wedged_a | _token_readout)" "$(wedged_b | _token_readout)"
+
 echo
 if [ "$fail" = 0 ]; then echo "PASS: all watchdog-detect assertions"; exit 0
 else echo "FAIL: see above"; exit 1; fi
