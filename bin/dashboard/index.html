@@ -43,14 +43,8 @@
           <span class="dot" id="hdr-fresh-dot"></span>
           <span id="hdr-fresh-text">connecting…</span>
         </span>
-        <button id="chat-button" type="button"
-                aria-label="Open chat, 0 unread"
-                aria-expanded="false"
-                aria-controls="chat-panel"
-                title="Open chat (Cmd/Ctrl+/)">
-          <span class="chat-glyph" aria-hidden="true">💬</span>
-          <span class="chat-unread-badge" id="chat-unread-badge" hidden>0</span>
-        </button>
+        <!-- u10: chat-button relocated to the fixed bottom-right #chat-bubble
+             (see end of body). The theme switcher now holds the top-right edge. -->
         <label class="theme-switcher">
           <span class="theme-switcher-label">Theme</span>
           <select id="theme-select" aria-label="Theme">
@@ -103,6 +97,28 @@
       <span class="legend-item"><span class="label-name">click any agent for live feed</span></span>
     </footer>
   </div>
+
+  <!-- u10: chat bubble relocated from the header to a fixed bottom-right
+       floating button. Placed after #app and before the panels so its Tab
+       order is after the canvas but before #chat-panel (which jumps to the
+       top of Tab order while open). Single button node + a child unread
+       badge, mirroring the u29 §9 favicon-badge so the two unread signals
+       read as one. -->
+  <button id="chat-bubble" type="button"
+          aria-label="Open chat, 0 unread"
+          aria-expanded="false"
+          aria-controls="chat-panel"
+          title="Open chat (Cmd/Ctrl+/)">
+    <svg class="chat-bubble-glyph" viewBox="0 0 24 24" width="28" height="28"
+         fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/>
+    </svg>
+    <span class="chat-bubble-badge" id="chat-bubble-badge" aria-hidden="true" hidden>0</span>
+  </button>
+  <!-- aria-live sibling: announces unread-count changes once (the badge is
+       aria-hidden so the count is not read twice). -->
+  <span id="chat-bubble-live" class="visually-hidden" aria-live="polite"></span>
 
   <aside id="agent-panel" aria-hidden="true">
     <div id="agent-panel-header">
