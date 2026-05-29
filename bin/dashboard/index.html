@@ -130,6 +130,14 @@
         <span class="panel-state-chip" id="agent-panel-state-chip">idle</span>
         <span class="panel-last-activity" id="agent-panel-last-activity">last activity: —</span>
       </div>
+      <!-- u9-per-role-chat-ui: one-click affordance to open the chat composer
+           pre-addressed to this role. Label + aria-label are set by app.js to
+           the current role; click routes through chat.openForRole(). -->
+      <button class="panel-msg-role" id="agent-panel-msg-role" type="button"
+              aria-label="Message this role in chat">
+        <span class="panel-msg-role-glyph" aria-hidden="true">💬</span>
+        <span class="panel-msg-role-label" id="agent-panel-msg-role-label">Message role</span>
+      </button>
     </div>
     <!-- u13 fix for the v1 f1 bug: empty-state is a SIBLING of the feed
          list, not inside it. The poll loop only wipes #agent-panel-feed

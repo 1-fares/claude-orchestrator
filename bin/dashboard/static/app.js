@@ -59,6 +59,8 @@ const ui = {
   panelRoleName:    el('agent-panel-role-name'),
   panelStateChip:   el('agent-panel-state-chip'),
   panelLastActivity:el('agent-panel-last-activity'),
+  panelMsgRole: el('agent-panel-msg-role'),
+  panelMsgRoleLabel: el('agent-panel-msg-role-label'),
   panelMascot:  el('agent-panel-mascot'),
   themeSelect:  el('theme-select'),
   missionStrip: el('mission-strip'),
@@ -114,6 +116,16 @@ function populateThemeSelect() {
 // ---------------------------------------------------------------- panel state
 
 ui.panelClose.addEventListener('click', () => closePanel());
+// u9-per-role-chat-ui: "Message {role}" opens the chat composer pre-addressed
+// to the role whose feed panel is open. Routes through chat.openForRole, which
+// pre-fills "@{role} " so the existing _parseAddressing path produces the
+// addressed_to (no bypass). A plain <button> is keyboard-activated by
+// Enter/Space natively, satisfying the brief's keyboard-accessible criterion.
+if (ui.panelMsgRole) {
+  ui.panelMsgRole.addEventListener('click', () => {
+    if (state.panelRole) chat.openForRole(state.panelRole);
+  });
+}
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.panelOpen) {
     e.preventDefault();
@@ -160,6 +172,9 @@ function renderPanelHeader() {
   const name = state.panelRole;
   if (!name) return;
   ui.panelRoleName.textContent = name;
+  // u9: point the "Message {role}" affordance at the open role.
+  if (ui.panelMsgRoleLabel) ui.panelMsgRoleLabel.textContent = `Message ${name}`;
+  if (ui.panelMsgRole) ui.panelMsgRole.setAttribute('aria-label', `Message ${name} in chat`);
   const role = (state.lastSnap?.roster || []).find(r => r.name === name);
   const s = role?.state || 'idle';
   const color = cssVar(STATE_COLOR_VAR[s] || STATE_COLOR_VAR.idle);
