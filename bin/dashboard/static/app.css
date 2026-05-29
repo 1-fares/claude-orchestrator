@@ -1146,7 +1146,11 @@ html, body {
   --chat-bubble-inset:    var(--space-4);
   --chat-bubble-shadow:   var(--shadow-popover);
   --chat-bubble-badge-bg: var(--node-give-up);
-  --chat-bubble-badge-fg: var(--token-ink);
+  /* f-unread-badge-fg-contrast: near-white ink (not --token-ink, which on the
+     give-up red is 2.1-4.0:1 across themes). Shared with the u29 favicon
+     badge's FAVICON_BADGE_INK (#FFF5DD) so the two unread signals match and
+     clear the 4.5:1 small-text bar. */
+  --chat-bubble-badge-fg: #FFF5DD;
 }
 /* paper-puppet-stage (DEFAULT theme) has a medium terracotta
    --node-orchestrator (#A24E2E); --token-ink on it is only 2.54:1, below the
