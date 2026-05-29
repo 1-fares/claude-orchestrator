@@ -1306,11 +1306,45 @@ export class GraphView {
 
   _hoverAt(pt) {
     if (!pt) return null;
-    // Token hit: nearest in-flight token within TOKEN_RADIUS_PX + halo.
+    // 1) Moving in-flight token disc. A lucky catch still works, but transit
+    //    is short (600-900ms over ~250px, 11-25px radius) so a disc is in
+    //    hit-range only ~60-140ms — not the reliable dwell target (u7-f4).
     for (const tk of this.tokens) {
       if (tk._x == null) continue;
       const r = TOKEN_RADIUS_PX + (tk._haloR || 0) + 2;
       if (Math.hypot(pt.x - tk._x, pt.y - tk._y) <= r) return { kind: 'token', token: tk };
+    }
+    // 2) u7-f4: stationary question targets — the `?` chip and the lit trail
+    //    line of each LIVE open question. These persist while the question is
+    //    open, so a 200ms dwell is achievable (spec §3 dwellable elements).
+    //    Geometry mirrors _drawQuestionTrails exactly so the hit-area tracks
+    //    the drawn pixels (same lane offset, chip ratio, visible cap). The
+    //    returned q is the stable openQuestions entry, so the u7-f3 dwell
+    //    identity check (target.token) holds across frames for it too.
+    const CHIP_HIT_R = 9 + 2, TRAIL_HIT_PX = 5;
+    for (const [key, list] of this.openQuestions) {
+      if (key.endsWith(':fade')) continue;          // only open (unanswered)
+      for (let i = 0; i < list.length; i++) {
+        const q = list[i];
+        const A = this.layout.get(q.from);
+        const B = this.layout.get(q.to);
+        if (!A || !B) continue;
+        const laneSign = (q.from < q.to) ? 1 : -1;
+        const lane = laneSign * (QUESTION_LANE_PX + i * QUESTION_LANE_PX);
+        const [ax, ay, bx, by] = laneEndpoints(A, B, lane);
+        // `?` chip near the receiver (only the drawn ones are hit-tested).
+        if (i < QUESTION_VISIBLE_PER_PAIR) {
+          const cx = ax + (bx - ax) * 0.92;
+          const cy = ay + (by - ay) * 0.92;
+          if (Math.hypot(pt.x - cx, pt.y - cy) <= CHIP_HIT_R) {
+            return { kind: 'question', token: q };
+          }
+        }
+        // Lit trail line segment.
+        if (pointSegDist(pt.x, pt.y, ax, ay, bx, by) <= TRAIL_HIT_PX) {
+          return { kind: 'question', token: q };
+        }
+      }
     }
     return null;
   }
@@ -1321,14 +1355,21 @@ export class GraphView {
     const pt = this._lastPointer;
     if (!pt) return;
     const tk = target.token;
-    const pi = prefixInfo(tk.prefix);
+    // u7-f4: target.token is a moving-token record (kind 'token', carries
+    // .prefix/.spawn) OR a stationary open-question entry (kind 'question',
+    // carries .bornAt and is always a question). Resolve prefix + age frame
+    // from whichever shape arrived; from/to/msgId exist on both.
+    const isQ = target.kind === 'question';
+    const pi = prefixInfo(isQ ? 'question' : tk.prefix);
     const setT = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
     setT('token-popover-prefix', pi.glyph);
     setT('token-popover-pair',   `${tk.from} → ${tk.to}`);
-    // Times: render the relative age if we know the spawn frame; the
+    // Times: render the relative age if we know the spawn/born frame; the
     // absolute ts is not in the canvas record, so the spec's second-level
     // tooltip is a follow-up (logged in u7-f1 if surfacing is wanted).
-    const ageMs = performance.now() - tk.spawn;
+    const spawn = (tk.spawn != null) ? tk.spawn
+                : (tk.bornAt != null) ? tk.bornAt : performance.now();
+    const ageMs = performance.now() - spawn;
     setT('token-popover-ts', `${(ageMs / 1000).toFixed(1)}s ago`);
     const body = document.getElementById('token-popover-body');
     if (body) {
@@ -1383,6 +1424,16 @@ export class GraphView {
 // Compute lane-shifted endpoints: shifts the straight (from→to) segment by
 // laneOffset perpendicular pixels, and also pulls back from each node's edge
 // so the token doesn't draw inside the disc.
+// Shortest distance from point (px,py) to segment (ax,ay)-(bx,by). Used by
+// u7-f4 to hit-test the stationary question trail line for the hover popover.
+function pointSegDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const L2 = dx * dx + dy * dy;
+  let t = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0;
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
 function laneEndpoints(A, B, laneOffset) {
   const dx = B.x - A.x;
   const dy = B.y - A.y;
