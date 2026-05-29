@@ -693,12 +693,18 @@ def read_role_feed(role_name: str, limit: int, log_path: Optional[str],
             continue
         from_name = rec.get("from_name")
         kind = rec.get("kind") or "direct"
-        to_sid = rec.get("to") or ""
+        # The /is bus record carries the recipient ROLE NAME in `to`
+        # ("orchestrator", "reviewer1", ...) and the session UUID separately in
+        # `to_session_id`. sid_to_name is keyed by session UUIDs, so the direct
+        # peer must be read straight off `to`, not looked up through sid_to_name
+        # (f-feed-peer-resolve: the old sid_to_name.get(to) miss rendered every
+        # sent row as "to unknown" and dropped every received-direct row).
+        to_name = rec.get("to") or ""
         text = rec.get("text") if isinstance(rec.get("text"), str) else ""
 
         if from_name == role_name:
             direction = "sent"
-            peer = "all" if kind == "broadcast" else (sid_to_name.get(to_sid) or "unknown")
+            peer = "all" if kind == "broadcast" else (to_name or "unknown")
         elif kind == "broadcast":
             # Broadcasts fan out to every connected peer; include them in
             # every role's received-stream so the operator sees the same
@@ -707,7 +713,7 @@ def read_role_feed(role_name: str, limit: int, log_path: Optional[str],
                 continue  # already handled above; defensive
             direction = "received"
             peer = from_name or "unknown"
-        elif kind == "direct" and sid_to_name.get(to_sid) == role_name:
+        elif kind == "direct" and to_name == role_name:
             direction = "received"
             peer = from_name or "unknown"
         else:
