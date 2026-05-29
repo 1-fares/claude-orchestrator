@@ -1247,7 +1247,12 @@ export class GraphView {
     const el = this._popoverElement();
     if (!el) return;
     const target = this._hoverAt(this._lastPointer);
-    if (target && target !== this.popoverTarget) {
+    // u7-f3: compare the STABLE underlying token, not the wrapper. _hoverAt
+    // returns a fresh `{kind,token}` object every frame, so the old
+    // wrapper-reference comparison was always true while hovering one token,
+    // restarting the dwell timer each frame and never reaching
+    // POPOVER_DWELL_MS. The token object reference is stable across frames.
+    if (target && target.token !== this.popoverTarget?.token) {
       this.popoverTarget = target;
       this.popoverDwellFrom = now;
       el.hidden = true;
