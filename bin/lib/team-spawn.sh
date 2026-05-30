@@ -239,6 +239,43 @@ start_observer() {
   echo "observer started (pid $!, log: $TEAM_DIR/observer.log)"
 }
 
+# Start the project's optional intake poller for this team, once. Idempotent
+# same way as the watchdogs; opt-out INTAKE_POLLER_DISABLED=1. An intake poller
+# is a small, project-provided daemon that watches an external surface (email,
+# chat, a ticket queue, ...) and pings the `orchestrator` bus peer on new
+# traffic, so a team can react to the outside world. The engine only binds its
+# LIFECYCLE to the team's: the poller needs the per-run /is bus and is useless
+# without a live team, so it is team-scoped, never a standalone systemd service.
+# Resolve the script from $INTAKE_POLLER, else <working-tree>/scripts/poller.py.
+# Most teams ship none; that is fine (the function just returns). The orchestrator
+# can suggest the operator add one when a goal needs external intake.
+start_intake_poller() {
+  [ "${INTAKE_POLLER_DISABLED:-0}" = "1" ] && return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local poller="${INTAKE_POLLER:-}"
+  if [ -z "$poller" ] && [ -f "$repo/project.conf" ]; then
+    local WORKDIR="" INTAKE_POLLER=""
+    # shellcheck disable=SC1091
+    . "$repo/project.conf" 2>/dev/null || true
+    [ -z "$poller" ] && poller="${INTAKE_POLLER:-}"
+    [ -z "$poller" ] && [ -n "$WORKDIR" ] && poller="$WORKDIR/scripts/poller.py"
+  fi
+  [ -n "$poller" ] && [ -f "$poller" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  local pidf="$TEAM_DIR/intake-poller.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'poller'; then
+      echo "intake-poller already running (pid $oldpid)"
+      return 0
+    fi
+  fi
+  nohup python3 "$poller" --peer orchestrator >"$TEAM_DIR/intake-poller.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "intake-poller started (pid $!, poller: $poller, log: $TEAM_DIR/intake-poller.log)"
+}
+
 # Ask the operator whether to bring up the visual dashboard. Sits in front of
 # start_dashboard, never replaces its guard. Precedence (highest first):
 #

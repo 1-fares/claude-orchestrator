@@ -169,10 +169,16 @@ pre_trust_workdir "$workdir_abs"
 # Spawn the one role.
 start_one "$role"
 
-# Ensure the team's api-watchdog is running (idempotent). Closes the gap where a
-# team was started with the watchdog disabled or it died: a role added later
-# still gets transient-rate-limit auto-recovery.
+# Ensure the team's background daemons are running (all idempotent). Closes the
+# gap where one was started disabled or died, AND it is the path that brings them
+# back on a post-crash/restart recovery: the orchestrator re-adds roles via
+# add-role, so this is where api-watchdog, tmux-watchdog, the observer, and any
+# intake poller get re-ensured for the recovered run. (Previously only the
+# api-watchdog was re-ensured here, so the others did not survive a recovery.)
 start_api_watchdog || true
+start_tmux_watchdog || true
+start_observer || true
+start_intake_poller || true
 
 # Justify + surface (always). Reason defaults to a generic note if not given.
 # The role is already live and recorded in active (the teardown source of truth),
