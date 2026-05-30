@@ -216,6 +216,29 @@ start_tmux_watchdog() {
   echo "tmux-watchdog started (pid $!, log: $TEAM_DIR/tmux-watchdog.log)"
 }
 
+# Start the efficiency observer for this team, once. Idempotent same way as the
+# watchdogs. Set OBSERVER_DISABLED=1 to skip. Unlike the watchdogs (mechanical
+# stall/crash recovery), the observer periodically asks a model whether the team
+# should grow or shrink and whether the host is right-sized, and nudges the
+# orchestrator; it recommends, never acts.
+start_observer() {
+  [ "${OBSERVER_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/observer.sh" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  local pidf="$TEAM_DIR/observer.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'observer'; then
+      echo "observer already running (pid $oldpid)"
+      return 0
+    fi
+  fi
+  nohup "$repo/bin/observer.sh" >"$TEAM_DIR/observer.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "observer started (pid $!, log: $TEAM_DIR/observer.log)"
+}
+
 # Ask the operator whether to bring up the visual dashboard. Sits in front of
 # start_dashboard, never replaces its guard. Precedence (highest first):
 #
