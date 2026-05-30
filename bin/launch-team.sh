@@ -149,6 +149,11 @@ start_api_watchdog
 # Opt-out: TMUX_WATCHDOG_DISABLED=1. Idempotent.
 start_tmux_watchdog
 
+# Start the efficiency observer (periodic model-backed advice on growing/
+# shrinking the team and right-sizing the host; recommends, never acts).
+# Opt-out: OBSERVER_DISABLED=1. Idempotent.
+start_observer
+
 # Start the B11 visual dashboard (second-screen view of the live run). Loopback-
 # only, read-only, opt-out with DASHBOARD_DISABLED=1, port override with
 # DASHBOARD_PORT. Idempotent like the watchdog. Torn down by stop-team.sh /

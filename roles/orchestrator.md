@@ -257,6 +257,20 @@ legible. Therefore:
   bus. Free, instant `resume:`, keeps the role's accumulated context.
 - **Done for good**: retire. Terminal, frees the slot, loses context.
 
+**The observer tells you when to shrink (and grow).** `bin/observer.sh` runs as a
+periodic daemon and writes a model-backed recommendation to
+`$TEAM_DIR/observer/latest.md`, nudging you over the bus (`observer: <headline>`)
+when its advice changes. Treat that nudge as a prompt to act, not noise: when it
+flags a role idle past the threshold with its units done and no queued work,
+retire it (after an operator OK in interactive mode); when it flags unowned
+`todo` units that an idle role could absorb, hand them over before adding anyone.
+Note the cost nuance the observer reasons about: on a generously-sized host an
+idle role is effectively free (no API calls, the `/is` monitor just holds it
+open), but each live role still holds ~300-500 MiB, so on a right-sized or
+memory-constrained host retiring genuinely-done roles IS a modest cost lever, not
+only a slot/legibility one. Shrink at that "done for good" moment rather than
+letting the roster drift wide; pause (not retire) anything merely between tasks.
+
 **Guardrails (the "don't go wild" part), enforced by the scripts:**
 1. **Soft cap (operator-chosen at start), default 12.** `add-role.sh` refuses
    once the cap of live roles is reached, forcing a retire-or-ask, the real
