@@ -11,6 +11,38 @@ points you at your role file in [`roles/`](./roles) and the active goal in
 file and goal are given by absolute path. The orchestrator (bus name
 `orchestrator`) holds the goal and assigns work.
 
+## Public repository: no private data (binding)
+
+This repo is public (`github.com/1-fares/claude-orchestrator`). It is a generic
+template; nothing about any operator's real machine, identity, or projects
+belongs in tracked files. Before committing, every role and the orchestrator must
+keep private data out of the tree.
+
+- **Never commit, and scrub before staging:** real usernames or home paths
+  (`/home/<user>/...`, `/Users/<user>/...`; use `~/...` or `$HOME` instead), real
+  email addresses, employer or client names, real project/repo names from the
+  operator's machine, secrets of any kind (API keys, tokens, bearer tokens,
+  passwords, ntfy topics, webhook URLs, signing keys), non-local IPs or private
+  endpoints, and machine-specific identifiers (tmux socket names tied to a host,
+  absolute deployment paths).
+- **Goals, task briefs, and run state are private by default.** A real
+  `goals/<name>.md` or `tasks/<unit>.md` carries endpoints, paths, and app
+  internals. `.gitignore` already ignores `goals/*`, `tasks/*`, `.team/`,
+  `.team-*/`, `tasks-archive/`, `project.conf`, `team.tmux.conf`, and
+  `RESUME-HERE.md`, with only the curated `_TEMPLATE.md` and demo files
+  allowlisted. Do not `git add -f` a real brief or run dir, and do not add new
+  allowlist exceptions for anything that is not a deliberately generic demo.
+- **Use placeholders in docs and examples:** `~/projects/app-a`, `<your-handle>`,
+  `https://ntfy.sh/orch-<your-handle>-<random>`, `user@example.com`. Bug reports
+  and incident notes get the same scrub: sanitize observed paths, goal names, and
+  working trees to generic stand-ins before committing.
+- **The only intentional identity in tracked files** is the public GitHub handle
+  `1-fares` and the `LICENSE` copyright line. Do not introduce any other.
+- **Before any commit, sweep the staged diff:**
+  `git diff --cached | grep -nEi '/home/|/Users/|@[a-z0-9.-]+\.(com|ch|li|io)|ntfy\.sh/[a-z0-9]|api[_-]?key|bearer|secret|password'`
+  and clear every hit that is real (not a placeholder or a variable name) before
+  committing.
+
 ## How to be a teammate here
 
 - **Join the bus first.** `/is c <your-role-name>`, then report ready to the
