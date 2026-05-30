@@ -82,10 +82,20 @@ gather_metrics() {
   buslog="$HOME/.claude/data/inter-session/messages.log"
   [ -f "$buslog" ] && msgs="$(tail -n 400 "$buslog" 2>/dev/null | wc -l)"
 
+  # Per-role model, read from the live claude process args ("--model X ... You
+  # are \"role\""). Lets the observer spot over/under-provisioned auxiliary roles.
+  local role_models
+  role_models="$(ps -eo args 2>/dev/null \
+    | grep -oE -- '--model [A-Za-z0-9._-]+ You are "[a-z0-9-]+"' \
+    | sed -E 's/.*--model ([A-Za-z0-9._-]+) You are "([a-z0-9-]+)".*/  \2: \1/' \
+    | sort -u)"
+
   cat <<EOF
 HOST: load ${l1}/${l5}/${l15} on ${ncpu} vCPU; mem ${mem}; claude procs ${claude_n} (~${claude_rss} GiB RSS)
 ROSTER (role, idle, health):
 $(printf '%s\n' "$roster" | sed 's/^/  /')
+ROLE MODELS (role: model):
+${role_models:-  (none discoverable)}
 SHRINK-ELIGIBLE (idle >= ${idle_sec}s): ${idle_roles}
 PIPELINE (unit status counts): ${pipe:-none}
 GOAL: ${goal:-unknown}
@@ -101,16 +111,31 @@ agents (an orchestrator plus worker roles, each a separate process ~300-500 MiB)
 The work is API-bound: CPU is usually near-idle; the real costs are RAM per live
 role and the agents' API usage. You RECOMMEND only; you never act.
 
+Each role also runs on a MODEL (haiku < sonnet < opus, increasing capability and
+cost) and a thinking-EFFORT. The standing rule: CORE roles whose mistakes are
+expensive -- orchestrator, implementors (impl-*), testers (tester*), releaser,
+infra -- stay on a high model + high effort; NEVER suggest downgrading them.
+AUXILIARY roles doing ancillary, low-stakes, mechanical or read-only work for
+other projects (e.g. a scraper, reader, poller, doc-fetcher, simple display) do
+NOT need opus: if one is over-provisioned (e.g. on opus doing mechanical work),
+suggest a cheaper model (sonnet or haiku) + lower effort to cut cost; if an
+auxiliary role is failing/retrying on too small a model, suggest bumping it up.
+The actuation point is model_for() in bin/lib/team-spawn.sh (role -> model),
+applied by retiring + respawning the role; the orchestrator decides.
+
 Current observation:
 ${metrics}
 
-In <= 12 lines, give a concrete recommendation:
+In <= 16 lines, give a concrete recommendation:
 1) First line EXACTLY: "HEADLINE: <one terse sentence: grow/shrink/hold + host sizing>"
 2) TEAM: which roles (if any) to retire now (idle and no in-flight unit) and why;
    whether to add a role (a backlog with no owner). If none, say "hold".
 3) HOST: is the instance over/under-sized for this load? (Consider: API-bound, so
    idle CPU is expected; judge on RAM headroom and peak role count, not CPU.)
-4) FLAGS: anything off (a role wedged, pipeline stalled, runaway memory). Else none.
+4) MODELS: for each NON-CORE role only, suggest model/effort up or down with a
+   one-line reason; mark core roles "keep high". If every role is core or already
+   right-sized, say "no change".
+5) FLAGS: anything off (a role wedged, pipeline stalled, runaway memory). Else none.
 Be specific and brief. Do not suggest acting yourself; the orchestrator decides.
 EOF
 }

@@ -271,6 +271,20 @@ memory-constrained host retiring genuinely-done roles IS a modest cost lever, no
 only a slot/legibility one. Shrink at that "done for good" moment rather than
 letting the roster drift wide; pause (not retire) anything merely between tasks.
 
+**Suggest an intake poller when the goal needs the outside world.** If the work
+involves reacting to external traffic the team cannot see from inside the bus,
+new emails, chat/Teams/Slack messages, a ticket queue, a webhook, propose to the
+operator that they add a small *intake poller*: a daemon at
+`<working-tree>/scripts/poller.py` (or pointed to by `$INTAKE_POLLER`) that
+watches that surface and pings you on the bus on new traffic. The engine wires
+its lifecycle automatically (`start_intake_poller`, started with the team and
+re-ensured on recovery, opt-out `INTAKE_POLLER_DISABLED=1`); you only have to
+notice the need and suggest it. Do not build one unprompted, it is the operator's
+call what external surfaces the team may watch, but raise it when it would
+clearly help (a goal that says "watch X and respond", a reporter you must wait
+on, a long-running watch). Keep it lifecycle-scoped to the team, never a
+standalone service: it is useless without a live bus to ping.
+
 **Guardrails (the "don't go wild" part), enforced by the scripts:**
 1. **Soft cap (operator-chosen at start), default 12.** `add-role.sh` refuses
    once the cap of live roles is reached, forcing a retire-or-ask, the real

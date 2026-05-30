@@ -154,6 +154,11 @@ start_tmux_watchdog
 # Opt-out: OBSERVER_DISABLED=1. Idempotent.
 start_observer
 
+# Start the project's optional intake poller, if one is configured ($INTAKE_POLLER
+# or <working-tree>/scripts/poller.py). Pings the orchestrator on new external
+# traffic. Opt-out: INTAKE_POLLER_DISABLED=1. Idempotent. No-op if none exists.
+start_intake_poller
+
 # Start the B11 visual dashboard (second-screen view of the live run). Loopback-
 # only, read-only, opt-out with DASHBOARD_DISABLED=1, port override with
 # DASHBOARD_PORT. Idempotent like the watchdog. Torn down by stop-team.sh /
