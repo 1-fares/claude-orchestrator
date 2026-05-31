@@ -154,6 +154,12 @@ start_tmux_watchdog
 # Opt-out: OBSERVER_DISABLED=1. Idempotent.
 start_observer
 
+# Start the chrome-devtools supervisor (reap orphaned Chrome/MCP debris and fast
+# un-wedge a role the api-watchdog has marked stuck on a hung chrome MCP call, by
+# killing that role's Chrome so the MCP relaunches). Opt-out:
+# CHROME_SUPERVISOR_DISABLED=1. Idempotent. No-op if bin/chrome-supervisor.sh absent.
+start_chrome_supervisor
+
 # Start the project's optional intake poller, if one is configured ($INTAKE_POLLER
 # or <working-tree>/scripts/poller.py). Pings the orchestrator on new external
 # traffic. Opt-out: INTAKE_POLLER_DISABLED=1. Idempotent. No-op if none exists.

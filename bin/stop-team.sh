@@ -82,6 +82,17 @@ if [ -f "$tw_pidf" ]; then
   rm -f "$tw_pidf"
 fi
 
+# Kill the chrome-devtools supervisor, if launch-team.sh started one for this run.
+cs_pidf="$TEAM_DIR/chrome-supervisor.pid"
+if [ -f "$cs_pidf" ]; then
+  cs_pid="$(cat "$cs_pidf" 2>/dev/null || true)"
+  if [ -n "$cs_pid" ] && kill -0 "$cs_pid" 2>/dev/null; then
+    kill -TERM "$cs_pid" 2>/dev/null || true
+    echo "stopped chrome-supervisor (pid $cs_pid)"; killed=1
+  fi
+  rm -f "$cs_pidf"
+fi
+
 # Kill the dashboard server, if launch-team.sh started one for this run. The
 # server's serve_forever loop does not unwind on plain SIGTERM, so we escalate
 # to SIGKILL after a short grace window rather than leave a stray listener bound

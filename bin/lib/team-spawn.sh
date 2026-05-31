@@ -133,9 +133,18 @@ ledger) under \$TEAM_DIR, never under \$ORCH_HOME/.team directly, so parallel ru
 in this clone do not collide. Your own code changes go in the working tree above.
 Do these in order:
 1. Join the bus:   /is c $role
-2. Read these files: \$ORCH_HOME/CLAUDE.md, $rolefile_abs, and the goal at $goal_abs
-3. Report ready:   /is s orchestrator 'status: $role ready'
-4. Then act on instructions that arrive over the bus. Report progress and
+2. Tool-IO self-check (born-corrupt guard). Run this one Bash command:
+      echo ${role}_TOOLIO_$$
+   The stdout MUST be exactly that token. If instead you get a Read-style "File
+   does not exist" error, the raw command text echoed back, or any garbled or
+   contradictory output, your tool I/O is corrupted (a known rare failure in a
+   freshly spawned session under load). Do NOT try to work. Signal it over the
+   bus, which stays reliable even when the Bash/Read tools are corrupted:
+      /is s orchestrator 'status: $role BORN-CORRUPT, retire+respawn me'
+   then stop and wait. Only continue past this step if the echo was clean.
+3. Read these files: \$ORCH_HOME/CLAUDE.md, $rolefile_abs, and the goal at $goal_abs
+4. Report ready:   /is s orchestrator 'status: $role ready'
+5. Then act on instructions that arrive over the bus. Report progress and
    completion with /is, using status:/done:/question:/answer: prefixes. Stay
    within your role. Send anything longer than a sentence as a file pointer.
 EOF
@@ -241,6 +250,31 @@ start_observer() {
   nohup "$repo/bin/observer.sh" >"$TEAM_DIR/observer.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "observer started (pid $!, log: $TEAM_DIR/observer.log)"
+}
+
+# Start the chrome-devtools supervisor for this team, once. Idempotent same way as
+# the watchdogs. Set CHROME_SUPERVISOR_DISABLED=1 to skip. It reaps orphaned
+# Chrome/MCP debris (dead-owner processes reparented to init) and, when the
+# api-watchdog has marked a role stuck on a hung tool call, kills that role's
+# Chrome so the MCP's frozen op rejects and the browser relaunches, recovering
+# the role in seconds instead of waiting out a full retire+respawn. A no-op unless
+# bin/chrome-supervisor.sh is present.
+start_chrome_supervisor() {
+  [ "${CHROME_SUPERVISOR_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/chrome-supervisor.sh" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  local pidf="$TEAM_DIR/chrome-supervisor.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'chrome-supervisor'; then
+      echo "chrome-supervisor already running (pid $oldpid)"
+      return 0
+    fi
+  fi
+  nohup "$repo/bin/chrome-supervisor.sh" >"$TEAM_DIR/chrome-supervisor.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "chrome-supervisor started (pid $!, log: $TEAM_DIR/chrome-supervisor.log)"
 }
 
 # Start the project's optional intake poller for this team, once. Idempotent
