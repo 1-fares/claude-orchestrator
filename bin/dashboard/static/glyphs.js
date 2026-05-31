@@ -92,8 +92,11 @@ export function withAlpha(hex, alpha) {
 // ---------------------------------------------------------- theme loader
 
 const STORAGE_KEY = 'b11.theme';
-// Default theme picked by the operator. paper-puppet-stage remains
-// selectable; an existing localStorage 'b11.theme' still wins (u12e).
+// Default theme picked by the operator. An existing localStorage 'b11.theme'
+// still wins (u12e). warm-hive (the bee/swarm identity) is the default; its
+// palette was rebuilt phone-first — a deep warm-charcoal hive interior with a
+// honey-gold signature accent, replacing the old drab-brown base that read
+// poorly on a phone.
 export const DEFAULT_THEME = 'warm-hive';
 
 // Tiny 1x1 transparent PNG, used as the final image fallback so the

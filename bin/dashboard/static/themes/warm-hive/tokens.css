@@ -1,26 +1,28 @@
 /* warm-hive — B11 theme tokens */
-/* chrome rework (u12c): #14110A chrome, text contrast 16.3:1 */
-/* U1 chrome lightening (round 3 phase C): #221C10 chrome, AAA */
+/* palette revamp (phone-first dark): deep warm-charcoal hive interior (low-chroma
+   amber bias, not olive/brown), honey-gold signature accent, pale royal-jelly
+   queen, cool-blue paused, green done, red alert, hot-orange stalled. Contrast:
+   text on bg 15.7:1; every node colour on bg at least 3:1. */
 :root[data-theme="warm-hive"] {
-  --bg:                #221C10;
-  --surface:           #2E2618;
-  --surface-2:         #3D3322;
+  --bg:                #1A150B;
+  --surface:           #241D10;
+  --surface-2:         #33291A;
   --text:              #FBEDD0;
-  --alert:             #B85240;
-  --node-active:       #E8B14A;
-  --node-idle:         #7F8E5C;
-  --node-paused:       #6FB6FF;
-  --node-question:     #FFE066;
-  --node-stalled:      #FF9A3C;
-  --node-give-up:      #B85240;
-  --node-orchestrator: #E8B14A;
-  --node-dead:         #4A4458;
-  --edge-status:       #B9B0E0;
-  --edge-done:         #6AE3A1;
-  --edge-question:     #FFE066;
-  --edge-answer:       #F2B500;
-  --edge-priority:     #E8B14A;
-  --edge-default:      #4A3A22;
+  --alert:             #E5564A;
+  --node-active:       #F2B441;
+  --node-idle:         #A99B86;
+  --node-paused:       #5FB0F2;
+  --node-question:     #FFD24A;
+  --node-stalled:      #FF7A2E;
+  --node-give-up:      #E5564A;
+  --node-orchestrator: #FFE2A0;
+  --node-dead:         #2C2417;
+  --edge-status:       #C9BBA0;
+  --edge-done:         #5FD39B;
+  --edge-question:     #FFD24A;
+  --edge-answer:       #F2B441;
+  --edge-priority:     #E5564A;
+  --edge-default:      #3A301F;
   --selection-cue:     #FBEDD0;
-  --token-ink:         #221C10;
+  --token-ink:         #1A150B;
 }
