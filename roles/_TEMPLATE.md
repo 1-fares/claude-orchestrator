@@ -43,6 +43,17 @@ below applies to every role.)
   the orchestrator only for cross-lane decisions and the outside world.
 - A successful `/is` send prints `sent -> <to> (<n> chars)`. Empty output from a
   send means it did NOT run; do not re-verify a send that confirmed.
+- **Fan out through sessions, not in-process workflows.** When a unit needs
+  parallel investigation or verification across many items, dispatch it to
+  worker sessions that spawn Task sub-agents, rather than launching a dynamic
+  in-process Workflow from a long-running session. Native sessions and Task
+  sub-agents stay visible to the liveness and watchdog checks, keep their
+  results out of the launching session's context, and are not bounded by the
+  in-process Workflow concurrency cap. Scope every fan-out to the items that
+  actually need it (changed or undecided, not settled work) and keep an
+  adversarial check on each non-trivial result. Under a flat-rate subscription
+  the usage budget is finite: a wide fan-out can exhaust the window and stall
+  the real work, so treat fan-out width as a cost to justify, not a default.
 - Gates before reporting done: always run
   `$ORCH_HOME/bin/check-scope.sh <unit>`; if your unit has an exit-0 verify
   command, run `$ORCH_HOME/bin/verify-unit.sh <unit>` too. For a non-code
