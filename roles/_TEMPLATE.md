@@ -32,8 +32,17 @@ below applies to every role.)
 
 ## How you work
 
-- Coordinate over the `/is` bus with `status:` / `done:` / `question:` / `answer:`
-  prefixes so the orchestrator can route replies.
+- Coordinate over the `/is` bus with `done:` / `blocked:` / `question:` /
+  `answer:` prefixes so the orchestrator can route replies.
+- **Status is pull, not push.** Do NOT send routine per-step `status:` pings to
+  the orchestrator: each forces a full-context turn on the hub for no decision.
+  The orchestrator tracks liveness via `/is list` and the watchdog health files
+  (both pull). Keep only `status: <role> ready` at join and `status: resumed
+  <task>` after a rate-limit recovery; everything else is `done:` / `blocked:` /
+  `question:` / `answer:`. Coordinate routine handoffs peer-to-peer; escalate to
+  the orchestrator only for cross-lane decisions and the outside world.
+- A successful `/is` send prints `sent -> <to> (<n> chars)`. Empty output from a
+  send means it did NOT run; do not re-verify a send that confirmed.
 - Gates before reporting done: always run
   `$ORCH_HOME/bin/check-scope.sh <unit>`; if your unit has an exit-0 verify
   command, run `$ORCH_HOME/bin/verify-unit.sh <unit>` too. For a non-code
