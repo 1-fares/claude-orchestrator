@@ -53,7 +53,8 @@ pidf="$TEAM_DIR/tmux-watchdog.pid"
 # actually a tmux-watchdog, not just any live pid: after a reboot or heavy
 # churn the OS reuses pids, and a bare `kill -0` on a stale pidfile pointing at
 # a reused, unrelated pid would false-positive and lock the watchdog out of
-# ever restarting. Match how team-spawn.sh's start guard checks it.
+# ever restarting (observed 2026-05-31: stale pidfile -> "already running" ->
+# no watchdog for hours). Match how team-spawn.sh's start guard checks it.
 if [ -f "$pidf" ]; then
   prev=$(cat "$pidf" 2>/dev/null || echo 0)
   if [ "$prev" != 0 ] && kill -0 "$prev" 2>/dev/null \
@@ -118,7 +119,8 @@ while true; do
     if [ "$prev_state" != "ok" ]; then
       since=$nowts
       echo "$(iso "$nowts") OK: tmux session $TEAM_SESSION is alive (was $prev_state)" >> "$af"
-      notify "🟢 [orchestrator/${TEAM_RUN_ID:-legacy}] tmux session $TEAM_SESSION recovered"
+      # No push: recovery is not actionable (the operator who recovered it knows).
+      # Only the TEAM CRASH below pushes. Logged only.
     fi
     prev_state=ok
     write_state ok "$nowts" "$since"
