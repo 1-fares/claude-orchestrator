@@ -49,10 +49,15 @@ hf="$health_dir/tmux.json"
 af="$audit_dir/tmux.log"
 pidf="$TEAM_DIR/tmux-watchdog.pid"
 
-# Already running? Refuse to double-start (idempotent).
+# Already running? Refuse to double-start (idempotent). Verify the pid is
+# actually a tmux-watchdog, not just any live pid: after a reboot or heavy
+# churn the OS reuses pids, and a bare `kill -0` on a stale pidfile pointing at
+# a reused, unrelated pid would false-positive and lock the watchdog out of
+# ever restarting. Match how team-spawn.sh's start guard checks it.
 if [ -f "$pidf" ]; then
   prev=$(cat "$pidf" 2>/dev/null || echo 0)
-  if [ "$prev" != 0 ] && kill -0 "$prev" 2>/dev/null; then
+  if [ "$prev" != 0 ] && kill -0 "$prev" 2>/dev/null \
+       && ps -p "$prev" -o args= 2>/dev/null | grep -q 'tmux-watchdog'; then
     echo "tmux-watchdog already running (pid $prev)"
     exit 0
   fi
