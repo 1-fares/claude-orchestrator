@@ -172,12 +172,14 @@ start_one "$role"
 # Ensure the team's background daemons are running (all idempotent). Closes the
 # gap where one was started disabled or died, AND it is the path that brings them
 # back on a post-crash/restart recovery: the orchestrator re-adds roles via
-# add-role, so this is where api-watchdog, tmux-watchdog, the observer, and any
-# intake poller get re-ensured for the recovered run. (Previously only the
-# api-watchdog was re-ensured here, so the others did not survive a recovery.)
+# add-role, so this is where api-watchdog, tmux-watchdog, the observer, the
+# chrome-supervisor, and any intake poller get re-ensured for the recovered run.
+# (Previously only the api-watchdog was re-ensured here, so the others did not
+# survive a recovery.)
 start_api_watchdog || true
 start_tmux_watchdog || true
 start_observer || true
+start_chrome_supervisor || true
 start_intake_poller || true
 
 # Justify + surface (always). Reason defaults to a generic note if not given.
