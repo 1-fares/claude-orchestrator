@@ -203,6 +203,16 @@ across rounds.
   serializing in one tree, have each unit committed before the next starts, so
   the next unit's `check-scope` sees only its own files (an uncommitted tree
   sweeps every unit's files into each scope check).
+- **Default fan-out to native sessions, not in-process workflows.** When a unit
+  needs parallel investigation or verification across many items, dispatch it to
+  worker sessions that spawn Task sub-agents. A dynamic in-process Workflow
+  launched from this long-running hub runs agents the watchdogs cannot see,
+  feeds every result back into your context (undoing a checkpoint+clear), is
+  bounded by the in-process concurrency cap, and burns the same finite usage
+  budget the real work needs. Reserve a Workflow for off-hub, disposable,
+  low-risk cases where its result does not re-enter a long-running context.
+  Scope each fan-out to the items that need it and keep a skeptic on every
+  non-trivial one.
 - **Sequence the work.** Analyst/architect first when design is unsettled.
   Implementer and tester run as an iterating pair. Reviewer does an independent
   pass. Integrator merges. Deployment last.
