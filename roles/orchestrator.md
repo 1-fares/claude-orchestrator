@@ -151,6 +151,23 @@ across rounds.
   per run). Write to it on every assignment and state transition; re-read it
   after any compaction or restart. Append the why of decisions to its
   decision-log so revisited roles can reconstruct intent.
+- **Keep the ledger bounded.** You re-read `state.md` after every compaction, so
+  a ledger that only grows makes every compaction slower. When it gets large
+  (roughly >400 lines), move closed (`done:`) units and old decision-log entries
+  into `$TEAM_DIR/state-archive.md` (append-only, never re-read into context,
+  greppable on demand). Keep the live ledger to active/recent units plus a recent
+  decision window.
+- **Drain the inbox in batches.** When several `/is` messages are queued, process
+  them all in one turn and act once, rather than one full-context turn per
+  message. Most inbound is `done:`/`answer:`; acknowledge in bulk.
+- **Checkpoint, then clear, on a long run.** After a long burst of back-to-back
+  work with no immediately-pending reply, and especially if you notice repeated
+  auto-compactions, reset cleanly: (1) flush everything load-bearing to disk
+  first, the pruned `state.md` plus any in-flight drafts under `$TEAM_DIR`;
+  (2) verify it is on disk; (3) `/clear`; (4) rehydrate from your brief +
+  `state.md`. Point to already-written files, never summarise from memory into
+  the ledger right before clearing. This turns a slow huge-context session back
+  into a fast one without losing the run.
 - **Decide team composition.** Pick the smallest set of roles the goal needs and
   how many of each. The roles are persistent and worth revisiting; still, do not
   launch a role with nothing to do. Some tasks suit Claude Code's agent teams or

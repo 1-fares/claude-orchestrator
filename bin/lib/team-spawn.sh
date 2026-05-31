@@ -27,8 +27,12 @@ resolve_goal() {
 # depth. Empty string => inherit the user's default.
 model_for() {
   case "$1" in
-    # Example speed override: uncomment to run mechanical roles faster.
-    # tester*|devops*) echo "sonnet" ;;
+    # Speed override: a mechanical, low-judgement role (a read-only status
+    # dashboard, a poller/relay, a formatter) can run on a much faster/cheaper
+    # model with no quality loss, while roles that reason over real code stay on
+    # Opus. Uncomment and name the role pattern to apply it, e.g.:
+    #   dashboard*) echo "haiku" ;;
+    #   tester*|devops*) echo "sonnet" ;;
     *) echo "opus" ;;
   esac
 }
