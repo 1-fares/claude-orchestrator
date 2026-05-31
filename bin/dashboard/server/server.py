@@ -321,6 +321,46 @@ _IN_PROGRESS_STATUSES = {"assigned", "acked", "in-progress", "integrating", "rev
 _BLOCKED_ROLE_RE = re.compile(r"^blocked-on:")
 
 
+def _normalize_unit_status(raw_status: str) -> Optional[str]:
+    """Map a unit's raw state.md status to a canonical bucket.
+
+    Statuses in the ledger are written richly, e.g. `DONE-PASS (date - merged)`,
+    `PR-OPEN #123 (owner)`, `in-progress (note: ...)`, `MERGED-to-master`,
+    `blocked-on:<role>`. Exact-matching the whole string against the allow-list
+    misfired on every one of these (a warning per unit, every unit defaulting to
+    todo, inflated TODO count). So normalise
+    first: drop the trailing `(note)` parenthetical, take the leading token,
+    lowercase, and map common variants onto the canonical buckets. Returns the
+    canonical status, or None when the leading token is genuinely unrecognised
+    (the only case that should still warn)."""
+    head = (raw_status or "").split("(", 1)[0].strip()
+    parts = head.split()
+    tok = parts[0].lower() if parts else ""
+    if not tok:
+        return "todo"
+    if tok in _ALLOWED_STATUSES:
+        return tok
+    if tok.startswith("blocked"):  # blocked, blocked-on:<role>
+        return "blocked"
+    if tok.startswith("defer"):
+        return "deferred"
+    # done family — check pr-green before the generic pr- (in-progress) below
+    if (tok.startswith("done") or tok.startswith("merged") or tok.startswith("closed")
+            or tok.startswith("shipped") or tok.startswith("resolved")
+            or tok.startswith("verified") or tok.startswith("pr-green")
+            or tok.startswith("complete") or tok.endswith("-complete")
+            or tok.startswith("live-") or tok.startswith("deployed")):
+        return "done"
+    # in-progress family
+    if (tok.startswith("in-progress") or tok.startswith("in_progress")
+            or tok.startswith("pr-") or tok.startswith("pr#") or tok.startswith("integrat")
+            or tok.startswith("assign") or tok.startswith("ack")
+            or tok.startswith("review") or tok.startswith("wip")
+            or tok.startswith("running") or tok.startswith("run-")):
+        return "in-progress"
+    return None
+
+
 def _collapse_what(block: str) -> Optional[str]:
     """Extract the `what:` line (and any indented continuations) out of the
     `## goal` section's body and collapse to a single whitespace-normalised
@@ -377,12 +417,9 @@ def parse_state_md(team_dir: Optional[str], warnings: list) -> dict:
         body = text[start:end]
         kvs = {k.lower(): v for k, v in _RE_KV.findall(body)}
         raw_status = kvs.get("status", "todo")
-        if raw_status.startswith("blocked-on"):
-            status = "blocked"
-        else:
-            status = raw_status
-        if status not in _ALLOWED_STATUSES:
-            warnings.append(f"state.md: unknown status '{raw_status}' for {uid}")
+        status = _normalize_unit_status(raw_status)
+        if status is None:
+            warnings.append(f"state.md: unrecognised status leading token in {raw_status!r} for {uid}")
             status = "todo"
         counts[status] += 1
         depends = [
@@ -582,21 +619,35 @@ def _append_records(cache: MessageCache, payload: bytes, warnings: list) -> None
             warnings.append(f"messages.log: record {msg['id']} missing from/to")
             continue
         cache.ring.append(msg)
-        # Track open questions / answers.
+        # Track open questions, and close them on supersession.
         prefix = msg["prefix"]
         if prefix == "question":
             cache.open_questions[msg["id"]] = {
                 "from": msg["from"], "to": msg["to"], "ts": msg["ts"],
             }
-        elif prefix == "answer":
-            # Close the oldest open question from `to` directed at `from`.
-            candidates = [
-                (mid, q) for mid, q in cache.open_questions.items()
-                if q["from"] == msg["to"] and q["to"] == msg["from"]
-            ]
-            if candidates:
-                candidates.sort(key=lambda kv: kv[1]["ts"])
-                cache.open_questions.pop(candidates[0][0], None)
+        # A question is "answered" in practice without a literal answer: prefix.
+        # Supersede any open question OLDER than this message when either:
+        #   (a) the asker sends any newer message (they have moved on), or
+        #   (b) anyone sends the asker a message after the question (a reply).
+        # This replaces the old answer:-prefix-only close, which left a question
+        # (and the role's question chip) lingering to the 30-min TTL whenever the
+        # reply was not literally prefixed answer:.
+        sender, recipient = msg["from"], msg["to"]
+        fanout = msg["broadcast_fanout"] if msg["kind"] == "broadcast" else None
+        for mid in list(cache.open_questions.keys()):
+            if mid == msg["id"]:
+                continue  # never close a question with its own opening message
+            q = cache.open_questions[mid]
+            if q["ts"] >= msg["ts"]:
+                continue  # only a strictly newer message supersedes
+            asker = q["from"]
+            superseded = (
+                sender == asker                                  # (a) asker spoke again
+                or (msg["kind"] == "direct" and recipient == asker)  # (b) direct reply
+                or (isinstance(fanout, list) and asker in fanout)    # (b) broadcast reply
+            )
+            if superseded:
+                cache.open_questions.pop(mid, None)
     if len(cache.ring) > RING_MAX:
         cache.ring = cache.ring[-RING_MAX:]
 
@@ -987,32 +1038,12 @@ def build_role(active_entry: dict, health: Optional[dict], msgs: list,
     )
     open_ids = [mid for mid, _ in my_opens]
 
-    # State derivation (priority chain).
-    if is_orch:
-        state, src, age = "orchestrator", active_entry.get("state_source_override", "active_file"), 0.0
-    elif isinstance(health, dict) and health.get("state") == "give-up":
-        state, src, age = "give-up", "health", max(0.0, now - float(health.get("last_retry_at") or health.get("since") or now))
-    elif isinstance(health, dict) and health.get("state") == "stalled":
-        state, src, age = "stalled-api", "health", max(0.0, now - float(health.get("since") or now))
-    elif pause_evt and pause_evt["prefix"] == "pause":
-        state, src, age = "paused", "bus_pause", max(0.0, now - pause_evt["ts"])
-    elif my_opens:
-        oldest_ts = my_opens[0][1]["ts"]
-        state, src, age = "question", "question_open", max(0.0, now - oldest_ts)
-    elif (last_msg is not None and last_msg["ts"] >= now - ACTIVE_RECENT_SEC
-          and isinstance(health, dict) and health.get("state") == "active"):
-        state, src, age = "active", "bus_recent", max(0.0, now - last_msg["ts"])
-    else:
-        state, src, age = "idle", "default_idle", (now - last_msg["ts"]) if last_msg else 0.0
-
-    counts = counts_by_role.get(name, {
-        "sent_1m": 0, "recv_1m": 0, "sent_total": 0, "recv_total": 0,
-    })
-
-    # u24 additive `activity` field: working|delegating|idle|stalled-api|give-up
-    # with an optional `subagent_count` int when delegating with a parseable
-    # count. Skip the helper for the synthesised orchestrator entry (no real
-    # pane to capture); the operator's other channels already cover it.
+    # `activity` (working|delegating|idle|stalled-api|give-up) from the role's
+    # tmux pane (bin/role-activity.sh), with an optional `subagent_count`. This
+    # is the REAL-liveness signal — a live spinner/token-counter/`esc to
+    # interrupt` in the pane — and is computed BEFORE the state chain so the
+    # state derivation can use it. Skip the helper for the synthesised
+    # orchestrator entry (no real pane to capture).
     if server_state is not None and not is_orch:
         activity, subagent_count = _classify_activity(
             name, health, server_state, now, warnings if warnings is not None else []
@@ -1022,6 +1053,51 @@ def build_role(active_entry: dict, health: Optional[dict], msgs: list,
         # render it specially; subagent_count is irrelevant.
         activity = "orchestrator" if is_orch else "idle"
         subagent_count = None
+
+    # State derivation (priority chain).
+    #
+    # The "active" rule keys on REAL liveness, not just a recent bus message: a
+    # role thinking for longer than ACTIVE_RECENT_SEC with no bus traffic was
+    # previously read as idle (the bus-recent window is ~3s). The pane-activity
+    # signal (`working`/`delegating`) reflects a live spinner / advancing token
+    # counter / `esc to interrupt` — the same signals the api-watchdog uses to
+    # tell a live think from a hang — so an actively-working pane counts as
+    # active on its own, independent of the bus window and of the health file
+    # (which may be stale or absent mid-turn).
+    pane_busy = activity in ("working", "delegating")
+    bus_active = (last_msg is not None and last_msg["ts"] >= now - ACTIVE_RECENT_SEC
+                  and isinstance(health, dict) and health.get("state") == "active")
+    if is_orch:
+        state, src, age = "orchestrator", active_entry.get("state_source_override", "active_file"), 0.0
+    elif isinstance(health, dict) and health.get("state") == "give-up":
+        state, src, age = "give-up", "health", max(0.0, now - float(health.get("last_retry_at") or health.get("since") or now))
+    elif isinstance(health, dict) and health.get("state") == "stalled":
+        state, src, age = "stalled-api", "health", max(0.0, now - float(health.get("since") or now))
+    elif pause_evt and pause_evt["prefix"] == "pause":
+        state, src, age = "paused", "bus_pause", max(0.0, now - pause_evt["ts"])
+    elif pane_busy:
+        # Real pane liveness wins over a quiet bus AND over a lingering open
+        # question: the chip is driven by the activity classifier, so a role
+        # that is actively working reads active, not "question". The open
+        # question still rides along in open_question_ids for a secondary badge.
+        # Age from the last bus message when there is one, else 0 (live now).
+        state, src, age = ("active", "pane_active",
+                           (now - last_msg["ts"]) if last_msg else 0.0)
+    elif bus_active:
+        state, src, age = "active", "bus_recent", max(0.0, now - last_msg["ts"])
+    elif my_opens:
+        # Not actively working and not recently on the bus, but waiting on a
+        # genuinely-unanswered question (supersession above prunes answered/
+        # stale ones; the 30-min TTL bounds the rest). Only here, when the role
+        # is otherwise idle, does the question become the primary chip.
+        oldest_ts = my_opens[0][1]["ts"]
+        state, src, age = "question", "question_open", max(0.0, now - oldest_ts)
+    else:
+        state, src, age = "idle", "default_idle", (now - last_msg["ts"]) if last_msg else 0.0
+
+    counts = counts_by_role.get(name, {
+        "sent_1m": 0, "recv_1m": 0, "sent_total": 0, "recv_total": 0,
+    })
 
     return {
         "name": name,
