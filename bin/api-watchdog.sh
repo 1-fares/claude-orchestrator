@@ -17,10 +17,18 @@
 #                then a one-line nudge to the role's OWN pane. Preserves the
 #                role's context; recovers most wedges with nobody watching.
 #        Tier 2 (escalation): after STUCK_MAX_NUDGES failed nudges, mark health
-#                state "stuck-giveup", ntfy, and message the orchestrator to
-#                retire+respawn the role (it holds the goal/context to re-brief).
-#                If the STUCK role IS the orchestrator, ntfy + write PENDING.md
-#                for the operator instead of pinging itself.
+#                state "stuck-giveup" and message the orchestrator to retire+
+#                respawn the role (it holds the goal/context to re-brief). This is
+#                automated, so it does NOT push the operator.
+#        Tier 3 (operator): only when automation is exhausted and a human is the
+#                only recourse does an ntfy push fire. Four cases, all of them
+#                require the operator to act: the orchestrator itself is wedged
+#                (PENDING.md), an API stall exhausts its retries, a worker is STILL
+#                wedged past STUCK_OPERATOR_SEC after the auto retire+respawn failed
+#                to clear it, or the whole tmux team crashed (tmux-watchdog).
+#                Transient wedges, nudges, retries, and recoveries are LOGGED to the
+#                audit trail but never pushed: the operator is paged for stuck, not
+#                for self-healing.
 #
 # Health per role is recorded under $TEAM_DIR/health/<role>.json with a single
 # `state` field: active | stalled-api | stuck | stuck-giveup | give-up. The
@@ -55,6 +63,10 @@ patterns_file="${API_WATCHDOG_PATTERNS:-$repo/bin/api-watchdog.patterns}"
 stuck_disabled="${STUCK_WATCHDOG_DISABLED:-0}"
 stuck_threshold="${STUCK_THRESHOLD_SEC:-480}"
 stuck_max_nudges="${STUCK_MAX_NUDGES:-2}"
+# Total frozen time past which a STILL-wedged worker means the orchestrator's
+# auto retire+respawn did NOT clear it, so the operator is the only recourse and
+# we push ONCE. Transient wedges that the nudge/respawn clears never reach here.
+stuck_operator_sec="${STUCK_OPERATOR_SEC:-$((stuck_threshold + 600))}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -72,6 +84,23 @@ done
 health_dir="$TEAM_DIR/health"
 audit_dir="$TEAM_DIR/audit/api-watchdog"
 mkdir -p "$health_dir" "$audit_dir"
+
+# Singleton guard (daemon mode only). Two live api-watchdogs would double every
+# push, so refuse to double-start. Verify the pidfile's pid is actually an
+# api-watchdog, not just any live pid: after pid reuse a stale pidfile would
+# otherwise either lock us out or be ignored. Mirrors tmux-watchdog's guard.
+if [ "$once" = 0 ]; then
+  watchdog_pidf="$TEAM_DIR/api-watchdog.pid"
+  if [ -f "$watchdog_pidf" ]; then
+    _prev=$(cat "$watchdog_pidf" 2>/dev/null || echo 0)
+    if [ "$_prev" != 0 ] && kill -0 "$_prev" 2>/dev/null \
+         && ps -p "$_prev" -o args= 2>/dev/null | grep -q 'api-watchdog'; then
+      echo "api-watchdog already running (pid $_prev)"; exit 0
+    fi
+  fi
+  echo $$ > "$watchdog_pidf"
+  trap 'rm -f "$watchdog_pidf"' EXIT
+fi
 
 # Build a single extended-regex from the patterns file (comments + blank ignored).
 pattern_regex="$(grep -vE '^[[:space:]]*(#|$)' "$patterns_file" | paste -sd'|' -)"
@@ -151,7 +180,9 @@ escalate_stuck() {
   local msg="[watchdog] role '$name' is wedged: ~${mins}m with no pane progress while busy, and ${stuck_max_nudges} interrupt+nudge attempts did not clear it (likely a hung tool call, e.g. the chrome-devtools MCP). Recommend retire+respawn: bin/retire-role.sh $name --force --reason 'stuck/hung tool call' then bin/add-role.sh <goal> $name, then re-brief it on its in-flight unit."
   tmux send-keys -t "$TEAM_SESSION:orchestrator" -l "$msg" 2>/dev/null && \
     tmux send-keys -t "$TEAM_SESSION:orchestrator" Enter 2>/dev/null || true
-  notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' wedged ~${mins}m, ${stuck_max_nudges} nudges failed; asked orchestrator to retire+respawn"
+  # NO operator push here: asking the orchestrator to retire+respawn is automated
+  # recovery, not something the operator must act on. If that respawn does not
+  # clear the wedge, the scan loop re-escalates to the operator (stuck_operator_sec).
 }
 
 scan_once() {
@@ -185,7 +216,8 @@ scan_once() {
         if [ "$prev" != "stalled-api" ] && [ "$prev" != "give-up" ]; then
           since=$nowts; retries=0; last_retry=0
           echo "$(iso "$nowts") [$name] STALLED (api/network error)" >> "$af"
-          notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' stalled (API/network); watchdog retrying"
+          # No operator push: the watchdog auto-retries with backoff. Only the
+          # terminal give-up (retries exhausted) below pushes.
         fi
         if [ "$prev" = "give-up" ]; then
           persist "$hf" "give-up" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
@@ -221,9 +253,9 @@ scan_once() {
       if [ "$busy" = 1 ] && [ "$stuck_disabled" != 1 ]; then
         if [ "$alive" = 1 ]; then
           # Real progress (or the model responding to our nudge): reset tracking.
-          if [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ]; then
+          if [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ] || [ "$prev" = "stuck-giveup-esc" ]; then
             echo "$(iso "$nowts") [$name] RECOVERED-STUCK (pane progressing again)" >> "$af"
-            notify "🟢 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' un-wedged"
+            # No push: a wedge that recovered is not actionable. Logged only.
           fi
           persist "$hf" "active" 0 0 "$nowts" "$fp" "$nowts" "$nudge_fp" "$nudge_count" "$last_nudge"
           continue
@@ -239,12 +271,29 @@ scan_once() {
         mins=$((frozen / 60))
         if [ "$nudge_fp" = "$fp" ]; then
           # We already nudged for THIS exact frozen content and it is STILL
-          # frozen: the gentle interrupt did not take. Escalate.
-          if [ "$prev" != "stuck-giveup" ]; then
-            echo "$(iso "$nowts") [$name] STUCK-GIVEUP (nudge ineffective, frozen ${mins}m)" >> "$af"
+          # frozen: the gentle interrupt did not take.
+          if [ "$prev" != "stuck-giveup" ] && [ "$prev" != "stuck-giveup-esc" ]; then
+            # First give-up: log + ask the orchestrator to retire+respawn. This is
+            # AUTOMATED recovery, so NO operator push yet.
+            echo "$(iso "$nowts") [$name] STUCK-GIVEUP (nudge ineffective, frozen ${mins}m); asked orchestrator to retire+respawn" >> "$af"
             escalate_stuck "$name" "$mins"
+            persist "$hf" "stuck-giveup" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$nowts"
+            continue
           fi
-          persist "$hf" "stuck-giveup" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$nowts"
+          # Already gave up and the orchestrator was asked to retire+respawn, but
+          # the pane is STILL frozen on the same content (a respawn would change the
+          # pane), so the automated recovery did NOT clear it. Once it has stayed
+          # frozen past the operator threshold, a human is the only recourse: push
+          # ONCE (mark -esc so it never repeats).
+          if [ "$prev" = "stuck-giveup" ] && [ "$frozen" -ge "$stuck_operator_sec" ]; then
+            echo "$(iso "$nowts") [$name] STUCK-UNRECOVERED (frozen ${mins}m; auto retire+respawn did not clear it)" >> "$af"
+            notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' STILL stuck ${mins}m; auto retire+respawn did not clear it, manual intervention needed"
+            persist "$hf" "stuck-giveup-esc" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$nowts"
+            continue
+          fi
+          # Still frozen, waiting on auto-recovery (or already escalated): just persist
+          # the current giveup state, no repeat push.
+          persist "$hf" "$prev" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$nowts"
           continue
         fi
         nudge_count=$((nudge_count + 1))
@@ -256,7 +305,8 @@ scan_once() {
         fi
         if [ "$prev" != "stuck" ]; then
           echo "$(iso "$nowts") [$name] STUCK (busy + pane frozen ${mins}m); interrupt+nudge $nudge_count/$stuck_max_nudges" >> "$af"
-          notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' wedged ${mins}m (hung tool call); watchdog sending interrupt+nudge"
+          # No operator push: the watchdog is auto-nudging. Only a wedge that the
+          # nudge AND the orchestrator respawn both fail to clear escalates (above).
         else
           echo "$(iso "$nowts") [$name] STUCK still (frozen ${mins}m); interrupt+nudge $nudge_count/$stuck_max_nudges" >> "$af"
         fi
@@ -269,10 +319,10 @@ scan_once() {
       # --- C. ACTIVE / IDLE (not stalled, not busy-frozen) -------------------
       if [ "$prev" = "stalled-api" ] || [ "$prev" = "give-up" ]; then
         echo "$(iso "$nowts") [$name] RECOVERED after $retries retries" >> "$af"
-        notify "🟢 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' recovered"
-      elif [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ]; then
+        # No push: recovery is not actionable. Logged only.
+      elif [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ] || [ "$prev" = "stuck-giveup-esc" ]; then
         echo "$(iso "$nowts") [$name] RECOVERED-STUCK (back at prompt)" >> "$af"
-        notify "🟢 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' un-wedged"
+        # No push: recovery is not actionable. Logged only.
       fi
       # genuinely active/idle: reset both api-stall and stuck bookkeeping.
       persist "$hf" "active" 0 0 "$nowts" "$fp" "$nowts" "" 0 0
