@@ -81,3 +81,18 @@ export TEAM_REPO TEAM_SESSION TEAM_PORT INTER_SESSION_PORT TEAM_TMUX TEAM_TMUX_B
 # config. The -f applies when this call starts the server; it is ignored once the
 # server is running.
 tmux() { "$TEAM_TMUX_BIN" -L "$TEAM_TMUX" -f "$TEAM_TMUX_CONF" "$@"; }
+
+# tmux_submit <target> <message>: type a literal message into a role's Claude Code
+# pane and submit it. A message long enough to collapse into a [Pasted text] block
+# needs TWO Enters: the first only inserts a newline inside the block, the second
+# submits. A single Enter therefore leaves long broadcasts, approvals, and watchdog
+# nudges sitting unsent in the input. The trailing Enter on an already-submitted
+# (now empty) prompt is a harmless no-op, so this is also correct for short
+# messages. Routes through the team socket via the tmux() wrapper above.
+tmux_submit() {
+  local target="$1" msg="$2"
+  tmux send-keys -t "$target" -l "$msg" 2>/dev/null || return 1
+  tmux send-keys -t "$target" Enter 2>/dev/null || true
+  sleep 0.4
+  tmux send-keys -t "$target" Enter 2>/dev/null || true
+}
