@@ -50,6 +50,5 @@ if ! tmux -L orchestrator list-windows -t "$sess" -F '#{window_name}' 2>/dev/nul
   target="$sess:0"
 fi
 
-tmux -L orchestrator send-keys -t "$target" -l "$text"
-tmux -L orchestrator send-keys -t "$target" Enter
+tmux_submit "$target" "$text"
 echo "sent to $target: $text"
