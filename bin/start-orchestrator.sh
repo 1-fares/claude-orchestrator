@@ -17,8 +17,26 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
+# team-spawn.sh is a pure-function library (start_api_watchdog, start_tmux_watchdog,
+# ...). start-orchestrator.sh is ALSO the recovery entry point: relaunch the
+# orchestrator while its roles still live (after a tmux crash, or after an
+# orchestrator-only restart). On that path launch-team.sh is NOT re-run, so the
+# supervisor daemons it normally starts would stay dead. 2026-06-01 incident: the
+# api-watchdog was down for a whole day after an orchestrator recovery, so every
+# transient API rate-limit stall halted the team until a human nudged it. Ensuring
+# the daemons here closes that hole; the start_* guards are idempotent (no-op if a
+# live one is already recorded), so a normal cold start is unaffected.
+# shellcheck source=bin/lib/team-spawn.sh
+. "$repo/bin/lib/team-spawn.sh"
 flags="--dangerously-skip-permissions"
 command -v claude >/dev/null || { echo "claude not on PATH" >&2; exit 1; }
+
+# Ensure the team's supervisor daemons are up. Idempotent. Opt-out env vars
+# (API_WATCHDOG_DISABLED / TMUX_WATCHDOG_DISABLED) are honored inside each start_*.
+ensure_team_daemons() {
+  start_api_watchdog || true
+  start_tmux_watchdog || true
+}
 
 mode=tmux
 [ "${1:-}" = "--foreground" ] && { mode=foreground; shift; }
@@ -79,6 +97,8 @@ if [ "$mode" = foreground ]; then
   # the current pid ($$) becomes claude's pid. tmux_window column is '-' for
   # the foreground variant (no team-tmux pane).
   printf '%s\t%s\torchestrator\n' "$$" "-" >> "$TEAM_DIR/active"
+  # exec replaces this shell; the nohup'd daemons survive it. Start them first.
+  ensure_team_daemons
   exec ${CLAUDE_BIN:-claude} $flags --model opus "$(cat "$pf")"
 fi
 
@@ -117,6 +137,9 @@ if [ -n "$o_info" ]; then
   o_wid="${o_info##* }"
   printf '%s\t%s\torchestrator\n' "$o_pid" "$o_wid" >> "$TEAM_DIR/active"
 fi
+# Ensure the supervisor daemons are up (covers the recovery path where launch-team
+# is not re-run). Idempotent.
+ensure_team_daemons
 echo "Orchestrator + roles will share tmux session '$TEAM_SESSION' (bus port $TEAM_PORT)."
 echo "Attach now and talk to the orchestrator (Ctrl-b <number> switches to roles):"
 echo "  bin/attach.sh"

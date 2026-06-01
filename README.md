@@ -418,8 +418,11 @@ prompt. That is safe only in a trusted local environment.
 
 Transient Anthropic API rate-limit or network errors stall a role's pane with a
 `try again` prompt; in a multi-role run, an unwatched stall halts the team
-silently. [`bin/api-watchdog.sh`](./bin/api-watchdog.sh) is auto-started by
-`launch-team.sh`. It is a pure-shell daemon that scans every team window,
+silently. [`bin/api-watchdog.sh`](./bin/api-watchdog.sh) is a supervisor daemon
+whose lifecycle is described in [Daemon lifecycle](#daemon-lifecycle) below — it
+is started at launch, re-ensured on every orchestrator (re)start and role add,
+and self-healed by the tmux-watchdog, so it can never be silently absent while a
+team runs. It is a pure-shell daemon that scans every team window,
 detects the stall, and sends `try again` with exponential backoff
 (30s → 60s → 120s → 300s → 600s, max 5 retries). Per-role state lives in
 `$TEAM_DIR/health/<role>.json` and is visible in the `HEALTH` column of
@@ -457,6 +460,34 @@ with it).
 Per-role context is lost on a crash, but the ledger lets the orchestrator
 re-brief each role on its current unit in a few hundred tokens. Recovery flow
 detail in [`docs/incident-2026-05-26-tmux-scope-cleanup.md`](./docs/incident-2026-05-26-tmux-scope-cleanup.md).
+
+### Daemon lifecycle
+
+A running team has several detached supervisor daemons alongside the role
+sessions. They are **not** part of any role's context; they are plain `nohup`
+background processes recorded by pidfile under `$TEAM_DIR`. The start helpers
+([`bin/lib/team-spawn.sh`](./bin/lib/team-spawn.sh) `start_*`) are **idempotent**
+— each checks its pidfile and verifies the pid is really that daemon (not a
+reused pid) before deciding to (re)start, so calling them repeatedly is safe.
+
+| Daemon | Purpose | Started / re-ensured by | Stopped by |
+|---|---|---|---|
+| `api-watchdog.sh` | auto-recover API rate-limit / network stalls | `launch-team.sh`, **`start-orchestrator.sh`** (incl. recovery), `add-role.sh`, and **self-healed every 15s by `tmux-watchdog.sh`** | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
+| `tmux-watchdog.sh` | detect tmux-server crash, snapshot panes, self-heal the api-watchdog | `launch-team.sh`, `start-orchestrator.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
+| `chrome-supervisor.sh` | un-wedge roles stuck on a hung chrome MCP call | `launch-team.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
+| `communicator` / observer | bus + optional efficiency observer | `launch-team.sh`, `add-role.sh` | `stop-team.sh` |
+
+**The lifecycle invariant:** any path that brings the team (or just the
+orchestrator) up must ensure the watchdogs — not only the cold `launch-team.sh`
+path. `start-orchestrator.sh` is also the **recovery** entry point (relaunch the
+orchestrator while its roles still live); it does not re-run `launch-team.sh`, so
+it ensures the daemons itself. Belt-and-braces, the always-on `tmux-watchdog`
+restarts the `api-watchdog` within one 15s poll if it ever dies. **2026-06-01
+incident that motivated this:** an orchestrator was recovered via
+`start-orchestrator.sh` after a `stop-team.sh` that had killed the api-watchdog;
+nothing restarted it, so it was absent for a full day and every transient
+rate-limit stall halted the team until a human nudged it. Both the
+`start-orchestrator` ensure and the `tmux-watchdog` self-heal close that hole.
 
 ### Rate limits and cost
 
