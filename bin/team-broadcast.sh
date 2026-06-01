@@ -23,7 +23,7 @@ command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 sent=0
 while IFS=$'\t' read -r pid wid role; do
   [ -n "${wid:-}" ] || continue
-  if tmux send-keys -t "$wid" -l "$msg" 2>/dev/null && tmux send-keys -t "$wid" Enter 2>/dev/null; then
+  if tmux_submit "$wid" "$msg"; then
     echo "-> $role"; sent=$((sent+1))
   fi
 done < "$active"

@@ -155,8 +155,7 @@ nudge_pane() {
   local wid="$1" mins="$2"
   tmux send-keys -t "$wid" Escape 2>/dev/null || true
   sleep 0.4
-  tmux send-keys -t "$wid" -l "[watchdog] your last action produced no output for ~${mins}m and looks hung; an Escape was just sent to interrupt it. Abandon that tool call, try a different approach, or report the blocker on the bus (do not silently retry the same call)." 2>/dev/null || true
-  tmux send-keys -t "$wid" Enter 2>/dev/null || true
+  tmux_submit "$wid" "[watchdog] your last action produced no output for ~${mins}m and looks hung; an Escape was just sent to interrupt it. Abandon that tool call, try a different approach, or report the blocker on the bus (do not silently retry the same call)."
 }
 
 # escalate a wedged role to the orchestrator (it holds the goal/context to
@@ -178,8 +177,7 @@ escalate_stuck() {
     return
   fi
   local msg="[watchdog] role '$name' is wedged: ~${mins}m with no pane progress while busy, and ${stuck_max_nudges} interrupt+nudge attempts did not clear it (likely a hung tool call, e.g. the chrome-devtools MCP). Recommend retire+respawn: bin/retire-role.sh $name --force --reason 'stuck/hung tool call' then bin/add-role.sh <goal> $name, then re-brief it on its in-flight unit."
-  tmux send-keys -t "$TEAM_SESSION:orchestrator" -l "$msg" 2>/dev/null && \
-    tmux send-keys -t "$TEAM_SESSION:orchestrator" Enter 2>/dev/null || true
+  tmux_submit "$TEAM_SESSION:orchestrator" "$msg"
   # NO operator push here: asking the orchestrator to retire+respawn is automated
   # recovery, not something the operator must act on. If that respawn does not
   # clear the wedge, the scan loop re-escalates to the operator (stuck_operator_sec).
