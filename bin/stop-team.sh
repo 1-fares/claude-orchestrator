@@ -32,6 +32,7 @@ if [ -f "$active" ]; then
     # Ask roles to stop and save via their pane, then give them a moment.
     while IFS=$'\t' read -r pid wid role; do
       [ -n "${wid:-}" ] || continue
+      [ "${role:-}" = orchestrator ] && continue   # never send the stop prompt to the orchestrator
       tmux send-keys -t "$wid" -l "stop: teardown, finish the current write and stop." 2>/dev/null && \
         tmux send-keys -t "$wid" Enter 2>/dev/null || true
     done < "$active"
@@ -41,6 +42,7 @@ if [ -f "$active" ]; then
   # Pass 1: SIGTERM each recorded process group (only if still claude).
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
+    [ "${role:-}" = orchestrator ] && continue   # M1 records the orchestrator in active; never signal/kill it here (panic.sh is the kill-all)
     if kill -0 "$pid" 2>/dev/null && is_claude "$pid"; then
       kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
       echo "TERM $role (pid $pid)"; killed=1
@@ -52,6 +54,7 @@ if [ -f "$active" ]; then
   # Pass 2: SIGKILL survivors, then close windows.
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
+    [ "${role:-}" = orchestrator ] && continue   # M1 records the orchestrator in active; never signal/kill it here (panic.sh is the kill-all)
     if kill -0 "$pid" 2>/dev/null && is_claude "$pid"; then
       kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
       echo "KILL $role (pid $pid)"
@@ -135,6 +138,7 @@ if [ -f "$active" ]; then
   survivors=0
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
+    [ "${role:-}" = orchestrator ] && continue   # M1 records the orchestrator in active; never signal/kill it here (panic.sh is the kill-all)
     if kill -0 "$pid" 2>/dev/null && is_claude "$pid"; then
       echo "WARNING: $role (pid $pid) still alive" >&2; survivors=$((survivors+1))
     fi
