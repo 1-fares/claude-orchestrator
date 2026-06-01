@@ -58,6 +58,22 @@ if [ -f "$wd_pidf" ]; then
   rm -f "$wd_pidf"
 fi
 
+# tmux-watchdog, chrome-supervisor, observer, intake-poller (detached nohup
+# daemons; the tmux pane-tree sweep above does NOT reach them, so panic must kill
+# them by pidfile or they leak past a panic). 2026-06-01: panic killed only the
+# api-watchdog + dashboard and orphaned the rest.
+for _d in tmux-watchdog chrome-supervisor observer intake-poller; do
+  _pidf="$TEAM_DIR/$_d.pid"
+  if [ -f "$_pidf" ]; then
+    _pid="$(cat "$_pidf" 2>/dev/null || true)"
+    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+      kill -KILL "$_pid" 2>/dev/null || true
+      echo "panic: killed $_d (pid $_pid)"; killed=1
+    fi
+    rm -f "$_pidf"
+  fi
+done
+
 # Dashboard server (if launch-team.sh started one).
 db_pidf="$TEAM_DIR/dashboard.pid"
 if [ -f "$db_pidf" ]; then

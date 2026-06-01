@@ -96,6 +96,30 @@ if [ -f "$cs_pidf" ]; then
   rm -f "$cs_pidf"
 fi
 
+# Kill the efficiency observer, if started for this run. (Leaked by stop-team
+# before 2026-06-01: kept polling a dead run after teardown.)
+ob_pidf="$TEAM_DIR/observer.pid"
+if [ -f "$ob_pidf" ]; then
+  ob_pid="$(cat "$ob_pidf" 2>/dev/null || true)"
+  if [ -n "$ob_pid" ] && kill -0 "$ob_pid" 2>/dev/null; then
+    kill -TERM "$ob_pid" 2>/dev/null || true
+    echo "stopped observer (pid $ob_pid)"; killed=1
+  fi
+  rm -f "$ob_pidf"
+fi
+
+# Kill the intake poller, if started for this run. (Leaked by stop-team before
+# 2026-06-01: kept pinging a dead orchestrator bus peer after teardown.)
+ip_pidf="$TEAM_DIR/intake-poller.pid"
+if [ -f "$ip_pidf" ]; then
+  ip_pid="$(cat "$ip_pidf" 2>/dev/null || true)"
+  if [ -n "$ip_pid" ] && kill -0 "$ip_pid" 2>/dev/null; then
+    kill -TERM "$ip_pid" 2>/dev/null || true
+    echo "stopped intake-poller (pid $ip_pid)"; killed=1
+  fi
+  rm -f "$ip_pidf"
+fi
+
 # Kill the dashboard server, if launch-team.sh started one for this run. The
 # server's serve_forever loop does not unwind on plain SIGTERM, so we escalate
 # to SIGKILL after a short grace window rather than leave a stray listener bound
