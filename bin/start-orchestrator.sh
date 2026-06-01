@@ -31,11 +31,17 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 flags="--dangerously-skip-permissions"
 command -v claude >/dev/null || { echo "claude not on PATH" >&2; exit 1; }
 
-# Ensure the team's supervisor daemons are up. Idempotent. Opt-out env vars
-# (API_WATCHDOG_DISABLED / TMUX_WATCHDOG_DISABLED) are honored inside each start_*.
+# Ensure the team's supervisor daemons are up. Idempotent. Each start_* honors its
+# own opt-out env var. This set MUST match add-role.sh's re-ensure set (api-watchdog,
+# tmux-watchdog, observer, chrome-supervisor, intake-poller) so the recovery path and
+# the add-role path leave the same daemons running. The dashboard is intentionally
+# omitted (observability only; recovery is headless, brought back by a fresh launch).
 ensure_team_daemons() {
   start_api_watchdog || true
   start_tmux_watchdog || true
+  start_observer || true
+  start_chrome_supervisor || true
+  start_intake_poller || true
 }
 
 mode=tmux

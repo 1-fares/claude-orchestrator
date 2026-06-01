@@ -146,6 +146,21 @@ if [ -f "$tw_pidf" ]; then
   fi
 fi
 
+# 3b''. chrome-supervisor, observer, intake-poller (detached nohup daemons that
+# cleanup did not handle before 2026-06-01, so they leaked past a cleanup/reset).
+for _d in chrome-supervisor observer intake-poller; do
+  _pidf="$TEAM_DIR/$_d.pid"
+  if [ -f "$_pidf" ]; then
+    _pid="$(cat "$_pidf" 2>/dev/null || true)"
+    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+      tag "kill $_d (pid $_pid)"
+      [ "$DRY" = 0 ] && { kill -TERM "$_pid" 2>/dev/null || true; sleep 1; kill -KILL "$_pid" 2>/dev/null || true; rm -f "$_pidf"; }
+    else
+      [ "$DRY" = 0 ] && rm -f "$_pidf"
+    fi
+  fi
+done
+
 # 3c. Dashboard server (if launch-team.sh started one for this clone's team).
 db_pidf="$TEAM_DIR/dashboard.pid"
 if [ -f "$db_pidf" ]; then

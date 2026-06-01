@@ -166,10 +166,13 @@ file is the portable version of the same discipline.
 - `bin/new-project.sh`: scaffold a brand-new target repo. `bin/new-goal.sh`: a
   short questionnaire that writes a goal brief (you describe the goal; the
   orchestrator fills in acceptance/scope/team/verify at the ready-gate).
-- `bin/start-orchestrator.sh`: first run; by default runs the orchestrator in
-  your terminal (foreground) and spawns roles into tmux (`--tmux` puts the
-  orchestrator in tmux too). `bin/launch-team.sh`: spawn roles (`--workdir` to
-  target external code). `bin/attach.sh`: attach to the team tmux session.
+- `bin/start-orchestrator.sh`: first run (also the recovery entry point); by
+  default runs the orchestrator and roles together in ONE tmux session
+  (`--foreground` runs the orchestrator in your terminal instead, with roles
+  still in tmux). On every (re)start it ensures the supervisor daemons (see the
+  README Daemon lifecycle section), so a recovery does not leave them dead.
+  `bin/launch-team.sh`: spawn roles (`--workdir` to target external code).
+  `bin/attach.sh`: attach to the team tmux session.
 - `bin/add-role.sh` / `bin/retire-role.sh`: dynamic team scaling (B9). Add one
   role to a LIVE team (enforces a soft, operator-chosen team-size cap, default 12,
   custom, or uncapped, from `$TEAM_DIR/max-team-size` or `MAX_TEAM_SIZE`; refuses
