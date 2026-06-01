@@ -113,6 +113,31 @@ last_snap=0
 echo "$(iso) tmux-watchdog start: session=$TEAM_SESSION socket=$TEAM_TMUX interval=${interval}s snap=${snap_interval}s" >> "$af"
 write_state "$prev_state" "$nowts" "$since"
 
+# Self-heal the api-watchdog. It does real work (pane scans, sends keystrokes) and
+# can die (crash, OOM, killed by stop-team during a partial restart); between
+# launches nothing restarts it, and a dead api-watchdog means a transient API
+# rate-limit stall halts the whole team silently (2026-06-01: it was down a full
+# day after an orchestrator recovery). This tmux-watchdog is the robust always-on
+# daemon (no API calls, minimal work, survives tmux death), so it is the natural
+# supervisor-of-supervisor. Re-ensure quietly each loop; log + push only when it
+# actually had to restart. Mirrors team-spawn.sh's start_api_watchdog idempotency.
+ensure_api_watchdog() {
+  [ "${API_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/api-watchdog.sh" ] || return 0
+  local pidf="$TEAM_DIR/api-watchdog.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+         && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'api-watchdog'; then
+      return 0   # alive; nothing to do
+    fi
+  fi
+  nohup "$repo/bin/api-watchdog.sh" >"$TEAM_DIR/api-watchdog.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "$(iso) SELF-HEAL: api-watchdog was down; restarted (pid $!)" >> "$af"
+  notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] api-watchdog was down; tmux-watchdog restarted it (pid $!)"
+}
+
 while true; do
   nowts=$(now)
   if command tmux -L "$TEAM_TMUX" has-session -t "$TEAM_SESSION" 2>/dev/null; then
@@ -124,6 +149,8 @@ while true; do
     fi
     prev_state=ok
     write_state ok "$nowts" "$since"
+    # While the team is actually running, keep the api-watchdog alive (self-heal).
+    if active_has_entries; then ensure_api_watchdog; fi
     # Periodic forensic snapshot.
     if [ $((nowts - last_snap)) -ge "$snap_interval" ]; then
       snapshot
