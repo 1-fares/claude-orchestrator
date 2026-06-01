@@ -174,9 +174,12 @@ curated set.
 Keep the team as small as the goal allows. On a local subscription, every role
 defaults to the best model (Opus); drop a role to a faster model only for speed.
 On API-paid remote agents, invert it: bulk on Sonnet, Opus to check. Tune
-`model_for()` in [`bin/lib/team-spawn.sh`](./bin/lib/team-spawn.sh). Current ids:
-`opus` (`claude-opus-4-7`), `sonnet` (`claude-sonnet-4-6`), `haiku`
-(`claude-haiku-4-5`).
+`model_for()` in [`bin/lib/team-spawn.sh`](./bin/lib/team-spawn.sh): by default
+every role resolves to `opus`; the function ships commented-out example branches
+(e.g. `dashboard*) echo "haiku"`, `tester*|devops*) echo "sonnet"`) — uncomment
+and name the role pattern to drop a role to a faster model. The alias (`opus` /
+`sonnet` / `haiku`) is passed straight to `claude --model`, which resolves it to
+the current model for that tier, so there are no version strings to maintain here.
 
 ## How it works
 
