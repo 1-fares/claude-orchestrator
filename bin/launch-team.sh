@@ -143,6 +143,11 @@ echo "Watch:  bin/team-status.sh    Attach:  tmux -L $TEAM_TMUX attach -t $sessi
 # Idempotent: a repeated launch does not start a second watchdog.
 start_api_watchdog
 
+# Start the compaction watchdog (compact the orchestrator early at idle task
+# boundaries so it never drifts to the expensive near-full auto-compact ceiling).
+# Opt-out: COMPACT_WATCHDOG_DISABLED=1. Idempotent.
+start_compaction_watchdog
+
 # Start the tmux watchdog (detect a dead tmux server fast, snapshot panes for
 # forensics, ntfy on transitions, write CRASH-DETECTED.md). Added May 2026
 # after a transient-scope cleanup killed an entire team in one second.

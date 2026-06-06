@@ -207,6 +207,29 @@ start_api_watchdog() {
   echo "api-watchdog started (pid $!, log: $TEAM_DIR/api-watchdog.log)"
 }
 
+# Start the compaction watchdog for this team, once. It keeps the orchestrator's
+# context off the auto-compact ceiling by compacting it early at idle task
+# boundaries, so the run spends most of its life in a small, cheap context instead
+# of repeatedly re-reading a near-full one (see bin/compaction-watchdog.sh). Set
+# COMPACT_WATCHDOG_DISABLED=1 to skip. Single-instance via pgrep (so it also will
+# not duplicate an instance brought up by an external keepalive, e.g. cron).
+start_compaction_watchdog() {
+  [ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/compaction-watchdog.sh" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  if pgrep -f 'bin/compaction-watchdog\.sh' >/dev/null 2>&1; then
+    echo "compaction-watchdog already running"
+    return 0
+  fi
+  # 9>&- for the same flock reason as start_api_watchdog. Pass the team's socket,
+  # session and log so it targets this team's orchestrator and logs under TEAM_DIR.
+  COMPACT_SOCKET="$TEAM_TMUX" COMPACT_SESSION="$TEAM_SESSION" \
+    COMPACT_LOG="$TEAM_DIR/compaction-watchdog.log" \
+    nohup "$repo/bin/compaction-watchdog.sh" >/dev/null 2>&1 9>&- &
+  echo "$!" > "$TEAM_DIR/compaction-watchdog.pid"
+  echo "compaction-watchdog started (pid $!, log: $TEAM_DIR/compaction-watchdog.log)"
+}
+
 # Start the tmux-watchdog for this team, once. Idempotent same way as the api
 # watchdog. Set TMUX_WATCHDOG_DISABLED=1 to skip. This is the May-2026 fix:
 # detect a dead tmux server fast, snapshot the team state for forensics, push

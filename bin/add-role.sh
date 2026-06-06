@@ -177,6 +177,7 @@ start_one "$role"
 # (Previously only the api-watchdog was re-ensured here, so the others did not
 # survive a recovery.)
 start_api_watchdog || true
+start_compaction_watchdog || true
 start_tmux_watchdog || true
 start_observer || true
 start_chrome_supervisor || true

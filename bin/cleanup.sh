@@ -146,9 +146,10 @@ if [ -f "$tw_pidf" ]; then
   fi
 fi
 
-# 3b''. chrome-supervisor, observer, intake-poller (detached nohup daemons that
-# cleanup did not handle before 2026-06-01, so they leaked past a cleanup/reset).
-for _d in chrome-supervisor observer intake-poller; do
+# 3b''. compaction-watchdog, chrome-supervisor, observer, intake-poller (detached
+# nohup daemons that cleanup did not handle before 2026-06-01, so they leaked past
+# a cleanup/reset).
+for _d in compaction-watchdog chrome-supervisor observer intake-poller; do
   _pidf="$TEAM_DIR/$_d.pid"
   if [ -f "$_pidf" ]; then
     _pid="$(cat "$_pidf" 2>/dev/null || true)"

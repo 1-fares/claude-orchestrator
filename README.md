@@ -464,6 +464,29 @@ Per-role context is lost on a crash, but the ledger lets the orchestrator
 re-brief each role on its current unit in a few hundred tokens. Recovery flow
 detail in [`docs/incident-2026-05-26-tmux-scope-cleanup.md`](./docs/incident-2026-05-26-tmux-scope-cleanup.md).
 
+### Context cost control (compaction-watchdog)
+
+Claude Code only auto-compacts a session when its context approaches the window
+limit, and a near-full window is the most expensive state to run in: every turn
+re-reads a very large cached context. On a long orchestrator run that dominates
+cost. [`bin/compaction-watchdog.sh`](./bin/compaction-watchdog.sh) is a
+pure-shell supervisor daemon that compacts the orchestrator **early**, at an idle
+task boundary, so the run spends most of its life in a small, cheap context.
+
+Each scan it acts only at a genuine "good moment": the orchestrator pane has been
+unchanged for `COMPACT_IDLE_SEC` (a task boundary, and proof nothing is
+streaming — so if the operator is mid-type the daemon stands down), no turn is in
+progress (`esc to interrupt` absent), and the input line is empty or shows only
+dim autocomplete shadow text (real unsubmitted text is left alone). It then
+probes context with `/context`, and if usage is at or above
+`COMPACT_THRESHOLD_PCT` (default 70) it sends a controlled `/compact`. The
+orchestrator re-reads its ledger/state after compaction, so no working knowledge
+is lost. It makes no Claude API call, so it cannot itself be rate-limited.
+`COMPACT_DEBOUNCE_SEC` bounds how often it can fire. Disable with
+`COMPACT_WATCHDOG_DISABLED=1`. Its lifecycle matches the api-watchdog (started at
+launch, re-ensured on orchestrator (re)start and role add, self-healed by the
+tmux-watchdog).
+
 ### Daemon lifecycle
 
 A running team has several detached supervisor daemons alongside the role
@@ -476,6 +499,7 @@ reused pid) before deciding to (re)start, so calling them repeatedly is safe.
 | Daemon | Purpose | Started / re-ensured by | Stopped by |
 |---|---|---|---|
 | `api-watchdog.sh` | auto-recover API rate-limit / network stalls | `launch-team.sh`, **`start-orchestrator.sh`** (incl. recovery), `add-role.sh`, and **self-healed every 15s by `tmux-watchdog.sh`** | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
+| `compaction-watchdog.sh` | compact the orchestrator early at idle boundaries to keep context (and cost) off the auto-compact ceiling | `launch-team.sh`, `start-orchestrator.sh` (incl. recovery), `add-role.sh`, and self-healed by `tmux-watchdog.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `tmux-watchdog.sh` | detect tmux-server crash, snapshot panes, self-heal the api-watchdog | `launch-team.sh`, `start-orchestrator.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `chrome-supervisor.sh` | un-wedge roles stuck on a hung chrome MCP call | `launch-team.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `communicator` / observer | bus + optional efficiency observer | `launch-team.sh`, `add-role.sh` | `stop-team.sh` |

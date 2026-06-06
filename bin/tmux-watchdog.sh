@@ -138,6 +138,21 @@ ensure_api_watchdog() {
   notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] api-watchdog was down; tmux-watchdog restarted it (pid $!)"
 }
 
+# Keep the compaction watchdog alive too. Single-instance via pgrep so it never
+# duplicates an instance brought up elsewhere. Same self-heal contract as
+# ensure_api_watchdog. Opt-out: COMPACT_WATCHDOG_DISABLED=1.
+ensure_compaction_watchdog() {
+  [ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/compaction-watchdog.sh" ] || return 0
+  pgrep -f 'bin/compaction-watchdog\.sh' >/dev/null 2>&1 && return 0
+  COMPACT_SOCKET="$TEAM_TMUX" COMPACT_SESSION="$TEAM_SESSION" \
+    COMPACT_LOG="$TEAM_DIR/compaction-watchdog.log" \
+    nohup "$repo/bin/compaction-watchdog.sh" >/dev/null 2>&1 9>&- &
+  echo "$!" > "$TEAM_DIR/compaction-watchdog.pid"
+  echo "$(iso) SELF-HEAL: compaction-watchdog was down; restarted (pid $!)" >> "$af"
+  notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] compaction-watchdog was down; tmux-watchdog restarted it (pid $!)"
+}
+
 while true; do
   nowts=$(now)
   if command tmux -L "$TEAM_TMUX" has-session -t "$TEAM_SESSION" 2>/dev/null; then
@@ -150,7 +165,7 @@ while true; do
     prev_state=ok
     write_state ok "$nowts" "$since"
     # While the team is actually running, keep the api-watchdog alive (self-heal).
-    if active_has_entries; then ensure_api_watchdog; fi
+    if active_has_entries; then ensure_api_watchdog; ensure_compaction_watchdog; fi
     # Periodic forensic snapshot.
     if [ $((nowts - last_snap)) -ge "$snap_interval" ]; then
       snapshot
