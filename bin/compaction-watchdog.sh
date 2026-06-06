@@ -94,9 +94,12 @@ is_busy() {
 #   plain = ANSI-stripped pane (is there any text?)
 #   etxt  = pane WITH escapes (dim/faint shadow marker \e[2m / \e[0;2m)
 input_class() {
-  local plain="$1" etxt="$2" content eline
-  content="$(printf '%s' "$plain" | grep -aE '❯' | tail -1 | sed -E 's/.*❯[[:space:]]*//; s/[[:space:]]*$//')"
-  [ -z "$content" ] && { echo empty; return; }
+  local plain="$1" etxt="$2" stripped eline
+  # Content after the last prompt char. Delete UTF-8 non-breaking space (C2 A0,
+  # which Claude Code renders after the prompt and which [[:space:]] does NOT match)
+  # and all ASCII whitespace, so an empty prompt reads as empty, not as "real text".
+  stripped="$(printf '%s' "$plain" | grep -aE '❯' | tail -1 | sed -E 's/.*❯//' | sed $'s/\xc2\xa0//g' | tr -d '[:space:]')"
+  [ -z "$stripped" ] && { echo empty; return; }
   eline="$(printf '%s' "$etxt" | grep -aE '❯' | tail -1)"
   if printf '%s' "$eline" | grep -qE $'\x1b\\[0?;?2m'; then echo shadow; else echo real; fi
 }
