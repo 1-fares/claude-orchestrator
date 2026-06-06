@@ -243,10 +243,12 @@ file is the portable version of the same discipline.
   since every turn re-reads a huge cached context). Scans the orchestrator pane;
   at an idle task boundary (pane unchanged for `COMPACT_IDLE_SEC`, no
   `esc to interrupt`, input line empty or only dim autocomplete shadow text) it
-  probes `/context` and, if usage >= `COMPACT_THRESHOLD_PCT` (default 70), sends a
-  controlled `/compact`. Pure shell, no Claude API call. Same lifecycle as the
-  api-watchdog (launch + re-ensure + tmux-watchdog self-heal). Disable with
-  `COMPACT_WATCHDOG_DISABLED=1`.
+  probes `/context` and picks the moment with two thresholds: at
+  `COMPACT_NUDGE_PCT` (default 80) it asks the orchestrator to compact itself at
+  its next safe checkpoint; at `COMPACT_FORCE_PCT` (default 90) it force-sends
+  `/compact <focus instructions>` as a backstop. Pure shell, no Claude API call.
+  Same lifecycle as the api-watchdog (launch + re-ensure + tmux-watchdog
+  self-heal). Disable with `COMPACT_WATCHDOG_DISABLED=1`.
 - `bin/communicator.sh`: opens a Claude Code session in the `communicator` role,
   the team's two-way operator liaison (spec at `roles/user-communicator.md`).
   One bus identity per run, multiple front-ends share state under
