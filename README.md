@@ -478,14 +478,23 @@ unchanged for `COMPACT_IDLE_SEC` (a task boundary, and proof nothing is
 streaming — so if the operator is mid-type the daemon stands down), no turn is in
 progress (`esc to interrupt` absent), and the input line is empty or shows only
 dim autocomplete shadow text (real unsubmitted text is left alone). It then
-probes context with `/context`, and if usage is at or above
-`COMPACT_THRESHOLD_PCT` (default 70) it sends a controlled `/compact`. The
-orchestrator re-reads its ledger/state after compaction, so no working knowledge
-is lost. It makes no Claude API call, so it cannot itself be rate-limited.
-`COMPACT_DEBOUNCE_SEC` bounds how often it can fire. Disable with
-`COMPACT_WATCHDOG_DISABLED=1`. Its lifecycle matches the api-watchdog (started at
-launch, re-ensured on orchestrator (re)start and role add, self-healed by the
-tmux-watchdog).
+probes context with `/context` and picks the **right moment** with two thresholds,
+agent-cooperative first:
+
+- at `COMPACT_NUDGE_PCT` (default 80) it does **not** force anything — it asks the
+  orchestrator to compact *itself* at its next safe checkpoint (ledger/state
+  written, no in-flight subagent). The agent knows a semantically safe point
+  better than any pane heuristic;
+- at `COMPACT_FORCE_PCT` (default 90) it force-sends `/compact <focus instructions>`
+  as a backstop. By 90% auto-compact is imminent anyway, so a controlled forced
+  compaction is the safer of two certainties.
+
+The orchestrator re-reads its ledger/state after compaction, so no working
+knowledge is lost. The daemon makes no Claude API call, so it cannot itself be
+rate-limited. `COMPACT_NUDGE_DEBOUNCE` / `COMPACT_DEBOUNCE_SEC` bound how often it
+nudges / forces. Disable with `COMPACT_WATCHDOG_DISABLED=1`. Its lifecycle matches
+the api-watchdog (started at launch, re-ensured on orchestrator (re)start and role
+add, self-healed by the tmux-watchdog).
 
 ### Daemon lifecycle
 
