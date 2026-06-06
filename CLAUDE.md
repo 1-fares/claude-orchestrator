@@ -238,6 +238,15 @@ file is the portable version of the same discipline.
   through the operator. Auto-started by `launch-team.sh`. Disable with
   `TMUX_WATCHDOG_DISABLED=1`. Background and recovery flow in
   `docs/incident-2026-05-26-tmux-scope-cleanup.md`.
+- `bin/compaction-watchdog.sh`: keeps the orchestrator's context off the
+  auto-compact ceiling (a near-full window is the most expensive state to run in,
+  since every turn re-reads a huge cached context). Scans the orchestrator pane;
+  at an idle task boundary (pane unchanged for `COMPACT_IDLE_SEC`, no
+  `esc to interrupt`, input line empty or only dim autocomplete shadow text) it
+  probes `/context` and, if usage >= `COMPACT_THRESHOLD_PCT` (default 70), sends a
+  controlled `/compact`. Pure shell, no Claude API call. Same lifecycle as the
+  api-watchdog (launch + re-ensure + tmux-watchdog self-heal). Disable with
+  `COMPACT_WATCHDOG_DISABLED=1`.
 - `bin/communicator.sh`: opens a Claude Code session in the `communicator` role,
   the team's two-way operator liaison (spec at `roles/user-communicator.md`).
   One bus identity per run, multiple front-ends share state under

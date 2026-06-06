@@ -85,6 +85,18 @@ if [ -f "$tw_pidf" ]; then
   rm -f "$tw_pidf"
 fi
 
+# Kill the compaction watchdog. After the tmux-watchdog above, so it is not
+# self-healed back up between the two kills.
+cw_pidf="$TEAM_DIR/compaction-watchdog.pid"
+if [ -f "$cw_pidf" ]; then
+  cw_pid="$(cat "$cw_pidf" 2>/dev/null || true)"
+  if [ -n "$cw_pid" ] && kill -0 "$cw_pid" 2>/dev/null; then
+    kill -TERM "$cw_pid" 2>/dev/null || true
+    echo "stopped compaction-watchdog (pid $cw_pid)"; killed=1
+  fi
+  rm -f "$cw_pidf"
+fi
+
 # Kill the chrome-devtools supervisor, if launch-team.sh started one for this run.
 cs_pidf="$TEAM_DIR/chrome-supervisor.pid"
 if [ -f "$cs_pidf" ]; then
