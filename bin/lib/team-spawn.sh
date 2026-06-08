@@ -192,8 +192,14 @@ start_api_watchdog() {
   local pidf="$TEAM_DIR/api-watchdog.pid" oldpid
   if [ -f "$pidf" ]; then
     oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    # Stale-pidfile / pid-reuse guard: treat the pid as "already running" ONLY if
+    # it is ACTUALLY this daemon. Match the exec'd script PATH (bin/api-watchdog.sh),
+    # not a bare name -- a recycled pid running `grep api-watchdog`, `tail
+    # ...api-watchdog.log`, or another run's daemon must NOT false-positive, or a
+    # dead daemon would never be relaunched (the bug that left both watchdogs dead
+    # while ensure thought they were alive).
     if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
-       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'api-watchdog'; then
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/api-watchdog\.sh'; then
       echo "api-watchdog already running (pid $oldpid)"
       return 0
     fi
@@ -241,8 +247,9 @@ start_tmux_watchdog() {
   local pidf="$TEAM_DIR/tmux-watchdog.pid" oldpid
   if [ -f "$pidf" ]; then
     oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    # pid-reuse guard: match the exec'd script PATH, not a bare name (see start_api_watchdog).
     if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
-       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'tmux-watchdog'; then
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/tmux-watchdog\.sh'; then
       echo "tmux-watchdog already running (pid $oldpid)"
       return 0
     fi
@@ -264,8 +271,10 @@ start_observer() {
   local pidf="$TEAM_DIR/observer.pid" oldpid
   if [ -f "$pidf" ]; then
     oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    # pid-reuse guard: match the exec'd script PATH, not a bare name (see start_api_watchdog).
+    # 'observer' as a bare substring is especially collision-prone.
     if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
-       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'observer'; then
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/observer\.sh'; then
       echo "observer already running (pid $oldpid)"
       return 0
     fi
@@ -289,8 +298,9 @@ start_chrome_supervisor() {
   local pidf="$TEAM_DIR/chrome-supervisor.pid" oldpid
   if [ -f "$pidf" ]; then
     oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    # pid-reuse guard: match the exec'd script PATH, not a bare name (see start_api_watchdog).
     if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
-       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'chrome-supervisor'; then
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/chrome-supervisor\.sh'; then
       echo "chrome-supervisor already running (pid $oldpid)"
       return 0
     fi

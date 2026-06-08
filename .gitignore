@@ -4,6 +4,8 @@
 # (TEAM_RUN_ID set), so both patterns are ignored.
 .team/
 .team-*/
+# state-backup cron log (runtime artifact; the .team-*/ dir glob above does not match a bare file)
+.team-backup.log
 
 # Per-clone target config written by bin/run.sh (local, not for the template).
 project.conf
