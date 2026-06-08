@@ -50,6 +50,10 @@
 
 set -uo pipefail
 
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/lib/compaction-detect.sh
+. "$repo/bin/lib/compaction-detect.sh"
+
 SOCK="${COMPACT_SOCKET:-orchestrator}"
 SESSION="${COMPACT_SESSION:-}"
 NUDGE="${COMPACT_NUDGE_PCT:-${COMPACT_THRESHOLD_PCT:-80}}"
@@ -105,17 +109,16 @@ input_class() {
 }
 
 probe_pct() {
-  local t="$1" out pct
+  local t="$1"
   tmux_o send-keys -t "$t" C-u 2>/dev/null
   tmux_o send-keys -t "$t" -l "/context" 2>/dev/null
   tmux_o send-keys -t "$t" Enter 2>/dev/null
   sleep "$PROBE_WAIT"
-  out="$(tmux_o capture-pane -t "$t" -p -S -40 2>/dev/null)"
-  # First "(NN%)" in /context output is the total tokens line, e.g.
-  # "931.6k/1m tokens (93%)". Sub-category lines are decimals like "(0.2%)"
-  # and do not match the integer-only pattern.
-  pct="$(printf '%s' "$out" | grep -oE '\([0-9]+%\)' | head -1 | grep -oE '[0-9]+')"
-  printf '%s' "$pct"
+  # Capture a wide window (the /context block grows near the ceiling: the warning
+  # block + footer push the total line up) and parse all known formats. The total
+  # moved from a parenthesised "(NN%)" to a "NN% context used" footer in 2.1.x;
+  # see bin/lib/compaction-detect.sh.
+  tmux_o capture-pane -t "$t" -p -S -60 2>/dev/null | parse_context_pct
 }
 
 # Cooperative: ask the orchestrator to compact itself at its own safe checkpoint.
