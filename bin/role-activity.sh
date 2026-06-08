@@ -15,9 +15,18 @@
 #     is the strongest signal. A `Task(` invocation in the recent pane scroll
 #     is a weaker signal (the operator may scroll history past it) and only
 #     promotes to `delegating` when no spinner is also present.
-#   * Busy spinner. `Working…`, `Cooked for`, `Brewed for`, `Thinking`, or the
-#     `↓ N tokens` token counter — any of these means the role is actively
-#     processing.
+#   * Busy spinner, detected by STRUCTURE, not by verb. Claude Code's live
+#     spinner is a present-tense gerund with an ellipsis and a running timer
+#     ("Working… (1m 23s · ↓ 4.3k tokens)") and cycles the gerund through many
+#     whimsical words (Cogitating, Percolating, Baking, …), so enumerating verbs
+#     misses most of them and reads an active role as idle. Match the invariants
+#     instead: the `…(`-timer, a live `↓ N tokens` readout (k/m suffixes
+#     included), or `esc to interrupt`. Crucially the IDLE completion summary is
+#     the PAST-tense "Worked/Baked/Brewed for 8m 11s · 1 monitor still running"
+#     line — no ellipsis-paren, no live `↓ tokens` — and must NOT count as busy
+#     (the old regex listed "Brewed for"/"Cooked for" and wrongly read a finished
+#     role as working). Only the spinner zone just above the input box is
+#     inspected, not the whole scrollback, so stale frames cannot leak in.
 #   * Else: the pane shows the `❯ ` (or `❯ Try`) input prompt with no spinner
 #     and no subagent line above it. That is `idle`.
 #
@@ -82,20 +91,29 @@ if [ -n "$n_bg" ] && [ "$n_bg" -gt 0 ]; then
   exit 0
 fi
 
+# Active-spinner markers, verb-agnostic (see header). The live spinner shows an
+# ellipsis-then-timer "Verb… (1m 23s", a live "↓ N tokens" readout with optional
+# k/m suffix, and/or "esc to interrupt" during a tool call. The PAST-tense idle
+# completion summary ("Worked/Baked/Brewed for 8m · 1 monitor still running")
+# has none of these, so it correctly does not match. "Working…"/"Thinking…" are
+# kept as a belt-and-suspenders for the sub-second pre-timer frame of the two
+# most common verbs. Only inspect the spinner zone just above the input box, not
+# the whole scrollback, so a finished turn's stale frame cannot read as busy.
+SPIN_RE='esc to interrupt|…[[:space:]]*\(|↓[[:space:]]*[0-9.]+[kKmM]?[[:space:]]*tokens|Working…|Thinking…'
+spin_zone="$(printf '%s\n' "$pane" | tail -15)"
+
 if printf '%s\n' "$pane" | grep -Eq '(^|[^a-zA-Z])Task\('; then
   # Bare Task( invocation visible in scroll; no parseable count.
   # Only promote to delegating if no active spinner is also present, since a
   # spinner means the role is processing the result, not waiting on a subagent.
-  if ! printf '%s\n' "$pane" \
-       | grep -Eq 'Working…|Cooked for|Brewed for|Thinking|↓ *[0-9]+ *tokens'; then
+  if ! printf '%s\n' "$spin_zone" | grep -Eq "$SPIN_RE"; then
     echo "delegating"
     exit 0
   fi
 fi
 
 # Busy spinner: any of Claude Code's processing indicators.
-if printf '%s\n' "$pane" \
-     | grep -Eq 'Working…|Cooked for|Brewed for|Thinking|↓ *[0-9]+ *tokens'; then
+if printf '%s\n' "$spin_zone" | grep -Eq "$SPIN_RE"; then
   echo "working"
   exit 0
 fi
