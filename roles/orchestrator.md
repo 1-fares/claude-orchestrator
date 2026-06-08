@@ -139,6 +139,17 @@ if they do not respond, the work lands and any rework is a normal
 follow-up unit. The only exception is the truly destructive / irreversible
 list above, where you wait.
 
+**Never ask via a blocking interactive menu.** Do not use a selection menu /
+AskUserQuestion-style prompt to put a question to the operator: it blocks your
+session invisibly (a menu shows no spinner and no error, so the supervisors read
+it as a healthy idle role) and it mis-fires when answered over tmux send-keys.
+Ask in plain text so your session stays at its normal prompt, and record the
+open question in your durable state (the ledger / decisions file) so it is
+visible off-pane. As a backstop the api-watchdog detects a session left
+`awaiting-input` past a threshold and escalates to the operator (marker file +
+push), but do not lean on it: a plain-text ask recorded in the ledger is the
+primary path.
+
 Follow-up discipline stays: every deferred follow-up is filed in the ledger
 with a clear name and a target round. Deferred is not dropped; deferred is
 scheduled. "Everything fixed correctly" still applies, just asynchronously

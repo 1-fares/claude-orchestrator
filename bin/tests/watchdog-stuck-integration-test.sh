@@ -13,6 +13,7 @@ export TEAM_RUN_ID="wdtest$$"
 export TEAM_TMUX="wdt$$"
 export STUCK_THRESHOLD_SEC=2
 export STUCK_MAX_NUDGES=2
+export AWAIT_OPERATOR_SEC=2
 export API_WATCHDOG_PATTERNS="$repo/bin/api-watchdog.patterns"
 unset NTFY_URL
 
@@ -84,6 +85,39 @@ scan
 st="$(state_of thinkrole)"
 [ "$st" = "active" ] && ok "thinkrole stays active (token readout advancing)" || bad "thinkrole wrongly '$st' (token-liveness regression)"
 
+echo "step 4: a role blocked on an interactive menu -> awaiting-input -> escalate + marker"
+# A blocked-on-menu role: prints a selection menu (no spinner) and holds. This
+# is the silent stall the api-stall and stuck detectors both miss.
+$TM new-window -t "$TEAM_SESSION" -n waitrole \
+  "bash -c 'stty -echo 2>/dev/null; printf \"● How should the team proceed?\n❯ 1. Hold steady-state\n  2. Resume the parked workstream\n────\n  Enter to select · up/down to navigate · Esc to cancel\n\"; sleep 600'"
+sleep 1
+scan
+sw1="$(state_of waitrole)"
+[ "$sw1" = "awaiting-input" ] && ok "waitrole -> awaiting-input on first sight" || bad "waitrole expected awaiting-input, got '$sw1'"
+[ ! -f "$hf/awaiting-waitrole.md" ] && ok "no operator marker before threshold" || bad "marker written too early"
+sleep 3
+scan
+sw2="$(state_of waitrole)"
+[ "$sw2" = "awaiting-input-esc" ] && ok "waitrole -> awaiting-input-esc after threshold" || bad "expected awaiting-input-esc, got '$sw2'"
+[ -f "$hf/awaiting-waitrole.md" ] && ok "operator marker written" || bad "operator marker missing"
+grep -q "AWAITING-INPUT-ESCALATED" "$TEAM_DIR/audit/api-watchdog/waitrole.log" 2>/dev/null \
+  && ok "audit log records escalation" || bad "audit log missing escalation line"
+# A second scan must NOT re-escalate (state stays -esc, idempotent push).
+scan
+[ "$(state_of waitrole)" = "awaiting-input-esc" ] && ok "no re-escalation while still blocked" || bad "state churned off awaiting-input-esc"
+
+echo "step 5: prompt clears (operator answered) -> recovery removes the marker"
+$TM kill-window -t "$TEAM_SESSION:waitrole" 2>/dev/null || true
+$TM new-window -t "$TEAM_SESSION" -n waitrole \
+  "bash -c 'stty -echo 2>/dev/null; printf \"● Done, standing by.\n────\n❯ \n\"; sleep 600'"
+sleep 1
+scan
+sw3="$(state_of waitrole)"
+[ "$sw3" = "active" ] && ok "waitrole recovered to active" || bad "expected active, got '$sw3'"
+[ ! -f "$hf/awaiting-waitrole.md" ] && ok "operator marker removed on recovery" || bad "marker not removed"
+grep -q "RECOVERED-AWAIT" "$TEAM_DIR/audit/api-watchdog/waitrole.log" 2>/dev/null \
+  && ok "audit log records recovery" || bad "audit log missing recovery line"
+
 echo
-if [ "$fail" = 0 ]; then echo "PASS: stuck detection + recovery ladder"; exit 0
+if [ "$fail" = 0 ]; then echo "PASS: stuck detection + recovery ladder + awaiting-input escalation"; exit 0
 else echo "FAIL: see above"; exit 1; fi

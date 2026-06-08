@@ -31,8 +31,19 @@
 #                for self-healing.
 #
 # Health per role is recorded under $TEAM_DIR/health/<role>.json with a single
-# `state` field: active | stalled-api | stuck | stuck-giveup | give-up. The
-# orchestrator reads these (pull-based, Tier-3 awareness).
+# `state` field: active | stalled-api | stuck | stuck-giveup | give-up |
+# awaiting-input | awaiting-input-esc. The orchestrator reads these (pull-based,
+# Tier-3 awareness).
+#
+#   C. AWAITING-INPUT — a role is blocked on an interactive prompt (a selection
+#      menu / confirmation) with no spinner: it cannot proceed without a human.
+#      The api-stall and stuck detectors both miss this (no error pattern, no
+#      spinner), so a blocked role reads as a healthy idle one and silently
+#      stalls the run. No automated recovery is possible (only a human answers),
+#      so after AWAIT_OPERATOR_SEC the watchdog escalates ONCE: it writes a
+#      marker $TEAM_DIR/health/awaiting-<role>.md (an external watcher can see
+#      it even with NTFY unset) and pushes the operator. Cleared when the prompt
+#      clears.
 #
 # Pure shell + curl + jq + tmux. Never makes a Claude API call, so cannot
 # itself be rate-limited.
@@ -67,6 +78,13 @@ stuck_max_nudges="${STUCK_MAX_NUDGES:-2}"
 # auto retire+respawn did NOT clear it, so the operator is the only recourse and
 # we push ONCE. Transient wedges that the nudge/respawn clears never reach here.
 stuck_operator_sec="${STUCK_OPERATOR_SEC:-$((stuck_threshold + 600))}"
+# AWAITING-INPUT: a role blocked on an interactive prompt (selection menu /
+# confirmation) cannot proceed without a human. There is no automated recovery
+# (only a human can answer), so after this long we escalate ONCE to the operator
+# and drop a marker file an external watcher can see. Lower than the stuck path:
+# a blocked prompt is dead time from the first second, not a maybe-transient wedge.
+await_disabled="${AWAIT_WATCHDOG_DISABLED:-0}"
+await_operator_sec="${AWAIT_OPERATOR_SEC:-300}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -209,6 +227,14 @@ scan_once() {
       last_nudge=$(read_field "$hf" last_nudge_at 0)
       nowts=$(now)
 
+      # Recover from a prior awaiting-input the moment the prompt clears (a human
+      # answered, or it moved on to work/idle), whatever state it moved to. Drop
+      # the operator marker so the external watcher stops flagging it.
+      if [ "$state" != "awaiting-input" ] && { [ "$prev" = "awaiting-input" ] || [ "$prev" = "awaiting-input-esc" ]; }; then
+        echo "$(iso "$nowts") [$name] RECOVERED-AWAIT (interactive prompt cleared)" >> "$af"
+        rm -f "$health_dir/awaiting-$name.md" 2>/dev/null || true
+      fi
+
       # --- A. API-STALL path (idle at prompt with an error pattern) ----------
       if [ "$state" = "stalled-api" ]; then
         if [ "$prev" != "stalled-api" ] && [ "$prev" != "give-up" ]; then
@@ -237,6 +263,46 @@ scan_once() {
           echo "$(iso "$nowts") [$name] retry $retries/$max_retries (waited ${required}s)" >> "$af"
         fi
         persist "$hf" "stalled-api" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
+        continue
+      fi
+
+      # --- D. AWAITING-INPUT path (blocked on an interactive operator prompt) -
+      # A selection menu / confirmation is on screen: the session is blocked
+      # until a human answers and nothing in the run proceeds. There is NO
+      # automated recovery (only a human can answer), so once it has waited past
+      # await_operator_sec we escalate ONCE: write a marker file an external
+      # watcher (laptop observer, dashboard) can see, and push the operator.
+      # Re-armed by the RECOVERED-AWAIT cleanup above when the prompt clears.
+      if [ "$state" = "awaiting-input" ] && [ "$await_disabled" != 1 ]; then
+        if [ "$prev" != "awaiting-input" ] && [ "$prev" != "awaiting-input-esc" ]; then
+          since=$nowts
+          echo "$(iso "$nowts") [$name] AWAITING-INPUT (blocked on interactive prompt)" >> "$af"
+        fi
+        [ "$since" -eq 0 ] && since=$nowts
+        waited=$((nowts - since))
+        if [ "$prev" != "awaiting-input-esc" ] && [ "$waited" -ge "$await_operator_sec" ]; then
+          mins=$((waited / 60))
+          marker="$health_dir/awaiting-$name.md"
+          {
+            echo "# Operator decision needed — role '$name' blocked ${mins}m"
+            echo
+            echo "_$(iso "$nowts")_ — '$name' is waiting on an interactive prompt"
+            echo "(selection menu / confirmation). Nothing in the run proceeds"
+            echo "until a human answers. Attach: TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/attach.sh"
+            echo
+            echo '```'
+            printf '%s\n' "$visible" | tail -20
+            echo '```'
+          } > "$marker" 2>/dev/null || true
+          echo "$(iso "$nowts") [$name] AWAITING-INPUT-ESCALATED (blocked ${mins}m; marker=$marker)" >> "$af"
+          notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' blocked ${mins}m on an interactive prompt; operator decision needed (see $marker)"
+          persist "$hf" "awaiting-input-esc" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
+          continue
+        fi
+        # Not yet past threshold, or already escalated: hold state (do not
+        # downgrade an -esc back to awaiting-input, or it would re-escalate).
+        newstate="awaiting-input"; [ "$prev" = "awaiting-input-esc" ] && newstate="awaiting-input-esc"
+        persist "$hf" "$newstate" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
         continue
       fi
 
@@ -327,7 +393,7 @@ scan_once() {
     done
 }
 
-echo "api-watchdog: starting team=$TEAM_SESSION run=${TEAM_RUN_ID:-legacy} interval=${interval}s max-retries=$max_retries stuck=$([ "$stuck_disabled" = 1 ] && echo off || echo "${stuck_threshold}s/${stuck_max_nudges}nudges") ntfy=${NTFY_URL:-<unset>}"
+echo "api-watchdog: starting team=$TEAM_SESSION run=${TEAM_RUN_ID:-legacy} interval=${interval}s max-retries=$max_retries stuck=$([ "$stuck_disabled" = 1 ] && echo off || echo "${stuck_threshold}s/${stuck_max_nudges}nudges") await=$([ "$await_disabled" = 1 ] && echo off || echo "${await_operator_sec}s") ntfy=${NTFY_URL:-<unset>}"
 if [ "$once" = 1 ]; then
   scan_once; exit 0
 fi

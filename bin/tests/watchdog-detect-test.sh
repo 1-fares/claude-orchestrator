@@ -72,6 +72,43 @@ stalled() { cat <<'EOF'
   -- INSERT -- ⏵⏵ bypass permissions on
 EOF
 }
+# Idle at the prompt, but with the persistent "· N monitor" chrome in the
+# status bar — the real shape of an idle role (the inter-session monitor is
+# always running). The monitor count must NOT be read as a busy marker, or a
+# role that legitimately holds at its prompt past the threshold is falsely
+# flagged stuck. Regression for that false-stuck.
+idle_monitor() { cat <<'EOF'
+● Standing by — holding for infra to resolve access.
+  [2026-05-30 10:18 Etc/UTC]
+────────────────────────────────────────────────────────────────────────────
+❯ Standing by — holding for infra to resolve access.
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on · 1 monitor
+EOF
+}
+# Blocked on an interactive selection menu (AskUserQuestion / plan / permission)
+# awaiting a human decision. Not busy (no spinner), not a plain idle prompt:
+# the run is BLOCKED until a human answers. Must classify awaiting-input so the
+# watchdog escalates instead of reading it as a healthy idle role. This is the
+# silent team-wide stall a real run hit (orchestrator parked on a menu 19h).
+menu() { cat <<'EOF'
+● The resumed ledger carries two workstreams. How should the team proceed?
+❯ 1. Hold steady-state only
+  2. Resume the parked workstream now
+  3. Type something
+────────────────────────────────────────────────────────────────────────────
+  Enter to select · ↑/↓ to navigate · Esc to cancel
+EOF
+}
+# Blocked on a yes/no confirmation prompt.
+confirm() { cat <<'EOF'
+● Edit src/templates/invoice.ts?
+  Do you want to proceed?
+❯ 1. Yes
+  2. No, and tell me what to do differently
+────────────────────────────────────────────────────────────────────────────
+EOF
+}
 
 echo "fingerprint stability (the core stuck discriminator):"
 fa="$(wedged_a | _fingerprint_text)"
@@ -84,11 +121,23 @@ echo "is_busy:"
 wedged_a | _is_busy_text && eq "wedged is busy" "busy" "busy" || bad "wedged should be busy"
 idle     | _is_busy_text && bad "idle should NOT be busy" || ok "idle not busy"
 stalled  | _is_busy_text && bad "stalled should NOT be busy" || ok "stalled not busy"
+idle_monitor | _is_busy_text && bad "idle with '· 1 monitor' should NOT be busy" || ok "idle with monitor not busy"
+menu     | _is_busy_text && bad "menu should NOT be busy" || ok "menu not busy"
 
 echo "classify:"
 eq "wedged classifies active (the blind spot api-stall can't see)" "$(wedged_a | _classify_text)" "active"
 eq "idle classifies active"        "$(idle    | _classify_text)" "active"
 eq "stalled classifies stalled-api" "$(stalled | _classify_text)" "stalled-api"
+
+echo "awaiting-input (the silent team-wide stall this guard closes):"
+menu    | _is_awaiting_input_text && ok "menu is awaiting-input" || bad "menu should be awaiting-input"
+confirm | _is_awaiting_input_text && ok "confirm is awaiting-input" || bad "confirm should be awaiting-input"
+idle    | _is_awaiting_input_text && bad "idle should NOT be awaiting-input" || ok "idle not awaiting-input"
+wedged_a | _is_awaiting_input_text && bad "wedged should NOT be awaiting-input" || ok "wedged not awaiting-input"
+eq "menu classifies awaiting-input"    "$(menu    | _classify_text)" "awaiting-input"
+eq "confirm classifies awaiting-input" "$(confirm | _classify_text)" "awaiting-input"
+eq "idle still classifies active (not awaiting)" "$(idle | _classify_text)" "active"
+eq "idle_monitor classifies active (not stuck, not awaiting)" "$(idle_monitor | _classify_text)" "active"
 
 # A long legitimate THINK: body static, but the token counter climbs. The
 # daemon must read this as alive (not wedged) via the token readout, even
