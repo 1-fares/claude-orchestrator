@@ -15,6 +15,13 @@
 #
 # Provided:
 #   parse_context_pct   stdin = /context pane text -> echoes the integer % (or empty)
+#   _ceiling_state      stdin = LIVE pane text -> '' | warn | limit | compact-failed
+#
+# _ceiling_state exists because the idle-gated /context probe never runs while the
+# session is BUSY, yet a busy session climbing to the ceiling renders these states
+# right in the pane chrome (no /context needed). The watchdog checks this every
+# cycle, busy or not, so a near-full / wedged orchestrator is acted on + alerted
+# instead of silently dying at the unrecoverable ceiling (where compaction fails).
 
 # parse_context_pct: stdin = captured /context pane text -> the total context %.
 # Tries formats in order of reliability:
@@ -29,4 +36,21 @@ parse_context_pct() {
   [ -z "$p" ] && p="$(printf '%s' "$out" | grep -oiE 'context is [0-9]+% full' | grep -oE '[0-9]+' | tail -1)"
   [ -z "$p" ] && p="$(printf '%s' "$out" | grep -oiE '/[0-9.]+[kKmM] tokens \([0-9]+%\)' | grep -oE '\([0-9]+%\)' | grep -oE '[0-9]+' | tail -1)"
   printf '%s' "$p"
+}
+
+# _ceiling_state: stdin = live pane text -> the most severe context-pressure state
+# visible, in priority order (worst first). These strings render even when the
+# session is busy, so the watchdog can catch them without a /context probe:
+#   compact-failed : auto/manual compaction could not reduce below the limit
+#                    (UNRECOVERABLE by compaction -> needs /clear+rebrief)
+#   limit          : "Context limit reached" hard wall (turn cannot proceed)
+#   warn           : "Context is NN% full" / "Autocompact will trigger soon"
+#                    (near-full, still compactable -> force a compact now)
+#   (empty)        : healthy
+_ceiling_state() {
+  local t; t="$(cat)"
+  if printf '%s' "$t" | grep -qiE 'compaction failed|could not be reduced below'; then echo compact-failed; return; fi
+  if printf '%s' "$t" | grep -qiE 'context limit reached'; then echo limit; return; fi
+  if printf '%s' "$t" | grep -qiE 'context is [0-9]+% full|autocompact will trigger'; then echo warn; return; fi
+  echo ''
 }

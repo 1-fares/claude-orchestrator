@@ -58,6 +58,24 @@ eq "older parenthesised total line (93%)"         "$(old_fmt       | parse_conte
 eq "warning-only falls back to the warn %"        "$(warn_only     | parse_context_pct)" "96"
 eq "decimal category lines alone -> empty"        "$(decimals_only | parse_context_pct)" ""
 
+# _ceiling_state — the busy-agnostic guard that catches a near-full/wedged
+# orchestrator from the live pane (no /context probe). These strings render even
+# while the session is busy, which the idle-gated probe never sees.
+healthy_busy() { printf '● Calling ms365…\n· Working… (12s · esc to interrupt)\n❯ \n'; }
+near_full()    { printf '%s\n' '⚠ Context is 96% full' 'Autocompact will trigger soon, which discards older messages.' '98% context used · /model opus[1m]'; }
+autocompact()  { printf '%s\n' 'Autocompact will trigger soon'; }
+hard_limit()   { printf '%s\n' '⎿  Context limit reached · /compact or /clear to continue'; }
+compact_fail() { printf '%s\n' '⎿  Error: Compaction failed · conversation could not be reduced below the context limit'; }
+
+echo "_ceiling_state (busy-agnostic ceiling guard):"
+eq "healthy/busy pane -> empty"            "$(healthy_busy | _ceiling_state)" ""
+eq "near-full warning -> warn"             "$(near_full    | _ceiling_state)" "warn"
+eq "autocompact-soon -> warn"              "$(autocompact  | _ceiling_state)" "warn"
+eq "context limit reached -> limit"        "$(hard_limit   | _ceiling_state)" "limit"
+eq "compaction failed -> compact-failed"   "$(compact_fail | _ceiling_state)" "compact-failed"
+# worst-first priority: a pane showing BOTH limit and failed reads as compact-failed
+eq "limit+failed together -> compact-failed (worst first)" "$( { hard_limit; compact_fail; } | _ceiling_state)" "compact-failed"
+
 echo
 if [ "$fail" = 0 ]; then echo "PASS: all compaction-probe assertions"; exit 0
 else echo "FAIL: see above"; exit 1; fi

@@ -65,6 +65,15 @@ IDLE_SEC="${COMPACT_IDLE_SEC:-45}"
 PROBE_WAIT="${COMPACT_PROBE_WAIT:-4}"
 PRESERVE="${COMPACT_PRESERVE:-preserve the current task state, open decisions, and in-flight work}"
 LOG="${COMPACT_LOG:-${TEAM_DIR:-.}/compaction-watchdog.log}"
+# Ceiling guard (busy-agnostic). A near-full / wedged orchestrator renders the
+# warning/limit/failed strings in its pane even while busy; the idle-gated probe
+# below never sees them. We check every cycle and: force a compact on the warning
+# (still compactable), and on the unrecoverable ceiling/failed-compaction write a
+# loud operator marker (so it is never a silent wedge) and, if AUTORECOVER, do a
+# /clear + rebrief once the state persists (the manual recovery, automated).
+MARKER="${COMPACT_CEILING_MARKER:-${TEAM_DIR:-.}/health/ceiling-orchestrator.md}"
+AUTORECOVER="${COMPACT_AUTORECOVER:-1}"
+RECOVER_DEBOUNCE="${COMPACT_RECOVER_DEBOUNCE:-600}"
 
 [ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && { echo "compaction-watchdog disabled"; exit 0; }
 
@@ -141,8 +150,27 @@ do_compact() {
   tmux_o send-keys -t "$t" Enter 2>/dev/null
 }
 
-last_fp=""; fp_since=0; last_compact=0; last_nudge=0
-log "start: nudge=${NUDGE}% force=${FORCE}% idle=${IDLE_SEC}s interval=${INTERVAL}s nudge_debounce=${NUDGE_DEBOUNCE}s force_debounce=${DEBOUNCE}s sock=${SOCK} session=${SESSION:-auto}"
+# Last-resort recovery for the UNRECOVERABLE ceiling (compaction failed / hard
+# limit): /clear, then re-brief so the orchestrator rebuilds from disk. This is
+# the manual recovery (forced /clear + rehydrate from state.md) automated. The
+# orchestrator's load-bearing state lives in state.md + the ledger, so a clear is
+# safe; the rebrief points it back at those rather than summarising from memory.
+do_clear_rebrief() {
+  local t="$1"
+  tmux_o send-keys -t "$t" C-u 2>/dev/null
+  tmux_o send-keys -t "$t" -l "/clear" 2>/dev/null
+  tmux_o send-keys -t "$t" Enter 2>/dev/null
+  sleep 3
+  local brief="You are the orchestrator, auto-recovered from a context-limit wedge (compaction could not reduce below the limit, so the watchdog /cleared you; your state is on disk). Re-join the bus: /is c orchestrator. Then reconstruct the run from ./CLAUDE.md, ./roles/orchestrator.md, ${TEAM_DIR:-.}/state.md and ${TEAM_DIR:-.}/DECISIONS-FOR-FARES.md (read the recent tail). Resume from there; keep context lean (point to files, do not re-read everything, checkpoint+compact at task boundaries). Report status when re-oriented."
+  tmux_o send-keys -t "$t" C-u 2>/dev/null
+  tmux_o send-keys -t "$t" -l "$brief" 2>/dev/null
+  tmux_o send-keys -t "$t" Enter 2>/dev/null
+  sleep 1
+  tmux_o send-keys -t "$t" Enter 2>/dev/null
+}
+
+last_fp=""; fp_since=0; last_compact=0; last_nudge=0; last_recover=0; ceiling_seen=0
+log "start: nudge=${NUDGE}% force=${FORCE}% idle=${IDLE_SEC}s interval=${INTERVAL}s nudge_debounce=${NUDGE_DEBOUNCE}s force_debounce=${DEBOUNCE}s ceiling-guard=on autorecover=${AUTORECOVER} sock=${SOCK} session=${SESSION:-auto}"
 
 while :; do
   t="$(orch_target)" || { log "no orch session on socket $SOCK"; sleep "$INTERVAL"; continue; }
@@ -151,6 +179,43 @@ while :; do
   [ -n "$txt" ] || { sleep "$INTERVAL"; continue; }
   fp="$(printf '%s' "$txt" | md5sum | cut -d' ' -f1)"
   nowt=$(date +%s)
+
+  # --- Ceiling guard: EVERY cycle, busy or idle (the probe path below is idle-
+  # gated and never catches a busy orchestrator climbing to the wall). ---
+  cstate="$(printf '%s' "$txt" | _ceiling_state)"
+  if [ -n "$cstate" ]; then
+    mkdir -p "$(dirname "$MARKER")" 2>/dev/null || true
+    {
+      echo "# Operator alert — orchestrator context pressure: ${cstate}"
+      echo
+      echo "_$(date -u +%Y-%m-%dT%H:%M:%SZ)_ — orchestrator pane shows '${cstate}'."
+      echo "warn=near-full (watchdog forcing a compact); limit/compact-failed="
+      echo "unrecoverable by compaction (watchdog auto-clears+rebriefs if enabled)."
+      echo "Attach: TEAM_RUN_ID=${TEAM_RUN_ID:-?} bin/attach.sh"
+    } > "$MARKER" 2>/dev/null || true
+    case "$cstate" in
+      warn)
+        ceiling_seen=0
+        if [ $(( nowt - last_compact )) -ge "$DEBOUNCE" ]; then
+          log "CEILING-WARN: near-full warning on pane (busy-agnostic); forcing /compact"
+          do_compact "$t"; last_compact=$nowt
+        else
+          log "CEILING-WARN: near-full warning (within ${DEBOUNCE}s compact debounce; marker written)"
+        fi ;;
+      limit|compact-failed)
+        ceiling_seen=$(( ceiling_seen + 1 ))
+        if [ "$AUTORECOVER" = 1 ] && [ "$ceiling_seen" -ge 2 ] && [ $(( nowt - last_recover )) -ge "$RECOVER_DEBOUNCE" ]; then
+          log "CEILING-RECOVER: ${cstate} persisted ${ceiling_seen} checks; /clear + rebrief from state.md"
+          do_clear_rebrief "$t"; last_recover=$nowt; ceiling_seen=0
+        else
+          log "CEILING-ALERT: ${cstate} (marker written; autorecover=${AUTORECOVER}, seen=${ceiling_seen})"
+        fi ;;
+    esac
+    last_fp=""   # our action will change the pane; rebaseline next scan
+    sleep "$INTERVAL"; continue
+  fi
+  # healthy pane -> clear a stale ceiling marker
+  if [ -f "$MARKER" ]; then rm -f "$MARKER" 2>/dev/null || true; ceiling_seen=0; log "CEILING-CLEARED: pane healthy again"; fi
 
   if [ "$fp" != "$last_fp" ]; then last_fp="$fp"; fp_since=$nowt; sleep "$INTERVAL"; continue; fi
   idle=$(( nowt - fp_since ))
