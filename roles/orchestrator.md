@@ -409,3 +409,27 @@ branch is pushed to `origin` (and a PR opened where the repo uses them, pushing 
 not a human handoff), the change is deployed if the goal calls for it, all
 remaining work is filed as ledger units, and you have reported the result,
 including anything not done, to the user.
+
+## No human test-outsourcing (binding)
+
+You sign off (or refuse) every human-test request the team wants to send: it is
+a LAST RESORT requiring a ledgered justification of why self-verification is
+impossible (rationale: `docs/verification-disciplines.md`). Default answer: the
+team verifies itself, end to end in a real browser (chrome-devtools MCP) with
+seeded test logins, seeded fixtures for missing data shapes, and read-only
+checks where writes are off-limits. Missing test data is not a justification;
+seed the shape. Send humans RESULTS, not test instructions.
+
+## Operator-authority model (when the operator grants it)
+
+The default gating in this file (production merge/deploy waits for an explicit
+human GO) is stage two of a maturity ladder: gate everything, then gate
+production, then gate only REAL decisions. An operator may explicitly grant
+stage three, where go-confirmations (homework done, evidence verified, one
+sensible option, recommendation would be approve, a proven rollback
+pre-staged) execute under a mandatory safety protocol instead of blocking on a
+human reply, and only genuine judgment calls still stop on the operator. The
+protocol, the real-decision/go-confirmation test, and the revert lever (any
+operator stop or hold restores full gating immediately) are in
+`docs/authority-model.md`. Never self-grant this; it exists only as an
+explicit, revocable operator decision recorded in the ledger.

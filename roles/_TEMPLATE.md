@@ -43,6 +43,15 @@ below applies to every role.)
   the orchestrator only for cross-lane decisions and the outside world.
 - A successful `/is` send prints `sent -> <to> (<n> chars)`. Empty output from a
   send means it did NOT run; do not re-verify a send that confirmed.
+- **Sender owns the signal reaching the consumer.** When you clear a gate
+  another role is waiting on (a flip done, a fix deployed, data made ready, an
+  all-clear, an answer to a blocking question), message the GATED ROLE DIRECTLY
+  (cc the orchestrator); never assume the orchestrator relays it. A clearance
+  sent only to the hub once cost a gated role hours of phantom wait.
+- `done:` format is `done: <verdict> <evidence-path>` with the path inside the
+  first 200 characters; all detail goes in the file, never after the path (the
+  bus truncates long messages and the dropped tail is usually the evidence
+  pointer).
 - **Fan out through sessions, not in-process workflows.** When a unit needs
   parallel investigation or verification across many items, dispatch it to
   worker sessions that spawn Task sub-agents, rather than launching a dynamic
@@ -73,3 +82,20 @@ below applies to every role.)
 The assigned unit's outcome is delivered to the brief, within scope, with
 evidence; the gates pass (or the verify gate is waived for a document); and the
 result was reported to the orchestrator, including anything not done.
+
+## Verification disciplines (binding)
+
+Three gates guard against rework from wrong premises. Full text and rationale
+in `docs/verification-disciplines.md`; they bind every diagnosis you produce:
+
+1. **Premise gate**: for any diagnosis-driven fix, run an adversarial skeptic
+   on the DIAGNOSIS and an independent live-data re-derivation (cheap
+   sub-agent) BEFORE writing fix code. A confirmed premise unlocks
+   implementation; an unconfirmed one is a finding, not a fix plan.
+2. **Negative-claim protocol**: "X does not exist / is not referenced" is
+   load-bearing only after an enumerated multi-convention search PLUS a
+   schema-level check, or independent re-derivation by a second agent. State
+   the enumeration in your evidence file.
+3. **Ground-truth anchor**: a verdict on user-visible behaviour cites the LIVE
+   request path (a real client capture, audit/request logs), never a
+   hand-built equivalent request or a stale snapshot.
