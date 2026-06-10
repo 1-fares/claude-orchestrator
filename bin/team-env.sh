@@ -59,7 +59,9 @@ unset _team_hash
 # ~/.tmux.conf but none of the plugins. Edit it freely afterwards; it is
 # per-clone and gitignored.
 if [ ! -f "$TEAM_TMUX_CONF" ]; then
-  _pfx="$(grep -hoE '^[[:space:]]*set(-option)?[[:space:]]+(-g[[:space:]]+)?prefix[[:space:]]+[CMS]-[a-zA-Z]' "$HOME/.tmux.conf" 2>/dev/null | grep -oE '[CMS]-[a-zA-Z]$' | head -1)"
+  # `|| true`: with `set -euo pipefail`, a missing ~/.tmux.conf (or no prefix line)
+  # makes this grep pipeline fail and would abort the whole launch. Default to C-b.
+  _pfx="$(grep -hoE '^[[:space:]]*set(-option)?[[:space:]]+(-g[[:space:]]+)?prefix[[:space:]]+[CMS]-[a-zA-Z]' "$HOME/.tmux.conf" 2>/dev/null | grep -oE '[CMS]-[a-zA-Z]$' | head -1)" || true
   _pfx="${_pfx:-C-b}"
   {
     echo "# Team tmux config. The team runs on its own tmux socket loaded with"
