@@ -175,13 +175,9 @@ start_one "$role"
 # add-role, so this is where api-watchdog, tmux-watchdog, the observer, the
 # chrome-supervisor, and any intake poller get re-ensured for the recovered run.
 # (Previously only the api-watchdog was re-ensured here, so the others did not
-# survive a recovery.)
-start_api_watchdog || true
-start_compaction_watchdog || true
-start_tmux_watchdog || true
-start_observer || true
-start_chrome_supervisor || true
-start_intake_poller || true
+# survive a recovery.) The set lives in team-spawn.sh so this path can never
+# silently diverge from launch-team.sh / start-orchestrator.sh.
+ensure_team_daemons
 
 # Justify + surface (always). Reason defaults to a generic note if not given.
 # The role is already live and recorded in active (the teardown source of truth),

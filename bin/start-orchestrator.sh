@@ -31,20 +31,17 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 flags="--dangerously-skip-permissions"
 command -v claude >/dev/null || { echo "claude not on PATH" >&2; exit 1; }
 
-# Ensure the team's supervisor daemons are up. Idempotent. Each start_* honors its
-# own opt-out env var. This set MUST match add-role.sh's re-ensure set (api-watchdog,
-# compaction-watchdog, tmux-watchdog, observer, chrome-supervisor, intake-poller) so
-# the recovery path and the add-role path leave the same daemons running. The
-# dashboard is intentionally omitted (observability only; recovery is headless,
-# brought back by a fresh launch).
-ensure_team_daemons() {
-  start_api_watchdog || true
-  start_compaction_watchdog || true
-  start_tmux_watchdog || true
-  start_observer || true
-  start_chrome_supervisor || true
-  start_intake_poller || true
-}
+# ensure_team_daemons comes from team-spawn.sh: the one canonical daemon set,
+# shared with launch-team.sh and add-role.sh so the recovery path and the
+# add-role path leave the same daemons running.
+
+# The orchestrator's model comes from the same tiered policy as every role
+# (model_for in team-spawn.sh; override with TEAM_MODEL_ORCHESTRATOR or
+# TEAM_MODEL_TOP). Recorded under $TEAM_DIR/models/ so the observer and the
+# compaction watchdog (model-aware thresholds) read ground truth from disk.
+orch_model="$(model_for orchestrator)"
+orch_model_flag=""
+[ -n "$orch_model" ] && orch_model_flag="--model $orch_model"
 
 mode=tmux
 [ "${1:-}" = "--foreground" ] && { mode=foreground; shift; }
@@ -69,6 +66,7 @@ if [ -n "$goal" ]; then
 fi
 
 mkdir -p "$TEAM_DIR"
+record_role_model orchestrator "$orch_model"
 # Pre-trust the clone so the orchestrator does not stop at the workspace-trust prompt.
 "$repo/bin/trust-workdir.sh" "$repo" >/dev/null 2>&1 || true
 
@@ -107,7 +105,7 @@ if [ "$mode" = foreground ]; then
   printf '%s\t%s\torchestrator\n' "$$" "-" >> "$TEAM_DIR/active"
   # exec replaces this shell; the nohup'd daemons survive it. Start them first.
   ensure_team_daemons
-  exec ${CLAUDE_BIN:-claude} $flags --model opus "$(cat "$pf")"
+  exec ${CLAUDE_BIN:-claude} $flags $orch_model_flag "$(cat "$pf")"
 fi
 
 # Default (tmux) mode: orchestrator as window 0 of the team session; roles join
@@ -115,7 +113,7 @@ fi
 command -v tmux >/dev/null || { echo "tmux not installed (use --foreground)" >&2; exit 1; }
 launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT")"
 [ -n "${TEAM_RUN_ID:-}" ] && launch="$launch TEAM_RUN_ID=$(printf %q "$TEAM_RUN_ID")"
-launch="$launch && exec claude $flags --model opus \"\$(cat $(printf %q "$pf"))\""
+launch="$launch && exec claude $flags $orch_model_flag \"\$(cat $(printf %q "$pf"))\""
 # Detach the tmux server from this shell's systemd user-session scope. May 2026
 # incident: every transient `tmux-spawn-*.scope` got cleaned up simultaneously
 # by the user manager, taking the whole team down. setsid puts the new tmux

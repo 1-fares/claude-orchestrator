@@ -89,3 +89,19 @@ Decisions:
   section in the orchestrator role. Safety mirrors `cleanup.sh`: operate only on
   this run's `TEAM_SESSION`, kill only the target role's recorded pid-group +
   window, pid-is-claude guard before any kill, never touch the bus server.
+- **Tiered model policy + token economy** (2026-06-10), done: `model_for()` is
+  now a judgment-density tier table (top tier `fable` for orchestrator/
+  communicator/reviewers/testers/fact-checkers/architect/analyst; `opus` for
+  work-producing roles; `sonnet`/`haiku` mechanical) with `TEAM_MODEL_<ROLE>` /
+  `TEAM_MODEL_TOP` / `TEAM_MODEL_DEFAULT` overrides; the orchestrator and
+  communicator launchers resolve through it instead of a hardcoded `--model
+  opus`. Each launch records its model under `$TEAM_DIR/models/<role>`; the
+  observer reads those records (ps-parse is now the fallback) and its prompt
+  knows the fable tier; the compaction watchdog compacts a fable orchestrator
+  earlier by default (nudge 70 / force 85 vs 80/90). `llm-judge.sh` pins
+  headless judging to `sonnet` (`LLM_JUDGE_MODEL`/`--model` override) instead
+  of inheriting the operator's interactive default. The daemon-ensure set is
+  factored into `ensure_team_daemons` in `team-spawn.sh` (one set for launch,
+  recovery, and add-role). Operator markers (`PENDING.md`,
+  `CRASH-DETECTED.md`, ceiling marker) are written atomically (tmp+mv).
+  Rationale and tuning guide: `docs/model-policy.md`.

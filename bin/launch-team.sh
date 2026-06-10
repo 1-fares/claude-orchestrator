@@ -138,37 +138,18 @@ echo
 echo "Roles running in tmux session '$session' on the team socket '$TEAM_TMUX'."
 echo "Watch:  bin/team-status.sh    Attach:  tmux -L $TEAM_TMUX attach -t $session"
 
-# Start the API watchdog (auto-recover transient Anthropic rate-limit / network
-# stalls). Pure shell, no claude API calls, so cannot itself be rate-limited.
-# Idempotent: a repeated launch does not start a second watchdog.
-start_api_watchdog
-
-# Start the compaction watchdog (compact the orchestrator early at idle task
-# boundaries so it never drifts to the expensive near-full auto-compact ceiling).
-# Opt-out: COMPACT_WATCHDOG_DISABLED=1. Idempotent.
-start_compaction_watchdog
-
-# Start the tmux watchdog (detect a dead tmux server fast, snapshot panes for
-# forensics, ntfy on transitions, write CRASH-DETECTED.md). Added May 2026
-# after a transient-scope cleanup killed an entire team in one second.
-# Opt-out: TMUX_WATCHDOG_DISABLED=1. Idempotent.
-start_tmux_watchdog
-
-# Start the efficiency observer (periodic model-backed advice on growing/
-# shrinking the team and right-sizing the host; recommends, never acts).
-# Opt-out: OBSERVER_DISABLED=1. Idempotent.
-start_observer
-
-# Start the chrome-devtools supervisor (reap orphaned Chrome/MCP debris and fast
-# un-wedge a role the api-watchdog has marked stuck on a hung chrome MCP call, by
-# killing that role's Chrome so the MCP relaunches). Opt-out:
-# CHROME_SUPERVISOR_DISABLED=1. Idempotent. No-op if bin/chrome-supervisor.sh absent.
-start_chrome_supervisor
-
-# Start the project's optional intake poller, if one is configured ($INTAKE_POLLER
-# or <working-tree>/scripts/poller.py). Pings the orchestrator on new external
-# traffic. Opt-out: INTAKE_POLLER_DISABLED=1. Idempotent. No-op if none exists.
-start_intake_poller
+# Bring up the supervisor daemons: api-watchdog (auto-recover transient API
+# stalls, detect stuck roles), compaction-watchdog (compact the orchestrator
+# early at idle task boundaries so it never drifts to the expensive near-full
+# auto-compact ceiling), tmux-watchdog (dead tmux server detection + forensic
+# snapshots), observer (periodic model-backed right-sizing advice; recommends,
+# never acts), chrome-supervisor (reap Chrome/MCP debris, un-wedge a role stuck
+# on a hung chrome MCP call), intake-poller (optional project-provided external
+# intake). The set is defined once in team-spawn.sh and shared with
+# start-orchestrator.sh (recovery path) and add-role.sh (mid-run grow), so no
+# path leaves a different set running. All idempotent; each honors its own
+# *_DISABLED=1 opt-out.
+ensure_team_daemons
 
 # Start the B11 visual dashboard (second-screen view of the live run). Loopback-
 # only, read-only, opt-out with DASHBOARD_DISABLED=1, port override with
