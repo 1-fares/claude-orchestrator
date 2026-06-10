@@ -66,6 +66,12 @@ if [ -n "$goal" ]; then
 fi
 
 mkdir -p "$TEAM_DIR"
+# Snapshot an existing ledger before the orchestrator session starts. A restart
+# against a populated TEAM_DIR must resume from state.md, not re-template it;
+# this backup is the recovery path if a session clobbers it anyway.
+if [ -f "$TEAM_DIR/state.md" ]; then
+  cp -p "$TEAM_DIR/state.md" "$TEAM_DIR/state.md.bak-$(date +%Y%m%d-%H%M%S)"
+fi
 record_role_model orchestrator "$orch_model"
 # Pre-trust the clone so the orchestrator does not stop at the workspace-trust prompt.
 "$repo/bin/trust-workdir.sh" "$repo" >/dev/null 2>&1 || true
@@ -78,8 +84,10 @@ You are the orchestrator of a Claude Code dev team. Do these in order:
    command response: /is c orchestrator
 2. Read ./CLAUDE.md and ./roles/orchestrator.md
 3. $goal_line
-4. Definition of ready: do your setup first (read the goal, copy
-   templates/state.md to $TEAM_DIR/state.md, break it into units), THEN present a
+4. Definition of ready: do your setup first (read the goal; copy
+   templates/state.md to $TEAM_DIR/state.md ONLY if no state.md exists there —
+   an existing one is a live ledger from a prior run, resume from it, never
+   overwrite it; break the work into units), THEN present a
    single clean READY summary block exactly as specified in
    roles/orchestrator.md (goal, working tree, mode, acceptance, team, approach,
    verify) as your final message and nothing after it. Keep it short and
