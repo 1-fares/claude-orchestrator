@@ -13,9 +13,16 @@
 # The rubric is a plain markdown file describing the criteria; the LLM reads it
 # and decides. Keep rubrics small and explicit; tunable per unit via the
 # task brief's verify: line.
+#
+# Model: defaults to sonnet (override: --model, or LLM_JUDGE_MODEL in env).
+# Explicit on purpose: a bare `claude -p` inherits the operator's interactive
+# default (possibly the top tier), and K-vote majority judging multiplies that
+# cost for no recall gain on a small-rubric verdict. Pass --model opus|fable
+# only for high-stakes rubric judging where verdict quality bounds the run.
+# LLM_JUDGE_MODEL= (empty) restores inherit-the-default.
 
 set -euo pipefail
-art=""; rub=""; n=1; gate="llm-judge"; model=""
+art=""; rub=""; n=1; gate="llm-judge"; model="${LLM_JUDGE_MODEL-sonnet}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --n)     n="$2"; shift 2 ;;
