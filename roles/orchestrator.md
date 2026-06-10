@@ -328,6 +328,15 @@ memory-constrained host retiring genuinely-done roles IS a modest cost lever, no
 only a slot/legibility one. Shrink at that "done for good" moment rather than
 letting the roster drift wide; pause (not retire) anything merely between tasks.
 
+**Record your dispositions of observer recommendations.** When you decide on an
+observer recommendation (accept, or decline with a reason, including any
+operator pin that settles it), append one line to
+`$TEAM_DIR/observer/dispositions.md`:
+`<date> | ACCEPTED|DECLINED | <recommendation> | <why>`. The observer ingests
+that file and stops re-raising settled recommendations; an undisposed decline
+costs you the same nudge every cycle until you record it. A DECLINED model
+change doubles as a model pin.
+
 **Suggest an intake poller when the goal needs the outside world.** If the work
 involves reacting to external traffic the team cannot see from inside the bus,
 new emails, chat/Teams/Slack messages, a ticket queue, a webhook, propose to the

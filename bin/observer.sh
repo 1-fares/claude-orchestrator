@@ -44,12 +44,23 @@ idle_to_sec() {
   esac
 }
 
-# Best-effort bus nudge to the orchestrator (the poller posts the same way).
+# Deliver a one-line advisory to the orchestrator. The observer has NO /is bus
+# identity (it never registers a listener), and send.py has no --from flag, so
+# the old `send.py --from observer` call errored out every time and was swallowed
+# by `|| true` (observed: zero observer messages were ever delivered in an 8MB bus
+# log). Use the same tmux pane nudge the api/compaction watchdogs use -- it needs
+# no bus identity and is the proven path to the orchestrator. Best-effort.
 post_orch() {
-  local text="$1" send
-  send="$HOME/.claude/skills/is/bin/send.py"
-  [ -f "$send" ] || return 0
-  python3 "$send" --from observer --to orchestrator --text "$text" >/dev/null 2>&1 || true
+  local text="$1" win target
+  [ -n "${TEAM_SESSION:-}" ] || return 0
+  command -v tmux >/dev/null 2>&1 || return 0
+  # Target the window named 'orchestrator' (fall back to window 0).
+  win="$(tmux -L "$TEAM_TMUX" list-windows -t "$TEAM_SESSION" -F '#{window_index} #{window_name}' 2>/dev/null | awk '$2=="orchestrator"{print $1; exit}')"
+  [ -n "$win" ] || win=0
+  target="$TEAM_SESSION:$win"
+  tmux -L "$TEAM_TMUX" send-keys -t "$target" C-u 2>/dev/null || return 0
+  tmux -L "$TEAM_TMUX" send-keys -t "$target" -l "$text" 2>/dev/null
+  tmux -L "$TEAM_TMUX" send-keys -t "$target" Enter 2>/dev/null
 }
 
 gather_metrics() {
@@ -70,10 +81,28 @@ gather_metrics() {
     [ "$(idle_to_sec "$idle")" -ge "$idle_sec" ] && idle_roles=$((idle_roles+1))
   done <<< "$roster"
 
-  # Pipeline from the unit ledger
+  # Pipeline from the unit ledger. Parse each status line's FIRST token against
+  # the known unit-status enum; count anything else as 'unparseable' instead of
+  # mis-counting it as a unit (observed: narrative 'status:' journal lines were
+  # inflating fake unit counts -- 8 stale snapshots of one workstream read as 8
+  # units -- and triggered a 6h phantom-stall alarm). blocked-on:* collapses to
+  # 'blocked-on'.
   local pipe goal
   if [ -f "$TEAM_DIR/state.md" ]; then
-    pipe="$(grep -E '^status:' "$TEAM_DIR/state.md" 2>/dev/null | sed 's/^status:[[:space:]]*//' | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}')"
+    pipe="$(grep -E '^status:' "$TEAM_DIR/state.md" 2>/dev/null \
+      | sed -E 's/^status:[[:space:]]*//' \
+      | awk '{
+          tok=$1
+          if (tok ~ /^blocked-on:/) tok="blocked-on"
+          if (tok=="todo"||tok=="assigned"||tok=="acked"||tok=="in-progress"||tok=="blocked-on"||tok=="review"||tok=="integrating"||tok=="done"||tok=="deferred")
+            c[tok]++
+          else
+            unp++
+        }
+        END{
+          for (k in c) printf "%s=%s ", k, c[k]
+          if (unp>0) printf "unparseable=%s", unp
+        }')"
     goal="$(grep -A3 -iE '^#* *goal' "$TEAM_DIR/state.md" 2>/dev/null | tail -n +2 | grep -m1 -vE '^[[:space:]]*$' | sed 's/^[[:space:]]*//' | head -c 200)"
   fi
 
@@ -86,7 +115,7 @@ gather_metrics() {
   # (written by team-spawn.sh at spawn time). Fallback for runs started before
   # that existed: parse the live claude process args. Lets the observer spot
   # over/under-provisioned roles.
-  local role_models="" f
+  local role_models="" disp="" f
   if [ -d "$TEAM_DIR/models" ]; then
     role_models="$(for f in "$TEAM_DIR/models"/*; do
       [ -f "$f" ] && printf '  %s: %s\n' "$(basename "$f")" "$(head -1 "$f")"
@@ -98,6 +127,14 @@ gather_metrics() {
       | sed -E 's/.*--model ([A-Za-z0-9._-]+) You are "([a-z0-9-]+)".*/  \2: \1/' \
       | sort -u)"
   fi
+  # Dispositions: recommendations the orchestrator has ALREADY decided
+  # ($TEAM_DIR/observer/dispositions.md; it appends one line per decided rec).
+  # Surfacing them stops the observer re-raising a DECLINED rec every cycle — incl.
+  # an operator model-pin, which is just a DECLINED model-change. Strip comment/
+  # blank lines; cap to the recent tail so the prompt stays bounded.
+  if [ -f "$TEAM_DIR/observer/dispositions.md" ]; then
+    disp="$(grep -vE '^[[:space:]]*(#|$)' "$TEAM_DIR/observer/dispositions.md" 2>/dev/null | tail -n 40 | sed 's/^/  /')"
+  fi
 
   cat <<EOF
 HOST: load ${l1}/${l5}/${l15} on ${ncpu} vCPU; mem ${mem}; claude procs ${claude_n} (~${claude_rss} GiB RSS)
@@ -105,6 +142,8 @@ ROSTER (role, idle, health):
 $(printf '%s\n' "$roster" | sed 's/^/  /')
 ROLE MODELS (role: model):
 ${role_models:-  (none discoverable)}
+DISPOSITIONS (already decided by the orchestrator; do NOT re-raise a DECLINED rec unless its cited facts changed):
+${disp:-  (none)}
 SHRINK-ELIGIBLE (idle >= ${idle_sec}s): ${idle_roles}
 PIPELINE (unit status counts): ${pipe:-none}
 GOAL: ${goal:-unknown}
@@ -137,6 +176,13 @@ per-role override TEAM_MODEL_<ROLE>, tier overrides TEAM_MODEL_TOP /
 TEAM_MODEL_DEFAULT), applied by retiring + respawning the role; the
 orchestrator decides.
 
+Some recommendations have ALREADY been decided by the orchestrator — see
+DISPOSITIONS in the observation (date | ACCEPTED|DECLINED | rec | why). Do NOT
+re-raise a DECLINED recommendation UNLESS the specific facts it cited have changed,
+and if you do re-raise it, state what changed. This includes operator model-pins: a
+DECLINED model change is a pin — never re-suggest it. Treat ACCEPTED dispositions as
+done. Re-raising a settled disposition just burns the orchestrator's turn.
+
 Current observation:
 ${metrics}
 
@@ -147,8 +193,9 @@ In <= 16 lines, give a concrete recommendation:
 3) HOST: is the instance over/under-sized for this load? (Consider: API-bound, so
    idle CPU is expected; judge on RAM headroom and peak role count, not CPU.)
 4) MODELS: for each NON-CORE role only, suggest model/effort up or down with a
-   one-line reason; mark core roles "keep high". If every role is core or already
-   right-sized, say "no change".
+   one-line reason; mark core roles "keep high". Do NOT suggest anything carrying a
+   DECLINED disposition (incl. model-pins). If every role is core, settled by a
+   disposition, or already right-sized, say "no change".
 5) FLAGS: anything off (a role wedged, pipeline stalled, runaway memory). Else none.
 Be specific and brief. Do not suggest acting yourself; the orchestrator decides.
 EOF
