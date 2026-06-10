@@ -29,12 +29,23 @@
 #   2) near-full warn  "Context is 96% full"
 #   3) total line      "931.6k/1m tokens (93%)" (anchored on the "/<size> tokens"
 #      so the decimal per-category lines, which lack the slash, never match)
+#   4) free-space line "Free space: 923.3k (92.3%)" -> used = 100 - free.
+#      Claude Code 2.1.170 dropped BOTH the "NN% context used" footer and the
+#      "/<size> tokens (NN%)" total line from /context; the only whole-context
+#      signal left is the free-space row. We floor the free decimal, which rounds
+#      the derived used% UP (compact slightly early = the safe direction). This is
+#      a fallback after the direct used%-formats above, so older versions that
+#      still print a footer/total are read from it, not from this derivation.
 parse_context_pct() {
-  local out p
+  local out p free
   out="$(cat)"
   p="$(printf '%s' "$out" | grep -oiE '[0-9]+% context used'   | grep -oE '[0-9]+' | tail -1)"
   [ -z "$p" ] && p="$(printf '%s' "$out" | grep -oiE 'context is [0-9]+% full' | grep -oE '[0-9]+' | tail -1)"
   [ -z "$p" ] && p="$(printf '%s' "$out" | grep -oiE '/[0-9.]+[kKmM] tokens \([0-9]+%\)' | grep -oE '\([0-9]+%\)' | grep -oE '[0-9]+' | tail -1)"
+  if [ -z "$p" ]; then
+    free="$(printf '%s' "$out" | grep -oiE 'free space:[^(]*\([0-9.]+%\)' | grep -oE '\([0-9.]+%\)' | grep -oE '[0-9.]+' | tail -1)"
+    [ -n "$free" ] && p=$(( 100 - ${free%.*} ))
+  fi
   printf '%s' "$p"
 }
 

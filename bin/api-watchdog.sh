@@ -108,6 +108,19 @@ mkdir -p "$health_dir" "$audit_dir"
 # api-watchdog, not just any live pid: after pid reuse a stale pidfile would
 # otherwise either lock us out or be ignored. Mirrors tmux-watchdog's guard.
 if [ "$once" = 0 ]; then
+  # Hard singleton: an exclusive flock on a dedicated fd. Unlike the pidfile
+  # check below, the kernel releases it automatically when this process dies (so
+  # it never goes stale) AND it blocks a hand-rolled `nohup api-watchdog.sh &`
+  # start that bypassed the pidfile guard -- the duplicate case where a manual
+  # restart ran two watchdogs and doubled every nudge. fd 200, NOT fd 9: fd 9 is
+  # the roster lock the daemon deliberately drops (9>&-). The pidfile stays below
+  # for tmux-watchdog's ensure probe and for pid bookkeeping.
+  _lockf="${API_WATCHDOG_LOCK:-$TEAM_DIR/api-watchdog.lock}"
+  if command -v flock >/dev/null 2>&1 && exec 200>"$_lockf"; then
+    if ! flock -n 200; then
+      echo "api-watchdog already running (lock $_lockf held); exiting"; exit 0
+    fi
+  fi
   watchdog_pidf="$TEAM_DIR/api-watchdog.pid"
   if [ -f "$watchdog_pidf" ]; then
     _prev=$(cat "$watchdog_pidf" 2>/dev/null || echo 0)
@@ -398,10 +411,43 @@ scan_once() {
     done
 }
 
+# Start-time canary: confirm the watchdog can actually READ a live role
+# pane and recognise Claude Code chrome right now, so a tmux-access break or a CC
+# UI-format change is caught at start instead of by silently mis-classifying every
+# pane as healthy-idle for hours (the failure class behind the compaction probe
+# going blind on the 2.1.170 upgrade). Best-effort, one shot, never blocks start.
+canary() {
+  if [ -z "$pattern_regex" ]; then
+    echo "api-watchdog CANARY-FAIL: empty stall-pattern regex; stall detection is OFF"
+    notify "🔴 [api-watchdog/${TEAM_RUN_ID:-legacy}] CANARY: no stall patterns loaded; stall detection OFF"
+    return
+  fi
+  tmux has-session -t "$TEAM_SESSION" 2>/dev/null || { echo "api-watchdog canary: no session yet; deferred"; return; }
+  local wid txt
+  wid="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_id}' 2>/dev/null | head -1)"
+  [ -n "$wid" ] || { echo "api-watchdog canary: no windows yet; deferred"; return; }
+  txt="$(tmux capture-pane -t "$wid" -p 2>/dev/null)"
+  if [ -z "$txt" ]; then
+    echo "api-watchdog CANARY-FAIL: empty pane capture; cannot read role panes (recovery blind)"
+    notify "🔴 [api-watchdog/${TEAM_RUN_ID:-legacy}] CANARY: cannot read role panes (tmux capture empty); recovery blind"
+    return
+  fi
+  # Every live Claude Code pane shows the input prompt glyph or the busy
+  # 'esc to interrupt' marker or the permission-mode footer. None of them = the
+  # chrome the detectors parse has changed.
+  if printf '%s' "$txt" | grep -qE '❯|esc to interrupt|bypass permissions'; then
+    echo "api-watchdog canary: pane readable, Claude Code chrome recognised (ok)"
+  else
+    echo "api-watchdog CANARY-WARN: pane readable but no recognised Claude Code chrome (UI format may have changed)"
+    notify "🟠 [api-watchdog/${TEAM_RUN_ID:-legacy}] CANARY: role pane shows no recognised Claude Code chrome; busy/stall detection may be blind"
+  fi
+}
+
 echo "api-watchdog: starting team=$TEAM_SESSION run=${TEAM_RUN_ID:-legacy} interval=${interval}s max-retries=$max_retries stuck=$([ "$stuck_disabled" = 1 ] && echo off || echo "${stuck_threshold}s/${stuck_max_nudges}nudges") await=$([ "$await_disabled" = 1 ] && echo off || echo "${await_operator_sec}s") ntfy=${NTFY_URL:-<unset>}"
 if [ "$once" = 1 ]; then
   scan_once; exit 0
 fi
+canary
 trap 'echo "api-watchdog: stopping"; exit 0' TERM INT
 while true; do
   scan_once
