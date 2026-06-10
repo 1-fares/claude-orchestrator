@@ -98,3 +98,23 @@ tmux_submit() {
   sleep 0.4
   tmux send-keys -t "$target" Enter 2>/dev/null || true
 }
+
+# Pin Claude Code: native installs auto-update in the BACKGROUND of any running
+# session and silently repoint ~/.local/bin/claude to the newest version -- that
+# is how a mid-run upgrade (to 2.1.170) once changed the /context format and
+# broke the compaction watchdog's probe. Upgrades must be deliberate.
+# DISABLE_AUTOUPDATER stops the background updater but leaves
+# `claude install <version>` working for an intentional upgrade. This is the
+# team-process belt; the authoritative host-wide lever is the same key in
+# ~/.claude/settings.json env plus minimumVersion. Deliberate-upgrade procedure
+# (canary-green-first gate): docs/cc-version-pin.md.
+export DISABLE_AUTOUPDATER="${DISABLE_AUTOUPDATER:-1}"
+
+# Per-role model overrides that must survive respawns and restarts belong HERE,
+# not in the launching shell: every spawn path (launch, add-role, watchdog
+# re-ensure) sources this file, so an override set here outlives the session
+# that first exported it. Use it to pin judgment-dense roles to the top tier
+# (diagnosis-heavy implementers, schema/domain experts) while mechanical roles
+# stay on the default tier; see docs/model-policy.md for the tier rationale.
+# Example:
+#   export TEAM_MODEL_IMPLEMENTER1="${TEAM_MODEL_IMPLEMENTER1:-fable}"
