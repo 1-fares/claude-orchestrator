@@ -127,16 +127,25 @@ write_state "$prev_state" "$nowts" "$since"
 ensure_api_watchdog() {
   [ "${API_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
   [ -x "$repo/bin/api-watchdog.sh" ] || return 0
-  local pidf="$TEAM_DIR/api-watchdog.pid" oldpid
-  if [ -f "$pidf" ]; then
-    oldpid="$(cat "$pidf" 2>/dev/null || true)"
-    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
-         && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'api-watchdog'; then
-      return 0   # alive; nothing to do
+  # Liveness via the daemon's own flock (stale-proof), not the pidfile. A held
+  # lock = a live daemon, so skip. This stops the respawn-storm that a stale or
+  # missing pidfile caused once the flock guard made a relaunched start exit at
+  # birth. The launcher does NOT write the pidfile; the daemon self-records after
+  # winning the flock, so a doomed relaunch never clobbers it with a dead pid.
+  local lk="$TEAM_DIR/api-watchdog.lock"
+  if command -v flock >/dev/null 2>&1; then
+    if ! ( exec 201>"$lk" && flock -n 201 ) 2>/dev/null; then return 0; fi
+  else
+    local pidf="$TEAM_DIR/api-watchdog.pid" oldpid
+    if [ -f "$pidf" ]; then
+      oldpid="$(cat "$pidf" 2>/dev/null || true)"
+      if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+           && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'api-watchdog'; then
+        return 0   # alive; nothing to do
+      fi
     fi
   fi
   nohup "$repo/bin/api-watchdog.sh" >"$TEAM_DIR/api-watchdog.log" 2>&1 9>&- &
-  echo "$!" > "$pidf"
   echo "$(iso) SELF-HEAL: api-watchdog was down; restarted (pid $!)" >> "$af"
   notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] api-watchdog was down; tmux-watchdog restarted it (pid $!)"
 }
@@ -147,13 +156,71 @@ ensure_api_watchdog() {
 ensure_compaction_watchdog() {
   [ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
   [ -x "$repo/bin/compaction-watchdog.sh" ] || return 0
-  pgrep -f 'bin/compaction-watchdog\.sh' >/dev/null 2>&1 && return 0
+  # Per-TEAM_DIR flock liveness (atomic, stale-proof), replacing the old global
+  # pgrep. A held lock = a live daemon for this team; skip. The daemon owns its
+  # pidfile after winning the lock, so this launcher does not pre-write it.
+  local lk="$TEAM_DIR/compaction-watchdog.lock"
+  if command -v flock >/dev/null 2>&1; then
+    if ! ( exec 201>"$lk" && flock -n 201 ) 2>/dev/null; then return 0; fi
+  else
+    pgrep -f 'bin/compaction-watchdog\.sh' >/dev/null 2>&1 && return 0
+  fi
   COMPACT_SOCKET="$TEAM_TMUX" COMPACT_SESSION="$TEAM_SESSION" \
     COMPACT_LOG="$TEAM_DIR/compaction-watchdog.log" \
     nohup "$repo/bin/compaction-watchdog.sh" >/dev/null 2>&1 9>&- &
-  echo "$!" > "$TEAM_DIR/compaction-watchdog.pid"
   echo "$(iso) SELF-HEAL: compaction-watchdog was down; restarted (pid $!)" >> "$af"
   notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] compaction-watchdog was down; tmux-watchdog restarted it (pid $!)"
+}
+
+# Keep the efficiency observer alive. Same self-heal contract; the observer was
+# previously in nobody's ensure set, so a crash left scaling advice silently off.
+# Opt-out: OBSERVER_DISABLED=1.
+ensure_observer() {
+  [ "${OBSERVER_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/observer.sh" ] || return 0
+  local pidf="$TEAM_DIR/observer.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+         && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/observer\.sh'; then
+      return 0
+    fi
+  fi
+  nohup "$repo/bin/observer.sh" >"$TEAM_DIR/observer.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "$(iso) SELF-HEAL: observer was down; restarted (pid $!)" >> "$af"
+  notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] observer was down; tmux-watchdog restarted it (pid $!)"
+}
+
+# Keep the project intake poller alive -- the team's only inbound channel. It was
+# unsupervised (hand-started, in no ensure set), so its death = silent intake
+# loss. Resolve the script from project.conf (INTAKE_POLLER), pgrep on the path
+# so a hand-started instance is never duplicated. Opt-out: INTAKE_POLLER_DISABLED=1.
+ensure_intake_poller() {
+  [ "${INTAKE_POLLER_DISABLED:-0}" = "1" ] && return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local poller="${INTAKE_POLLER:-}"
+  if [ -z "$poller" ] && [ -f "$repo/project.conf" ]; then
+    local WORKDIR="" INTAKE_POLLER=""
+    # shellcheck disable=SC1091
+    . "$repo/project.conf" 2>/dev/null || true
+    [ -z "$poller" ] && poller="${INTAKE_POLLER:-}"
+    [ -z "$poller" ] && [ -n "$WORKDIR" ] && poller="$WORKDIR/scripts/poller.py"
+  fi
+  [ -n "$poller" ] && [ -f "$poller" ] || return 0
+  # Per-TEAM_DIR flock liveness (atomic; same lock the poller daemon holds). The
+  # old pgrep was not atomic and could double-spawn the poller against a manual
+  # start (double-ping). A held lock = running; skip.
+  local lk="$TEAM_DIR/intake-poller.lock"
+  if command -v flock >/dev/null 2>&1; then
+    if ! ( exec 202>"$lk" && flock -n 202 ) 2>/dev/null; then return 0; fi
+  else
+    pgrep -f "$poller" >/dev/null 2>&1 && return 0
+  fi
+  nohup python3 "$poller" --peer orchestrator >"$TEAM_DIR/intake-poller.log" 2>&1 9>&- &
+  echo "$!" > "$TEAM_DIR/intake-poller.pid"
+  echo "$(iso) SELF-HEAL: intake-poller was down; restarted (pid $!)" >> "$af"
+  notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] intake-poller was down; tmux-watchdog restarted it (pid $!)"
 }
 
 while true; do
@@ -167,8 +234,13 @@ while true; do
     fi
     prev_state=ok
     write_state ok "$nowts" "$since"
-    # While the team is actually running, keep the api-watchdog alive (self-heal).
-    if active_has_entries; then ensure_api_watchdog; ensure_compaction_watchdog; fi
+    # While the team is actually running, keep the supervisor daemons alive
+    # (self-heal): api + compaction watchdogs, the observer, and the intake
+    # poller (the team's only inbound channel).
+    if active_has_entries; then
+      ensure_api_watchdog; ensure_compaction_watchdog
+      ensure_observer; ensure_intake_poller
+    fi
     # Periodic forensic snapshot.
     if [ $((nowts - last_snap)) -ge "$snap_interval" ]; then
       snapshot
