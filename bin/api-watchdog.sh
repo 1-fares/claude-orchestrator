@@ -190,7 +190,9 @@ escalate_stuck() {
       echo "(stuck on a hung tool call). The watchdog cannot recover it on its own."
       echo "Recovery: attach (TEAM_RUN_ID=$TEAM_RUN_ID bin/attach.sh), send Escape,"
       echo "and re-prompt; if unrecoverable, reset and relaunch from state.md."
-    } > "$TEAM_DIR/PENDING.md" 2>/dev/null || true
+    } > "$TEAM_DIR/PENDING.md.tmp.$$" 2>/dev/null \
+      && mv -f "$TEAM_DIR/PENDING.md.tmp.$$" "$TEAM_DIR/PENDING.md" 2>/dev/null \
+      || rm -f "$TEAM_DIR/PENDING.md.tmp.$$" 2>/dev/null || true
     notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] ORCHESTRATOR wedged ~${mins}m; operator intervention needed (see PENDING.md)"
     return
   fi

@@ -191,7 +191,8 @@ while true; do
           echo "Last snapshots in \$TEAM_DIR/snapshots/."
           echo "Recover with:"
           echo "  TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/start-orchestrator.sh goals/<goal>.md"
-        } > "$TEAM_DIR/CRASH-DETECTED.md"
+        } > "$TEAM_DIR/CRASH-DETECTED.md.tmp.$$" \
+          && mv -f "$TEAM_DIR/CRASH-DETECTED.md.tmp.$$" "$TEAM_DIR/CRASH-DETECTED.md"
       fi
       prev_state=crashed
       write_state crashed "$nowts" "$since"
