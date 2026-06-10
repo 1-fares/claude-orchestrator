@@ -32,6 +32,8 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/team-env.sh
 . "$repo/bin/team-env.sh"   # exports TEAM_SESSION, TEAM_DIR, TEAM_PORT, INTER_SESSION_PORT
+# shellcheck source=bin/lib/team-spawn.sh
+. "$repo/bin/lib/team-spawn.sh"   # model_for + record_role_model (pure functions)
 
 usage() {
   cat <<EOF
@@ -112,7 +114,12 @@ Do these in order:
 EOF
 
 flags="--dangerously-skip-permissions"
-model_flag="--model opus"
+# Same tiered policy as every role (override: TEAM_MODEL_COMMUNICATOR /
+# TEAM_MODEL_TOP). The communicator is judgment-dense operator liaison work.
+comm_model="$(model_for communicator)"
+model_flag=""
+[ -n "$comm_model" ] && model_flag="--model $comm_model"
+record_role_model communicator "$comm_model"
 
 if [ "$mode" = foreground ]; then
   export ORCH_HOME="$repo" TEAM_DIR="$TEAM_DIR"

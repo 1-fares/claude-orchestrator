@@ -82,13 +82,22 @@ gather_metrics() {
   buslog="$HOME/.claude/data/inter-session/messages.log"
   [ -f "$buslog" ] && msgs="$(tail -n 400 "$buslog" 2>/dev/null | wc -l)"
 
-  # Per-role model, read from the live claude process args ("--model X ... You
-  # are \"role\""). Lets the observer spot over/under-provisioned auxiliary roles.
-  local role_models
-  role_models="$(ps -eo args 2>/dev/null \
-    | grep -oE -- '--model [A-Za-z0-9._-]+ You are "[a-z0-9-]+"' \
-    | sed -E 's/.*--model ([A-Za-z0-9._-]+) You are "([a-z0-9-]+)".*/  \2: \1/' \
-    | sort -u)"
+  # Per-role model. Ground truth: the launch records under $TEAM_DIR/models/
+  # (written by team-spawn.sh at spawn time). Fallback for runs started before
+  # that existed: parse the live claude process args. Lets the observer spot
+  # over/under-provisioned roles.
+  local role_models="" f
+  if [ -d "$TEAM_DIR/models" ]; then
+    role_models="$(for f in "$TEAM_DIR/models"/*; do
+      [ -f "$f" ] && printf '  %s: %s\n' "$(basename "$f")" "$(head -1 "$f")"
+    done 2>/dev/null)"
+  fi
+  if [ -z "$role_models" ]; then
+    role_models="$(ps -eo args 2>/dev/null \
+      | grep -oE -- '--model [A-Za-z0-9._-]+ You are "[a-z0-9-]+"' \
+      | sed -E 's/.*--model ([A-Za-z0-9._-]+) You are "([a-z0-9-]+)".*/  \2: \1/' \
+      | sort -u)"
+  fi
 
   cat <<EOF
 HOST: load ${l1}/${l5}/${l15} on ${ncpu} vCPU; mem ${mem}; claude procs ${claude_n} (~${claude_rss} GiB RSS)
@@ -111,17 +120,22 @@ agents (an orchestrator plus worker roles, each a separate process ~300-500 MiB)
 The work is API-bound: CPU is usually near-idle; the real costs are RAM per live
 role and the agents' API usage. You RECOMMEND only; you never act.
 
-Each role also runs on a MODEL (haiku < sonnet < opus, increasing capability and
-cost) and a thinking-EFFORT. The standing rule: CORE roles whose mistakes are
-expensive -- orchestrator, implementors (impl-*), testers (tester*), releaser,
-infra -- stay on a high model + high effort; NEVER suggest downgrading them.
-AUXILIARY roles doing ancillary, low-stakes, mechanical or read-only work for
-other projects (e.g. a scraper, reader, poller, doc-fetcher, simple display) do
-NOT need opus: if one is over-provisioned (e.g. on opus doing mechanical work),
-suggest a cheaper model (sonnet or haiku) + lower effort to cut cost; if an
+Each role also runs on a MODEL (haiku < sonnet < opus < fable, increasing
+capability and cost; fable costs ~2x opus per token) and a thinking-EFFORT.
+The standing rule: CORE roles whose mistakes are expensive -- orchestrator,
+implementors (impl-*), testers (tester*), reviewers, releaser, infra -- stay on
+a high model + high effort; NEVER suggest downgrading them below opus. Fable is
+reserved for judgment-dense roles (orchestration, adversarial verification,
+architecture); a fable role doing mechanical, bulk-read, or relay work is the
+single most expensive misallocation here -- flag it for a downgrade to opus or
+sonnet. AUXILIARY roles doing ancillary, low-stakes, mechanical or read-only
+work (e.g. a scraper, reader, poller, doc-fetcher, simple display) do NOT need
+opus: if one is over-provisioned, suggest sonnet or haiku + lower effort; if an
 auxiliary role is failing/retrying on too small a model, suggest bumping it up.
-The actuation point is model_for() in bin/lib/team-spawn.sh (role -> model),
-applied by retiring + respawning the role; the orchestrator decides.
+The actuation point is model_for() in bin/lib/team-spawn.sh (tiered policy;
+per-role override TEAM_MODEL_<ROLE>, tier overrides TEAM_MODEL_TOP /
+TEAM_MODEL_DEFAULT), applied by retiring + respawning the role; the
+orchestrator decides.
 
 Current observation:
 ${metrics}

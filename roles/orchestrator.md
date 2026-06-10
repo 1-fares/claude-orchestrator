@@ -184,6 +184,21 @@ across rounds.
   launch a role with nothing to do. Some tasks suit Claude Code's agent teams or
   remote agents better than the bus, that choice is yours (see "When to use
   what").
+- **Mind the token economy when composing the team.** Models are tiered by
+  judgment density in `model_for()` (`bin/lib/team-spawn.sh`; rationale in
+  `docs/model-policy.md`): the top tier (fable, ~2x opus per token) is for
+  roles whose judgment bounds the run (you, reviewers, testers, fact-checkers,
+  architect/analyst); work-producing roles ride opus; mechanical roles sonnet
+  or haiku. When you author a novel role, name it so it lands in the right tier
+  or set `TEAM_MODEL_<ROLE>` at spawn; never put a bulk-read, relay, or
+  formatting role on the top tier. Two standing disciplines protect the
+  expensive windows: (a) top-tier roles delegate bulk reading and wide searches
+  to Task sub-agents and read only the conclusions, keeping their own window
+  for decisions; (b) an idle role costs nothing, so prefer `pause:` over
+  retire, but a near-full window is the costliest state, so checkpoint+compact
+  at task boundaries (the compaction watchdog nudges you earlier on fable).
+  Act on the observer's MODELS advice: a top-tier role doing mechanical work is
+  the most expensive misallocation a run can carry.
 - **Roles are open-ended; invent them as the goal needs.** The team is not limited
   to the files already in `roles/`. If the goal needs a role with no
   `roles/<base>.md` (a UX designer, an Android developer, a lawyer, a researcher, a

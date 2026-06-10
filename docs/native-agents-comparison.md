@@ -224,6 +224,21 @@ time), so the substrate keeps real advantages today.
 | Multiple teams running at once in one clone | This orchestrator |
 | Non-code substrate (legal, docs pipelines) with custom gates | This orchestrator |
 
+## Addendum 2026-06-10: Fable 5
+
+Written before Fable 5 (`claude-fable-5`, a tier above Opus: 1M context, 128K
+output, $10/$50 per MTok vs Opus 4.8's $5/$25). Two consequences for the
+analysis above:
+
+- The pricing table is stale; treat the linked pricing page as authoritative.
+- The model-tiering lever got stronger: the Fable/Opus gap means tiering by
+  judgment density now spans ~10x between the cheapest useful role and the top
+  tier. The project codified this as the default policy in `model_for()`
+  (`bin/lib/team-spawn.sh`) with `TEAM_MODEL_*` overrides; see
+  [model-policy.md](./model-policy.md). The "idle role costs nothing"
+  advantage over Agent Teams' idle-token cost is unchanged and matters more at
+  Fable prices.
+
 ## Sources
 
 - Pricing: <https://platform.claude.com/docs/en/about-claude/pricing> (2026-05-25)

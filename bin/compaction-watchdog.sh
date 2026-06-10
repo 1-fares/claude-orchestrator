@@ -34,8 +34,10 @@
 #
 # Env:
 #   COMPACT_WATCHDOG_DISABLED=1  do not run (exit 0)
-#   COMPACT_NUDGE_PCT=80         ask the orchestrator to self-compact at/above this
-#   COMPACT_FORCE_PCT=90         force /compact at/above this (backstop)
+#   COMPACT_NUDGE_PCT            ask the orchestrator to self-compact at/above this
+#                                (default 80; 70 when the orchestrator runs fable)
+#   COMPACT_FORCE_PCT            force /compact at/above this (backstop)
+#                                (default 90; 85 when the orchestrator runs fable)
 #   COMPACT_THRESHOLD_PCT        legacy alias for COMPACT_NUDGE_PCT
 #   COMPACT_NUDGE_DEBOUNCE=600   min seconds between two cooperative nudges
 #   COMPACT_DEBOUNCE_SEC=900     min seconds between two forced compactions
@@ -56,8 +58,17 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 SOCK="${COMPACT_SOCKET:-orchestrator}"
 SESSION="${COMPACT_SESSION:-}"
-NUDGE="${COMPACT_NUDGE_PCT:-${COMPACT_THRESHOLD_PCT:-80}}"
-FORCE="${COMPACT_FORCE_PCT:-90}"
+# Threshold defaults are model-aware. Every turn taken in a large window costs
+# tokens proportional to the window, and a fable orchestrator pays ~2x an opus
+# one per token, so on fable the cheap-context discipline pays double: compact
+# earlier by default. The launch records the model in $TEAM_DIR/models/
+# (team-spawn.sh); explicit COMPACT_*_PCT env always wins.
+_default_nudge=80; _default_force=90
+if grep -qs '^fable' "${TEAM_DIR:-.}/models/orchestrator" 2>/dev/null; then
+  _default_nudge=70; _default_force=85
+fi
+NUDGE="${COMPACT_NUDGE_PCT:-${COMPACT_THRESHOLD_PCT:-$_default_nudge}}"
+FORCE="${COMPACT_FORCE_PCT:-$_default_force}"
 NUDGE_DEBOUNCE="${COMPACT_NUDGE_DEBOUNCE:-600}"
 DEBOUNCE="${COMPACT_DEBOUNCE_SEC:-900}"
 INTERVAL="${COMPACT_CHECK_INTERVAL:-180}"
@@ -192,7 +203,9 @@ while :; do
       echo "warn=near-full (watchdog forcing a compact); limit/compact-failed="
       echo "unrecoverable by compaction (watchdog auto-clears+rebriefs if enabled)."
       echo "Attach: TEAM_RUN_ID=${TEAM_RUN_ID:-?} bin/attach.sh"
-    } > "$MARKER" 2>/dev/null || true
+    } > "$MARKER.tmp.$$" 2>/dev/null \
+      && mv -f "$MARKER.tmp.$$" "$MARKER" 2>/dev/null \
+      || rm -f "$MARKER.tmp.$$" 2>/dev/null || true
     case "$cstate" in
       warn)
         ceiling_seen=0

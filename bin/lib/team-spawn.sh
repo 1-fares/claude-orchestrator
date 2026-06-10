@@ -22,19 +22,50 @@ resolve_goal() {
   else return 1; fi
 }
 
-# Model per role. Local subscription sessions, so the default errs toward the best
-# model (Opus) for every role; drop a role to a faster model only for speed over
-# depth. Empty string => inherit the user's default.
+# Model per role: a tiered policy keyed on judgment density. Cost per token
+# spans ~10x across tiers (haiku < sonnet < opus < fable, with fable ~2x opus),
+# while an IDLE role costs nothing: the expensive state is a large context
+# re-read on every turn. So the top tier is reserved for roles whose judgment
+# quality bounds the whole run, and mechanical roles ride cheap models with no
+# quality loss. Token-economy rationale and tuning guide: docs/model-policy.md.
+#
+# Tiers (matched on the full role name, digit suffixes included):
+#   top   judgment-dense, mistake-expensive: orchestration, operator liaison,
+#         adversarial verification (review/test/fact-check), requirements,
+#         architecture. Default: fable.
+#   mid   produces the work product: code, prose, research, legal analysis,
+#         integration, design. Default: opus. Also the fallback for any role
+#         not matched below (a novel role is assumed to do real work).
+#   cheap mechanical, rule-following, or relay work: sonnet; pure read-only
+#         display/polling: haiku.
+#
+# Overrides, highest precedence first:
+#   TEAM_MODEL_<ROLE>    per-role; role name upcased with '-' -> '_'
+#                        (e.g. TEAM_MODEL_REVIEWER2=opus)
+#   TEAM_MODEL_TOP       model for the top tier (default fable)
+#   TEAM_MODEL_DEFAULT   model for the mid tier / unmatched roles (default opus)
+# Values are claude --model aliases (fable/opus/sonnet/haiku) or full model ids.
+# An empty value => inherit the user's CLI default.
 model_for() {
-  case "$1" in
-    # Speed override: a mechanical, low-judgement role (a read-only status
-    # dashboard, a poller/relay, a formatter) can run on a much faster/cheaper
-    # model with no quality loss, while roles that reason over real code stay on
-    # Opus. Uncomment and name the role pattern to apply it, e.g.:
-    #   dashboard*) echo "haiku" ;;
-    #   tester*|devops*) echo "sonnet" ;;
-    *) echo "opus" ;;
+  local role="$1" var
+  var="TEAM_MODEL_$(printf '%s' "$role" | tr 'a-z-' 'A-Z_')"
+  if [ -n "${!var:-}" ]; then printf '%s\n' "${!var}"; return 0; fi
+  case "$role" in
+    orchestrator|communicator*|user-communicator*) echo "${TEAM_MODEL_TOP:-fable}" ;;
+    reviewer*|peer-reviewer*|tester*|fact-checker*|architect*|analyst*)
+      echo "${TEAM_MODEL_TOP:-fable}" ;;
+    devops*|copy-editor*|paralegal*|doc-integrator*) echo "sonnet" ;;
+    dashboard*|relay*|poller*) echo "haiku" ;;
+    *) echo "${TEAM_MODEL_DEFAULT:-opus}" ;;
   esac
+}
+
+# Record the model a role was launched on, so the observer and the compaction
+# watchdog read ground truth from disk instead of parsing live process args.
+record_role_model() {
+  local role="$1" model="$2"
+  mkdir -p "$TEAM_DIR/models"
+  printf '%s\n' "${model:-default}" > "$TEAM_DIR/models/$role"
 }
 
 # Any role can be specified on the fly. If a role has no roles/<base>.md, create
@@ -119,6 +150,7 @@ start_one() {
   model="$(model_for "$role")"
   model_flag=""
   [ -n "$model" ] && model_flag="--model $model"
+  record_role_model "$role" "$model"
 
   # Write the initial prompt to a file; keeps shell quoting simple and the
   # prompt thin (the substance lives in CLAUDE.md, the role file, and the goal).
@@ -282,6 +314,22 @@ start_observer() {
   nohup "$repo/bin/observer.sh" >"$TEAM_DIR/observer.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "observer started (pid $!, log: $TEAM_DIR/observer.log)"
+}
+
+# Ensure the team's supervisor daemons are up. Idempotent; each start_* honors
+# its own opt-out env var. This is the ONE canonical set (api-watchdog,
+# compaction-watchdog, tmux-watchdog, observer, chrome-supervisor,
+# intake-poller), shared by launch-team.sh (cold start), start-orchestrator.sh
+# (recovery path) and add-role.sh (mid-run grow), so no path leaves a different
+# set running. The dashboard is deliberately not here: observability only, with
+# its own operator prompt in launch-team.sh.
+ensure_team_daemons() {
+  start_api_watchdog || true
+  start_compaction_watchdog || true
+  start_tmux_watchdog || true
+  start_observer || true
+  start_chrome_supervisor || true
+  start_intake_poller || true
 }
 
 # Start the chrome-devtools supervisor for this team, once. Idempotent same way as

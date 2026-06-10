@@ -157,6 +157,12 @@ file is the portable version of the same discipline.
 - `templates/state.md`: canonical format for the run ledger
   (`$TEAM_DIR/state.md`, i.e. `.team-<run-id>/state.md` per run, or `.team/state.md`
   in legacy single-team mode).
+- `docs/model-policy.md`: per-role model tiers (`model_for()` in
+  `bin/lib/team-spawn.sh`; overrides `TEAM_MODEL_<ROLE>`, `TEAM_MODEL_TOP`,
+  `TEAM_MODEL_DEFAULT`) and the token-economy disciplines (sub-agent bulk reads,
+  file pointers, early compaction) that keep top-tier roles affordable. Launch
+  records each role's model under `$TEAM_DIR/models/<role>`; the observer and
+  the compaction watchdog read those records.
 - `bin/run.sh`: the one-command entry point. Starts the orchestrator and attaches;
   the orchestrator then asks for the working tree and goal **in the session**
   (visible, recorded, recoverable), not via shell prompts. Recovery-aware: offers

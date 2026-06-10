@@ -171,15 +171,22 @@ references (`paralegal`, `lawyer`, `swiss-law-specialist`). Area specialists
 authored on the fly so the operator can pursue any topic without growing the
 curated set.
 
-Keep the team as small as the goal allows. On a local subscription, every role
-defaults to the best model (Opus); drop a role to a faster model only for speed.
-On API-paid remote agents, invert it: bulk on Sonnet, Opus to check. Tune
-`model_for()` in [`bin/lib/team-spawn.sh`](./bin/lib/team-spawn.sh): by default
-every role resolves to `opus`; the function ships commented-out example branches
-(e.g. `dashboard*) echo "haiku"`, `tester*|devops*) echo "sonnet"`) — uncomment
-and name the role pattern to drop a role to a faster model. The alias (`opus` /
-`sonnet` / `haiku`) is passed straight to `claude --model`, which resolves it to
-the current model for that tier, so there are no version strings to maintain here.
+Keep the team as small as the goal allows. Models are assigned per role by a
+tiered policy in `model_for()`
+([`bin/lib/team-spawn.sh`](./bin/lib/team-spawn.sh)), keyed on judgment
+density: judgment-dense roles whose mistakes bound the whole run
+(orchestrator, communicator, reviewers, testers, fact-checkers,
+architect/analyst) default to the top tier (`fable`); work-producing roles
+(implementers, writers, researchers, integrator, ...) ride `opus`; mechanical
+roles get `sonnet` or `haiku`. Override per role with `TEAM_MODEL_<ROLE>`
+(e.g. `TEAM_MODEL_REVIEWER2=opus`), or move whole tiers with
+`TEAM_MODEL_TOP` / `TEAM_MODEL_DEFAULT` (no top-tier access:
+`TEAM_MODEL_TOP=opus`; cost-capped run: `TEAM_MODEL_DEFAULT=sonnet`). The
+aliases are passed straight to `claude --model`, so there are no version
+strings to maintain here. Headless calls (gates, observer) are pinned to
+cheap models independently. Rationale, cost model, and the context-size
+disciplines that keep the top tier affordable:
+[`docs/model-policy.md`](./docs/model-policy.md).
 
 ## How it works
 
