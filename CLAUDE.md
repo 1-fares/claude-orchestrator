@@ -244,17 +244,25 @@ file is the portable version of the same discipline.
   through the operator. Auto-started by `launch-team.sh`. Disable with
   `TMUX_WATCHDOG_DISABLED=1`. Background and recovery flow in
   `docs/incident-2026-05-26-tmux-scope-cleanup.md`.
-- `bin/compaction-watchdog.sh`: keeps the orchestrator's context off the
+- `bin/compaction-watchdog.sh`: keeps team sessions' context off the
   auto-compact ceiling (a near-full window is the most expensive state to run in,
-  since every turn re-reads a huge cached context). Scans the orchestrator pane;
-  at an idle task boundary (pane unchanged for `COMPACT_IDLE_SEC`, no
-  `esc to interrupt`, input line empty or only dim autocomplete shadow text) it
-  probes `/context` and picks the moment with two thresholds: at
-  `COMPACT_NUDGE_PCT` (default 80) it asks the orchestrator to compact itself at
-  its next safe checkpoint; at `COMPACT_FORCE_PCT` (default 90) it force-sends
-  `/compact <focus instructions>` as a backstop. Pure shell, no Claude API call.
-  Same lifecycle as the api-watchdog (launch + re-ensure + tmux-watchdog
-  self-heal). Disable with `COMPACT_WATCHDOG_DISABLED=1`.
+  since every turn re-reads a huge cached context). Multi-target: always watches
+  the orchestrator (window 0), plus every window whose role runs a top-tier
+  model per `$TEAM_DIR/models/<role>`; targets re-enumerated each cycle. Per
+  pane, at an idle task boundary (pane unchanged for `COMPACT_IDLE_SEC`, not
+  busy, input line empty or only dim autocomplete shadow text) it probes
+  `/context` and picks the moment with two model-keyed per-role thresholds
+  (top tier 70/85, default 80/90; `COMPACT_NUDGE_PCT` / `COMPACT_FORCE_PCT`
+  override globally): at the nudge pct it asks the session to compact itself at
+  its next safe checkpoint; at the force pct it force-sends
+  `/compact <focus instructions>` as a backstop. At an unrecoverable ceiling it
+  auto-clears+rebriefs the orchestrator only; a wedged worker is escalated to
+  the orchestrator for retire+respawn. A probe that parses empty 3 consecutive
+  cycles (or a failed startup canary) raises a probe-blind marker and
+  notifies, so a Claude Code `/context` format change is never silent. Pure
+  shell, no Claude API call. Same lifecycle as the api-watchdog (launch +
+  re-ensure + tmux-watchdog self-heal). Disable with
+  `COMPACT_WATCHDOG_DISABLED=1`.
 - `bin/communicator.sh`: opens a Claude Code session in the `communicator` role,
   the team's two-way operator liaison (spec at `roles/user-communicator.md`).
   One bus identity per run, multiple front-ends share state under
