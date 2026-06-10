@@ -217,31 +217,41 @@ EOF
 # Start the API watchdog for this team, once. Idempotent: if the recorded pid is
 # a live api-watchdog process, do nothing (a repeated launch/add must not start a
 # second watchdog). Set API_WATCHDOG_DISABLED=1 to skip.
+# True (0) if a process holds the api-watchdog flock = one is already running.
+# Authoritative and stale-proof (the kernel drops the lock when the daemon dies),
+# unlike a pidfile probe. Tests in a subshell that acquires the lock and exits,
+# auto-releasing it; if the acquire succeeds the lock was free (not running).
+# Falls back to a pidfile probe only when flock is unavailable.
+_api_watchdog_running() {
+  local lk="$TEAM_DIR/api-watchdog.lock"
+  if command -v flock >/dev/null 2>&1; then
+    if ( exec 201>"$lk" && flock -n 201 ) 2>/dev/null; then return 1; fi
+    return 0
+  fi
+  local pf="$TEAM_DIR/api-watchdog.pid" p
+  [ -f "$pf" ] || return 1
+  p="$(cat "$pf" 2>/dev/null)"; [ -n "$p" ] || return 1
+  kill -0 "$p" 2>/dev/null && ps -p "$p" -o args= 2>/dev/null | grep -q 'bin/api-watchdog\.sh'
+}
+
 start_api_watchdog() {
   [ "${API_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
   [ -x "$repo/bin/api-watchdog.sh" ] || return 0
   mkdir -p "$TEAM_DIR"
-  local pidf="$TEAM_DIR/api-watchdog.pid" oldpid
-  if [ -f "$pidf" ]; then
-    oldpid="$(cat "$pidf" 2>/dev/null || true)"
-    # Stale-pidfile / pid-reuse guard: treat the pid as "already running" ONLY if
-    # it is ACTUALLY this daemon. Match the exec'd script PATH (bin/api-watchdog.sh),
-    # not a bare name -- a recycled pid running `grep api-watchdog`, `tail
-    # ...api-watchdog.log`, or another run's daemon must NOT false-positive, or a
-    # dead daemon would never be relaunched (the bug that left both watchdogs dead
-    # while ensure thought they were alive).
-    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
-       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/api-watchdog\.sh'; then
-      echo "api-watchdog already running (pid $oldpid)"
-      return 0
-    fi
+  # Liveness via the daemon's own flock, not the pidfile: a stale or missing
+  # pidfile can no longer cause either a false "already running" lockout or a
+  # respawn-storm. The launcher does NOT write the pidfile -- the daemon records
+  # its own pid AFTER it wins the flock, so a start that loses the flock race
+  # exits without ever clobbering the pidfile with a dead pid (the relaunch churn).
+  if _api_watchdog_running; then
+    echo "api-watchdog already running"
+    return 0
   fi
   # 9>&- closes fd 9 in the daemon. add-role.sh / retire-role.sh hold the roster
   # lock on fd 9 (exec 9>...lock); a long-lived daemon that inherited it would
   # keep the open file description alive and the flock would never release,
   # deadlocking every later add/retire. The watchdog must not inherit that fd.
   nohup "$repo/bin/api-watchdog.sh" >"$TEAM_DIR/api-watchdog.log" 2>&1 9>&- &
-  echo "$!" > "$pidf"
   echo "api-watchdog started (pid $!, log: $TEAM_DIR/api-watchdog.log)"
 }
 
@@ -251,11 +261,28 @@ start_api_watchdog() {
 # of repeatedly re-reading a near-full one (see bin/compaction-watchdog.sh). Set
 # COMPACT_WATCHDOG_DISABLED=1 to skip. Single-instance via pgrep (so it also will
 # not duplicate an instance brought up by an external keepalive, e.g. cron).
+# True (0) if a process holds the compaction-watchdog flock (one is running for
+# THIS team). Per-TEAM_DIR + atomic, replacing the old global pgrep that could not
+# tell two teams apart. Same subshell-acquire-and-release probe as the api one.
+_compaction_watchdog_running() {
+  local lk="$TEAM_DIR/compaction-watchdog.lock"
+  if command -v flock >/dev/null 2>&1; then
+    if ( exec 201>"$lk" && flock -n 201 ) 2>/dev/null; then return 1; fi
+    return 0
+  fi
+  local pf="$TEAM_DIR/compaction-watchdog.pid" p
+  [ -f "$pf" ] || return 1
+  p="$(cat "$pf" 2>/dev/null)"; [ -n "$p" ] || return 1
+  kill -0 "$p" 2>/dev/null && ps -p "$p" -o args= 2>/dev/null | grep -q 'bin/compaction-watchdog\.sh'
+}
+
 start_compaction_watchdog() {
   [ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
   [ -x "$repo/bin/compaction-watchdog.sh" ] || return 0
   mkdir -p "$TEAM_DIR"
-  if pgrep -f 'bin/compaction-watchdog\.sh' >/dev/null 2>&1; then
+  # Per-TEAM_DIR flock liveness (the daemon owns the pidfile after it wins the
+  # lock; the launcher does not pre-write it, mirroring start_api_watchdog).
+  if _compaction_watchdog_running; then
     echo "compaction-watchdog already running"
     return 0
   fi
@@ -264,7 +291,6 @@ start_compaction_watchdog() {
   COMPACT_SOCKET="$TEAM_TMUX" COMPACT_SESSION="$TEAM_SESSION" \
     COMPACT_LOG="$TEAM_DIR/compaction-watchdog.log" \
     nohup "$repo/bin/compaction-watchdog.sh" >/dev/null 2>&1 9>&- &
-  echo "$!" > "$TEAM_DIR/compaction-watchdog.pid"
   echo "compaction-watchdog started (pid $!, log: $TEAM_DIR/compaction-watchdog.log)"
 }
 
@@ -381,14 +407,19 @@ start_intake_poller() {
   fi
   [ -n "$poller" ] && [ -f "$poller" ] || return 0
   mkdir -p "$TEAM_DIR"
-  local pidf="$TEAM_DIR/intake-poller.pid" oldpid
-  if [ -f "$pidf" ]; then
-    oldpid="$(cat "$pidf" 2>/dev/null || true)"
-    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
-       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'poller'; then
-      echo "intake-poller already running (pid $oldpid)"
+  local pidf="$TEAM_DIR/intake-poller.pid"
+  # Per-TEAM_DIR flock liveness, the SAME lock the poller daemon holds. The old
+  # pgrep check was not atomic: the manual start and the tmux-watchdog ensure
+  # could both pass it in the same instant and launch TWO pollers, double-pinging
+  # the orchestrator (caught live). A held lock means one is running.
+  local lk="$TEAM_DIR/intake-poller.lock"
+  if command -v flock >/dev/null 2>&1; then
+    if ! ( exec 202>"$lk" && flock -n 202 ) 2>/dev/null; then
+      echo "intake-poller already running (lock held)"
       return 0
     fi
+  else
+    pgrep -f "$poller" >/dev/null 2>&1 && { echo "intake-poller already running"; return 0; }
   fi
   nohup python3 "$poller" --peer orchestrator >"$TEAM_DIR/intake-poller.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
