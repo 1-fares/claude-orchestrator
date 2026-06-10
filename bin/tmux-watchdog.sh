@@ -57,7 +57,10 @@ pidf="$TEAM_DIR/tmux-watchdog.pid"
 # no watchdog for hours). Match how team-spawn.sh's start guard checks it.
 if [ -f "$pidf" ]; then
   prev=$(cat "$pidf" 2>/dev/null || echo 0)
-  if [ "$prev" != 0 ] && kill -0 "$prev" 2>/dev/null \
+  # $prev == $$ means the launcher (team-spawn start guard) already recorded
+  # THIS process in the pidfile before our guard ran; treating it as a live
+  # peer makes every launcher-started daemon exit at birth.
+  if [ "$prev" != 0 ] && [ "$prev" != "$$" ] && kill -0 "$prev" 2>/dev/null \
        && ps -p "$prev" -o args= 2>/dev/null | grep -q 'tmux-watchdog'; then
     echo "tmux-watchdog already running (pid $prev)"
     exit 0

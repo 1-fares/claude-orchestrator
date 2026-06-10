@@ -111,7 +111,10 @@ if [ "$once" = 0 ]; then
   watchdog_pidf="$TEAM_DIR/api-watchdog.pid"
   if [ -f "$watchdog_pidf" ]; then
     _prev=$(cat "$watchdog_pidf" 2>/dev/null || echo 0)
-    if [ "$_prev" != 0 ] && kill -0 "$_prev" 2>/dev/null \
+    # $_prev == $$ means the launcher (team-spawn start guard) already recorded
+    # THIS process in the pidfile before our guard ran; treating it as a live
+    # peer makes every launcher-started daemon exit at birth.
+    if [ "$_prev" != 0 ] && [ "$_prev" != "$$" ] && kill -0 "$_prev" 2>/dev/null \
          && ps -p "$_prev" -o args= 2>/dev/null | grep -q 'api-watchdog'; then
       echo "api-watchdog already running (pid $_prev)"; exit 0
     fi
