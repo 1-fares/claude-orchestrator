@@ -50,6 +50,26 @@ decimals_only() { cat <<'EOF'
      ⛁ MCP tools: 101 tokens (0.0%)
 EOF
 }
+# Claude Code 2.1.170: /context dropped the "NN% context used" footer AND the
+# "/<size> tokens (NN%)" total line. The only whole-context signal is the
+# "Free space: NNNk (NN.N%)" row; used% = 100 - free% (free floored). Sanitised
+# generic pane text; the percentage-line shapes are the real 2.1.170 ones.
+v2170_mid() { cat <<'EOF'
+     ⛶ ⛶ ⛶   ⛁ System prompt: 3.1k tokens (0.3%)
+     ⛶ ⛶ ⛶   ⛁ System tools: 15.4k tokens (1.5%)
+     ⛶ ⛶ ⛶   ⛁ Memory files: 8.6k tokens (0.9%)
+     ⛶ ⛶ ⛶   ⛁ Skills: 2.7k tokens (0.3%)
+     ⛶ ⛶ ⛶   ⛁ Messages: 47.4k tokens (4.7%)
+                  ⛶ Free space: 923.3k (92.3%)
+     /context all to expand
+EOF
+}
+v2170_high() { cat <<'EOF'
+     ⛁ Messages: 880.0k tokens (88.0%)
+                  ⛶ Free space: 41.0k (4.1%)
+     /context all to expand
+EOF
+}
 
 echo "parse_context_pct:"
 eq "new near-full footer wins (98% context used)" "$(new_full      | parse_context_pct)" "98"
@@ -57,6 +77,8 @@ eq "new mid-range footer (8% context used)"       "$(new_mid       | parse_conte
 eq "older parenthesised total line (93%)"         "$(old_fmt       | parse_context_pct)" "93"
 eq "warning-only falls back to the warn %"        "$(warn_only     | parse_context_pct)" "96"
 eq "decimal category lines alone -> empty"        "$(decimals_only | parse_context_pct)" ""
+eq "2.1.170 free-space mid -> 100-92 = 8"         "$(v2170_mid     | parse_context_pct)" "8"
+eq "2.1.170 free-space high -> 100-4 = 96"        "$(v2170_high    | parse_context_pct)" "96"
 
 # _ceiling_state — the busy-agnostic guard that catches a near-full/wedged
 # orchestrator from the live pane (no /context probe). These strings render even
