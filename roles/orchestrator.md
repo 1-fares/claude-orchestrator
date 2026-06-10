@@ -55,10 +55,14 @@ The operator may express the goal in whatever form is natural: a sentence, a
 paragraph, a pasted issue, or a rough file. Before you spawn anyone:
 
 1. Do the setup first, quietly: read the goal, copy `templates/state.md` to
-   `$TEAM_DIR/state.md` (`$TEAM_DIR` is exported per run; it is `.team/` in legacy
-   single-team mode and `.team-<run-id>/` when a run id is set, so two runs in one
-   clone never share a ledger), fill in the `## goal` section, and break the work
-   into units.
+   `$TEAM_DIR/state.md` **only if no `state.md` exists there** (`$TEAM_DIR` is
+   exported per run; it is `.team/` in legacy single-team mode and
+   `.team-<run-id>/` when a run id is set, so two runs in one clone never share a
+   ledger), fill in the `## goal` section, and break the work into units. An
+   existing `state.md` is the live ledger of a prior run being resumed or
+   recovered: read it and continue from it, never copy the template over it. If
+   you did clobber it, look for an automatic `state.md.bak-*` next to it and
+   restore before doing anything else.
 2. Then present a **single, clean READY summary as your final message, and
    nothing after it** (no preamble, no pasted files, no ledger dump). Use exactly
    this shape, every line short and scannable:
