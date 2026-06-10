@@ -224,6 +224,10 @@ fi
 retired_dir="$TEAM_DIR/retired/$role"
 mkdir -p "$retired_dir"
 [ -f "$TEAM_DIR/health/$role.json" ] && mv "$TEAM_DIR/health/$role.json" "$retired_dir/" 2>/dev/null || true
+# Guarantee the live health file is gone even if the archive mv lost a race
+# (a stale health/<role>.json otherwise inflates whatever reads the health dir as
+# a live roster, e.g. the observer). Idempotent: a no-op when the mv already moved it.
+rm -f "$TEAM_DIR/health/$role.json" 2>/dev/null || true
 if [ -d "$TEAM_DIR/audit/api-watchdog" ]; then
   for af in "$TEAM_DIR/audit/api-watchdog/$role".*; do
     [ -e "$af" ] && mv "$af" "$retired_dir/" 2>/dev/null || true
