@@ -31,20 +31,60 @@
 TEAM_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 _team_hash="$(printf '%s' "$TEAM_REPO" | cksum | cut -d' ' -f1)"
 
+# Capture any pre-set TEAM_DIR BEFORE we derive the canonical one, so we can refuse
+# to SILENTLY override it. Failure mode this guards: a test sets TEAM_DIR="$(mktemp -d)"
+# and `trap rm -rf "$TEAM_DIR"`, then sources this file, which silently re-points
+# TEAM_DIR at the live run dir; the trap then wipes the live run. We must never
+# silently move a caller's TEAM_DIR onto a different (especially live) path.
+_preset_team_dir="${TEAM_DIR:-}"
+
 if [ -n "${TEAM_RUN_ID:-}" ]; then
   # Per-run: derive port + session + state dir from (clone-path + run-id) so
   # parallel teams in this clone do not collide.
   _run_hash="$(printf '%s\0%s' "$TEAM_REPO" "$TEAM_RUN_ID" | cksum | cut -d' ' -f1)"
   TEAM_SESSION="orch-${_run_hash: -5}"
   _port_seed=$((9500 + _run_hash % 400))
-  TEAM_DIR="$TEAM_REPO/.team-$TEAM_RUN_ID"
+  _canonical_team_dir="$TEAM_REPO/.team-$TEAM_RUN_ID"
   unset _run_hash
 else
   # Legacy / single-team: today's per-clone derivation, state in .team/.
   TEAM_SESSION="orch-${_team_hash: -5}"
   _port_seed=$((9500 + _team_hash % 400))
-  TEAM_DIR="$TEAM_REPO/.team"
+  _canonical_team_dir="$TEAM_REPO/.team"
 fi
+
+# Resolve TEAM_DIR, refusing a SILENT override of a pre-set value (structural guard).
+# No normal team script pre-sets TEAM_DIR -- they let this file derive it -- so the
+# only callers that hit a conflict are tests/misuse, which must fail loud, not have
+# their TEAM_DIR quietly moved onto the live run dir (see bin/lib/team-dir-guard.sh).
+if [ -z "$_preset_team_dir" ] || [ "$_preset_team_dir" = "$_canonical_team_dir" ]; then
+  # Normal path: nothing pre-set, or pre-set already equals the canonical dir (an
+  # idempotent re-source, e.g. a role running a gate with TEAM_DIR already exported).
+  TEAM_DIR="$_canonical_team_dir"
+elif [ "${TEAM_DIR_ALLOW_OVERRIDE:-0}" = "1" ]; then
+  # Explicit, opt-in isolation (a test that genuinely wants its own TEAM_DIR while
+  # still using this file's helpers). Honor the pre-set value; never the live run.
+  echo "team-env: honoring explicit TEAM_DIR='$_preset_team_dir' (TEAM_DIR_ALLOW_OVERRIDE=1; canonical would be '$_canonical_team_dir')" >&2
+  TEAM_DIR="$_preset_team_dir"
+else
+  # Conflict: a pre-set TEAM_DIR that this run would otherwise SILENTLY replace.
+  # Refuse loudly and leave TEAM_DIR as the caller set it (NEVER move it onto the
+  # canonical/live run dir), so a `trap rm -rf "$TEAM_DIR"` can never hit the live run.
+  echo "team-env: REFUSING to silently override a pre-set TEAM_DIR." >&2
+  echo "  pre-set:   $_preset_team_dir" >&2
+  echo "  canonical: $_canonical_team_dir  (derived from TEAM_RUN_ID='${TEAM_RUN_ID:-}')" >&2
+  echo "  This guards against a test/script wiping a LIVE run dir." >&2
+  echo "  Fix one of: unset TEAM_DIR before sourcing (use the canonical run dir); or" >&2
+  echo "  unset TEAM_RUN_ID (use your explicit dir); or set TEAM_DIR_ALLOW_OVERRIDE=1" >&2
+  echo "  to deliberately keep your explicit TEAM_DIR. TEAM_DIR left as-is; not proceeding." >&2
+  TEAM_DIR="$_preset_team_dir"
+  # Clear the half-derived vars so a caller that ignores this non-zero return is left
+  # with NO usable team identity (rather than TEAM_SESSION pointing at the live team
+  # while TEAM_DIR is the caller's scratch). TEAM_DIR stays the caller's value.
+  unset _preset_team_dir _canonical_team_dir _team_hash _port_seed TEAM_SESSION TEAM_PORT
+  return 1 2>/dev/null || exit 1
+fi
+unset _preset_team_dir _canonical_team_dir
 : "${INTER_SESSION_PORT:=$_port_seed}"
 TEAM_PORT="$INTER_SESSION_PORT"
 unset _port_seed
