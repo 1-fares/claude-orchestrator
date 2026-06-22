@@ -317,6 +317,29 @@ start_tmux_watchdog() {
   echo "tmux-watchdog started (pid $!, log: $TEAM_DIR/tmux-watchdog.log)"
 }
 
+# Start the disk/tmp resource watchdog for this team, once. Idempotent same way as the
+# other watchdogs. Set DISK_TMP_WATCHDOG_DISABLED=1 to skip. It watches / and /tmp usage
+# and, at a band, raises an ntfy alert + writes a marker a heavy-work gate can consult;
+# it never deletes anything. A no-op unless bin/disk-tmp-watchdog.sh is present.
+start_disk_tmp_watchdog() {
+  [ "${DISK_TMP_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/disk-tmp-watchdog.sh" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  local pidf="$TEAM_DIR/disk-tmp-watchdog.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    # pid-reuse guard: match the exec'd script PATH, not a bare name (see start_api_watchdog).
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/disk-tmp-watchdog\.sh'; then
+      echo "disk-tmp-watchdog already running (pid $oldpid)"
+      return 0
+    fi
+  fi
+  nohup "$repo/bin/disk-tmp-watchdog.sh" >"$TEAM_DIR/disk-tmp-watchdog.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "disk-tmp-watchdog started (pid $!, log: $TEAM_DIR/disk-tmp-watchdog.log)"
+}
+
 # Start the efficiency observer for this team, once. Idempotent same way as the
 # watchdogs. Set OBSERVER_DISABLED=1 to skip. Unlike the watchdogs (mechanical
 # stall/crash recovery), the observer periodically asks a model whether the team
@@ -344,8 +367,8 @@ start_observer() {
 
 # Ensure the team's supervisor daemons are up. Idempotent; each start_* honors
 # its own opt-out env var. This is the ONE canonical set (api-watchdog,
-# compaction-watchdog, tmux-watchdog, observer, chrome-supervisor,
-# intake-poller), shared by launch-team.sh (cold start), start-orchestrator.sh
+# compaction-watchdog, tmux-watchdog, disk-tmp-watchdog, observer,
+# chrome-supervisor, intake-poller), shared by launch-team.sh (cold start), start-orchestrator.sh
 # (recovery path) and add-role.sh (mid-run grow), so no path leaves a different
 # set running. The dashboard is deliberately not here: observability only, with
 # its own operator prompt in launch-team.sh.
@@ -353,6 +376,7 @@ ensure_team_daemons() {
   start_api_watchdog || true
   start_compaction_watchdog || true
   start_tmux_watchdog || true
+  start_disk_tmp_watchdog || true
   start_observer || true
   start_chrome_supervisor || true
   start_intake_poller || true
