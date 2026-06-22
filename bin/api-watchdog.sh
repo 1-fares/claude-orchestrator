@@ -167,6 +167,12 @@ read_field() { jq -r --arg d "$3" --arg k "$2" '.[$k] // $d' "$1" 2>/dev/null ||
 persist() {
   local f="$1" state="$2" retries="$3" last_retry="$4" since="$5" \
         fp="$6" fp_since="$7" nudge_fp="$8" nudge_count="$9" last_nudge="${10}"
+  # Numeric fields feed `jq --argjson`, which throws "invalid JSON text" on an empty
+  # string (the paneless/retired-role path can leave one or more unset). A missing
+  # counter/timestamp means "none yet" -> 0; default before the jq call so persist()
+  # never aborts (an unguarded empty here spammed the watchdog log with jq errors).
+  retries="${retries:-0}"; last_retry="${last_retry:-0}"; since="${since:-0}"
+  fp_since="${fp_since:-0}"; nudge_count="${nudge_count:-0}"; last_nudge="${last_nudge:-0}"
   jq -nc --arg state "$state" \
          --argjson retries "$retries" \
          --argjson last_retry "$last_retry" \
