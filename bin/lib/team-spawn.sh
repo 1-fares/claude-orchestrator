@@ -317,6 +317,30 @@ start_tmux_watchdog() {
   echo "tmux-watchdog started (pid $!, log: $TEAM_DIR/tmux-watchdog.log)"
 }
 
+# Start the host-RAM (OOM) watchdog for this team, once. Idempotent same way as the
+# other watchdogs. Set HOST_RAM_WATCHDOG_DISABLED=1 to skip. It watches host free RAM
+# (RAM-primary, swap as amplifier) and, at a band, raises an ntfy alert + writes a
+# marker the heavy-work gate consults; it never kills anything. A no-op unless
+# bin/host-ram-watchdog.sh is present.
+start_host_ram_watchdog() {
+  [ "${HOST_RAM_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/host-ram-watchdog.sh" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  local pidf="$TEAM_DIR/host-ram-watchdog.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    # pid-reuse guard: match the exec'd script PATH, not a bare name (see start_api_watchdog).
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/host-ram-watchdog\.sh'; then
+      echo "host-ram-watchdog already running (pid $oldpid)"
+      return 0
+    fi
+  fi
+  nohup "$repo/bin/host-ram-watchdog.sh" >"$TEAM_DIR/host-ram-watchdog.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "host-ram-watchdog started (pid $!, log: $TEAM_DIR/host-ram-watchdog.log)"
+}
+
 # Start the disk/tmp resource watchdog for this team, once. Idempotent same way as the
 # other watchdogs. Set DISK_TMP_WATCHDOG_DISABLED=1 to skip. It watches / and /tmp usage
 # and, at a band, raises an ntfy alert + writes a marker a heavy-work gate can consult;
@@ -367,7 +391,7 @@ start_observer() {
 
 # Ensure the team's supervisor daemons are up. Idempotent; each start_* honors
 # its own opt-out env var. This is the ONE canonical set (api-watchdog,
-# compaction-watchdog, tmux-watchdog, disk-tmp-watchdog, observer,
+# compaction-watchdog, tmux-watchdog, host-ram-watchdog, disk-tmp-watchdog, observer,
 # chrome-supervisor, intake-poller), shared by launch-team.sh (cold start), start-orchestrator.sh
 # (recovery path) and add-role.sh (mid-run grow), so no path leaves a different
 # set running. The dashboard is deliberately not here: observability only, with
@@ -376,6 +400,7 @@ ensure_team_daemons() {
   start_api_watchdog || true
   start_compaction_watchdog || true
   start_tmux_watchdog || true
+  start_host_ram_watchdog || true
   start_disk_tmp_watchdog || true
   start_observer || true
   start_chrome_supervisor || true
