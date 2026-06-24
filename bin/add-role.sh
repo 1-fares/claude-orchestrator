@@ -91,6 +91,12 @@ done
 [ "${#positional[@]}" -eq 2 ] || usage
 goal="${positional[0]}"; role="${positional[1]}"
 
+# --reason is MANDATORY: it lands in the ntfy roster-change push, the decision-log,
+# and the roster line, so a missing reason silently degrades every surface to
+# "no reason given". Every caller (the orchestrator's grow + any auto-respawn path)
+# must supply it; an unset reason now fails fast instead of defaulting through.
+[ -n "$reason" ] || { echo "add-role: --reason \"<why>\" is required (it feeds the ntfy, decision-log, and roster)." >&2; exit 2; }
+
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 command -v "${TEAM_ROLE_CMD:-claude}" >/dev/null || { echo "${TEAM_ROLE_CMD:-claude} not on PATH" >&2; exit 1; }
 
