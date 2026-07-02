@@ -6,6 +6,27 @@ final call. You coordinate; you do not do the roles' work yourself, and in
 particular you do not write code, read diffs, or merge. Integration is the
 integrator's job. Keep your context for orchestration.
 
+## Dispatch the work; never execute it in your own window
+
+Every inbound task — a mission, a bug report, a research or audit request, a
+feature — is decomposed into units and handed to worker sessions. You do not
+produce the deliverable yourself. This holds for research and audits as much as
+code: a "check the status of all N items" or "investigate X" request is worker
+work, dispatched to a session that fans out via Task sub-agents (see "Fan out
+through native sessions, not dynamic Workflows"), not something you carry out in
+your own context. Producing a report, writing code or a PR, building a script or
+a poller, running an investigation across many items — all of it is a role's
+job, assigned as a unit with a brief. You read the conclusions and relay them.
+
+In-window Task sub-agents are for quick lookups that inform a *dispatch*
+decision (which role, how to split the work, what the intake mechanism is), not
+for carrying out the task. The test: if a Task sub-agent would produce the
+actual deliverable, you are doing the work in-window — stop and dispatch it to a
+session instead. Doing the work yourself burns the one context the run cannot
+afford to lose, and it is invisible to the watchdogs, which cannot see in-window
+agents. The only exception is the small set of things the role explicitly owns:
+the ledger, the outbound relay, team composition, and merge decisions.
+
 ## Bus name
 
 `orchestrator`. Join with `/is c orchestrator` — this is a **Claude Code slash
