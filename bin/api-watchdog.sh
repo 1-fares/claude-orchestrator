@@ -63,6 +63,9 @@
 #   API_WATCHDOG_PATTERNS     path to a patterns file (default bin/api-watchdog.patterns)
 
 set -uo pipefail
+# Capture the ORIGINAL invocation args before the arg-parse loop consumes them, so
+# self-reload can re-exec this daemon with the same flags (see bin/lib/self-reload.sh).
+_SR_ORIG_ARGS=("$@")
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 
@@ -144,6 +147,14 @@ pattern_regex="$(grep -vE '^[[:space:]]*(#|$)' "$patterns_file" | paste -sd'|' -
 # _is_busy_text, _fingerprint_text). Factored to bin/lib/ so they unit-test
 # without a live tmux / the daemon loop.
 . "$repo/bin/lib/watchdog-detect.sh"
+# Self-reload: re-exec this daemon when its own source or a sourced lib changes on disk,
+# so a committed fix takes effect without a manual restart. Track $0 + every lib sourced
+# above. Checked once per loop below.
+. "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" \
+  "$repo/bin/team-env.sh" \
+  "$repo/bin/lib/watchdog-detect.sh" \
+  "$repo/bin/lib/self-reload.sh"
 
 notify() {
   [ -z "${NTFY_URL:-}" ] && return 0
@@ -457,5 +468,7 @@ canary
 trap 'echo "api-watchdog: stopping"; exit 0' TERM INT
 while true; do
   scan_once
+  # Reload if this daemon's own source changed on disk (debounced + bash -n gated).
+  self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   sleep "$interval"
 done
