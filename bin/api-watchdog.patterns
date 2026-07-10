@@ -11,3 +11,6 @@ ECONNRESET
 ETIMEDOUT
 fetch failed
 socket hang up
+Connection closed mid-response
+API Error.*content filtering
+Output blocked by content filtering
