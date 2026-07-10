@@ -67,26 +67,33 @@ $(cat "$art")
 EOF
 }
 
+# Pull the first JSON object out of model output that may carry non-JSON
+# around it: prose or a markdown fence before, and (since the CC CLI began
+# appending a bracketed timestamp line to -p output) trailing lines after.
+# raw_decode consumes exactly one value and ignores what follows, and the
+# scan advances to the next '{' on failure, so braces inside JSON strings
+# never derail it (the old hand-rolled depth counter gave up after its first
+# misparse, which made every judge run read as "no JSON returned").
+# The script must go in via -c, NOT `python3 - <<heredoc`: with the heredoc
+# form the script itself consumes stdin, so the piped judge output was never
+# readable and extraction always came up empty.
 extract_json() {
-  python3 - <<'PY' 2>/dev/null
+  python3 -c "$(cat <<'PY'
 import sys, json
 s = sys.stdin.read()
+dec = json.JSONDecoder()
 i = s.find('{')
-if i < 0:
-    sys.exit(0)
-depth = 0
-for j in range(i, len(s)):
-    c = s[j]
-    if c == '{': depth += 1
-    elif c == '}':
-        depth -= 1
-        if depth == 0:
-            try:
-                json.loads(s[i:j+1]); print(s[i:j+1])
-            except Exception:
-                pass
+while i >= 0:
+    try:
+        obj, _ = dec.raw_decode(s, i)
+        if isinstance(obj, dict):
+            print(json.dumps(obj))
             sys.exit(0)
+    except Exception:
+        pass
+    i = s.find('{', i + 1)
 PY
+)" 2>/dev/null
 }
 
 echo "# $gate  artifact=$art  rubric=$rub  n=$n  model=${model:-default}" > "$log"
