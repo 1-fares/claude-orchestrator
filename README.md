@@ -441,6 +441,19 @@ detects the stall, and sends `try again` with exponential backoff
 cannot itself be rate-limited. Patterns live in `bin/api-watchdog.patterns`.
 Disable with `API_WATCHDOG_DISABLED=1`.
 
+A usage/credit outage is a distinct failure mode: Claude Code parks the
+session on a modal dialog ("Stop and wait for limit to reset / Add funds /
+Enter to confirm") that shows no spinner and no API-error text, so it is
+invisible to the stall patterns and used to read as a healthy idle role,
+silently parking the whole team. The watchdog classifies it `stalled-usage`
+and auto-recovers: Escape dismisses the modal, a resume nudge is submitted,
+and the cycle repeats on a flat cadence (`USAGE_RETRY_SEC`, default 300s)
+indefinitely — a usage window returns on the account's schedule, not the
+team's, so there is no give-up. The operator is pushed once on entry (usage
+exhaustion is operator-actionable). Other modal dialogs (`Enter to confirm`
+footers that are not the usage dialog) classify `awaiting-input` and page the
+operator instead of reading as idle.
+
 ```bash
 # Any ntfy topic works (account-free; open it in the ntfy phone app):
 export NTFY_URL=https://ntfy.sh/orch-<your-handle>-<random>
