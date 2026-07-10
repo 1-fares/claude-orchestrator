@@ -31,9 +31,9 @@
 #                for self-healing.
 #
 # Health per role is recorded under $TEAM_DIR/health/<role>.json with a single
-# `state` field: active | stalled-api | stuck | stuck-giveup | give-up |
-# awaiting-input | awaiting-input-esc. The orchestrator reads these (pull-based,
-# Tier-3 awareness).
+# `state` field: active | stalled-api | stalled-usage | stuck | stuck-giveup |
+# give-up | awaiting-input | awaiting-input-esc. The orchestrator reads these
+# (pull-based, Tier-3 awareness).
 #
 #   C. AWAITING-INPUT — a role is blocked on an interactive prompt (a selection
 #      menu / confirmation) with no spinner: it cannot proceed without a human.
@@ -44,6 +44,22 @@
 #      marker $TEAM_DIR/health/awaiting-<role>.md (an external watcher can see
 #      it even with NTFY unset) and pushes the operator. Cleared when the prompt
 #      clears.
+#
+#   E. USAGE-STALL — the account ran out of usage/credits and Claude Code
+#      parked the session on a modal dialog ("Stop and wait for limit to
+#      reset / Add funds ... / Enter to confirm"). Before this class existed
+#      the dialog fell through every net (no spinner, no API-error text, no
+#      'Enter to select' footer, and a '❯' on its selected option satisfied the
+#      idle-prompt check), so stalled roles classified healthy-idle and a real
+#      usage outage silently parked most of a team (2026-07-10). Unlike
+#      AWAITING-INPUT this IS auto-recoverable: Escape dismisses the modal,
+#      then a "try again" nudge resumes the turn once usage returns. If usage
+#      is still exhausted the next attempt re-opens the dialog and the next
+#      scan retries, so recovery is retried indefinitely on a flat
+#      USAGE_RETRY_SEC cadence (default 300s) — a usage window can be gone for
+#      hours and giving up would strand the team exactly when it becomes
+#      recoverable. The operator is pushed ONCE on entry (usage exhaustion is
+#      operator-actionable: add funds or wait) and the recovery is logged.
 #
 # Pure shell + curl + jq + tmux. Never makes a Claude API call, so cannot
 # itself be rate-limited.
@@ -59,6 +75,7 @@
 #   STUCK_WATCHDOG_DISABLED=1 keep api-stall recovery, disable stuck detection
 #   STUCK_THRESHOLD_SEC=480   pane unchanged while busy this long => stuck (8 min)
 #   STUCK_MAX_NUDGES=2        gentle interrupt+nudge attempts before escalation
+#   USAGE_RETRY_SEC=300       flat cadence for usage-limit dialog recovery retries
 #   NTFY_URL=<url>            push notifications target (e.g. https://ntfy.sh/orch-example)
 #   API_WATCHDOG_PATTERNS     path to a patterns file (default bin/api-watchdog.patterns)
 
@@ -88,6 +105,10 @@ stuck_operator_sec="${STUCK_OPERATOR_SEC:-$((stuck_threshold + 600))}"
 # a blocked prompt is dead time from the first second, not a maybe-transient wedge.
 await_disabled="${AWAIT_WATCHDOG_DISABLED:-0}"
 await_operator_sec="${AWAIT_OPERATOR_SEC:-300}"
+# USAGE-STALL: flat retry cadence for the usage-limit dialog. No max: a retry
+# is cheap and idempotent (Escape + "try again" while the dialog is up just
+# re-opens it), and the outage ends on the account's schedule, not ours.
+usage_retry_sec="${USAGE_RETRY_SEC:-300}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -270,6 +291,31 @@ scan_once() {
         rm -f "$health_dir/awaiting-$name.md" 2>/dev/null || true
       fi
 
+      # --- E. USAGE-STALL path (parked on the usage-limit dialog) ------------
+      # Auto-recoverable: Escape dismisses the modal, "try again" resumes the
+      # aborted turn once usage returns. Retried indefinitely on a flat cadence
+      # (see header); pushed to the operator ONCE on entry.
+      if [ "$state" = "stalled-usage" ]; then
+        if [ "$prev" != "stalled-usage" ]; then
+          since=$nowts; retries=0; last_retry=0
+          echo "$(iso "$nowts") [$name] USAGE-STALL (usage-limit dialog; auto-retrying every ${usage_retry_sec}s)" >> "$af"
+          notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the usage limit; auto-retrying every ${usage_retry_sec}s until usage returns"
+        fi
+        elapsed=$((nowts - last_retry))
+        if [ "$last_retry" -eq 0 ] || [ "$elapsed" -ge "$usage_retry_sec" ]; then
+          # A modal swallows typed keys, so dismiss it before nudging.
+          if printf '%s' "$visible" | _has_modal_dialog_text; then
+            tmux send-keys -t "$wid" Escape 2>/dev/null || true
+            sleep 0.4
+          fi
+          tmux_submit "$wid" "try again — the usage limit may have reset; resume your current unit where you left off"
+          retries=$((retries + 1)); last_retry=$nowts
+          echo "$(iso "$nowts") [$name] usage-retry $retries (cadence ${usage_retry_sec}s)" >> "$af"
+        fi
+        persist "$hf" "stalled-usage" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
+        continue
+      fi
+
       # --- A. API-STALL path (idle at prompt with an error pattern) ----------
       if [ "$state" = "stalled-api" ]; then
         if [ "$prev" != "stalled-api" ] && [ "$prev" != "give-up" ]; then
@@ -416,7 +462,10 @@ scan_once() {
       fi
 
       # --- C. ACTIVE / IDLE (not stalled, not busy-frozen) -------------------
-      if [ "$prev" = "stalled-api" ] || [ "$prev" = "give-up" ]; then
+      if [ "$prev" = "stalled-usage" ]; then
+        echo "$(iso "$nowts") [$name] RECOVERED-USAGE after $retries retries (usage returned)" >> "$af"
+        # No push: recovery is not actionable. Logged only.
+      elif [ "$prev" = "stalled-api" ] || [ "$prev" = "give-up" ]; then
         echo "$(iso "$nowts") [$name] RECOVERED after $retries retries" >> "$af"
         # No push: recovery is not actionable. Logged only.
       elif [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ] || [ "$prev" = "stuck-giveup-esc" ]; then
@@ -440,12 +489,22 @@ canary() {
     return
   fi
   tmux has-session -t "$TEAM_SESSION" 2>/dev/null || { echo "api-watchdog canary: no session yet; deferred"; return; }
-  local wid txt
-  wid="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_id}' 2>/dev/null | head -1)"
-  [ -n "$wid" ] || { echo "api-watchdog canary: no windows yet; deferred"; return; }
-  txt="$(tmux capture-pane -t "$wid" -p 2>/dev/null)"
-  if [ -z "$txt" ]; then
-    echo "api-watchdog CANARY-FAIL: empty pane capture; cannot read role panes (recovery blind)"
+  # At a cold start the watchdog races the first Claude Code TUI render: the
+  # session/window exists but its pane captures empty for a few seconds. A
+  # one-shot read here used to declare "recovery blind" on that race even
+  # though every later scan read panes fine. Retry briefly before concluding.
+  local wid txt attempt
+  for attempt in 1 2 3 4 5 6; do
+    wid="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_id}' 2>/dev/null | head -1)"
+    if [ -n "$wid" ]; then
+      txt="$(tmux capture-pane -t "$wid" -p 2>/dev/null)"
+      [ -n "$txt" ] && break
+    fi
+    [ "$attempt" = 6 ] || sleep 10
+  done
+  if [ -z "${wid:-}" ]; then echo "api-watchdog canary: no windows yet; deferred"; return; fi
+  if [ -z "${txt:-}" ]; then
+    echo "api-watchdog CANARY-FAIL: empty pane capture after $attempt attempts; cannot read role panes (recovery blind)"
     notify "🔴 [api-watchdog/${TEAM_RUN_ID:-legacy}] CANARY: cannot read role panes (tmux capture empty); recovery blind"
     return
   fi

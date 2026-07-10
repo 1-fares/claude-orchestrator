@@ -109,6 +109,31 @@ confirm() { cat <<'EOF'
 ────────────────────────────────────────────────────────────────────────────
 EOF
 }
+# Parked on the usage-limit dialog: the account ran out of usage and Claude
+# Code replaced the prompt with a modal. No spinner, no API-error text, no
+# 'Enter to select' footer, and the '❯' on the selected option satisfies the
+# idle-prompt check — before the stalled-usage class this classified as
+# healthy-idle "active" and a real usage outage silently parked most of a
+# team (2026-07-10). Must classify stalled-usage (auto-recoverable).
+usage_dialog() { cat <<'EOF'
+● Drafting the next section now.
+  You've reached your usage limit.
+   ❯ 1. Stop and wait for limit to reset
+     2. Add funds to continue with usage credits
+     3. Switch to Team plan
+   Enter to confirm · Esc to cancel
+EOF
+}
+# A non-usage modal dialog with the 'Enter to confirm' footer: not
+# auto-recoverable, so it must classify awaiting-input (page a human), not
+# slip through as idle.
+modal_confirm() { cat <<'EOF'
+● Session settings
+❯ 1. Keep current configuration
+  2. Change model
+  Enter to confirm · Esc to cancel
+EOF
+}
 
 echo "fingerprint stability (the core stuck discriminator):"
 fa="$(wedged_a | _fingerprint_text)"
@@ -138,6 +163,15 @@ eq "menu classifies awaiting-input"    "$(menu    | _classify_text)" "awaiting-i
 eq "confirm classifies awaiting-input" "$(confirm | _classify_text)" "awaiting-input"
 eq "idle still classifies active (not awaiting)" "$(idle | _classify_text)" "active"
 eq "idle_monitor classifies active (not stuck, not awaiting)" "$(idle_monitor | _classify_text)" "active"
+
+echo "usage-stall (the silent usage-outage park this guard closes):"
+eq "usage dialog classifies stalled-usage" "$(usage_dialog | _classify_text)" "stalled-usage"
+usage_dialog | _is_usage_stall_text && ok "usage dialog is a usage stall" || bad "usage dialog should be a usage stall"
+usage_dialog | _is_busy_text && bad "usage dialog should NOT be busy" || ok "usage dialog not busy"
+usage_dialog | _has_modal_dialog_text && ok "usage dialog is a modal (Escape needed)" || bad "usage dialog should read as a modal"
+eq "non-usage 'Enter to confirm' modal classifies awaiting-input" "$(modal_confirm | _classify_text)" "awaiting-input"
+idle | _is_usage_stall_text && bad "idle should NOT be a usage stall" || ok "idle not a usage stall"
+stalled | _is_usage_stall_text && bad "api-stalled should NOT be a usage stall" || ok "api-stalled not a usage stall"
 
 # A long legitimate THINK: body static, but the token counter climbs. The
 # daemon must read this as alive (not wedged) via the token readout, even
