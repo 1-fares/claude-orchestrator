@@ -39,9 +39,12 @@ keep private data out of the tree.
 - **The only intentional identity in tracked files** is the public GitHub handle
   `1-fares` and the `LICENSE` copyright line. Do not introduce any other.
 - **Before any commit, sweep the staged diff:**
-  `git diff --cached | grep -nEi '/home/|/Users/|@[a-z0-9.-]+\.(com|ch|li|io)|ntfy\.sh/[a-z0-9]|api[_-]?key|bearer|secret|password'`
-  and clear every hit that is real (not a placeholder or a variable name) before
-  committing.
+  `git diff --cached | bash bin/privacy-scan.sh` (exit 0 = clean; it prints
+  every hit). The same scan runs as a pre-push gate over every outgoing commit
+  once the hook path is set — do this once per clone:
+  `git config core.hooksPath bin/hooks`. A hit that is a genuine placeholder
+  false positive is added to `allow_re` in `bin/privacy-scan.sh`, never
+  bypassed with `--no-verify`.
 
 ## How to be a teammate here
 
@@ -210,10 +213,15 @@ file is the portable version of the same discipline.
   `TEAM_RUN_ID` = today's per-clone behavior (state in `.team/`).
 - `bin/preflight-deploy.sh`, `bin/panic.sh`, `bin/watchdog.sh`, `bin/worktree.sh`,
   `bin/trust-workdir.sh` (pre-accept the workspace-trust prompt for a dir).
-- `bin/api-watchdog.sh`: the team's liveness watchdog. Covers two failure modes
+- `bin/api-watchdog.sh`: the team's liveness watchdog. Covers these failure modes
   in one scan loop. (a) **API-stall:** a role idled at the prompt by a transient
   Anthropic rate-limit / network error, auto-sends `try again` with exponential
-  backoff (default 30/60/120/300/600s, max 5 retries). (b) **Stuck (wedged):** a
+  backoff (default 30/60/120/300/600s, max 5 retries). (a2) **Usage-stall:** the
+  account ran out of usage/credits and the session is parked on the usage-limit
+  modal (no spinner, no error text — invisible to (a)); auto-recovers with
+  Escape + a resume nudge on a flat `USAGE_RETRY_SEC` cadence (default 300s),
+  indefinitely, one operator push on entry. Other modal dialogs (`Enter to
+  confirm`) classify `awaiting-input` and page the operator. (b) **Stuck (wedged):** a
   role that is busy (spinner up) but shows no liveness for `STUCK_THRESHOLD_SEC`
   (default 480s), it is hung on a tool call (classically a chrome-devtools MCP
   call after the debug Chrome dies). Liveness = the pane content changed OR the
@@ -226,7 +234,7 @@ file is the portable version of the same discipline.
   (default 2) failed attempts it marks the role `stuck-giveup` and messages the
   orchestrator to retire+respawn it (or writes `PENDING.md` if the stuck role is
   the orchestrator itself). Writes per-role state to `$TEAM_DIR/health/<role>.json`
-  (`active`/`stalled-api`/`stuck`/`stuck-giveup`/`give-up`) and pushes `ntfy` on
+  (`active`/`stalled-api`/`stalled-usage`/`stuck`/`stuck-giveup`/`give-up`) and pushes `ntfy` on
   state changes. The pure pane detectors live in `bin/lib/watchdog-detect.sh`
   (unit-tested by `bin/tests/watchdog-detect-test.sh`; end-to-end recovery by
   `bin/tests/watchdog-stuck-integration-test.sh`). Started automatically by

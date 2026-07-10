@@ -118,6 +118,36 @@ sw3="$(state_of waitrole)"
 grep -q "RECOVERED-AWAIT" "$TEAM_DIR/audit/api-watchdog/waitrole.log" 2>/dev/null \
   && ok "audit log records recovery" || bad "audit log missing recovery line"
 
+echo "step 6: a role parked on the usage-limit dialog -> stalled-usage + Escape + resume nudge"
+# The usage-outage park (2026-07-10): a modal with no spinner, no API-error
+# text, and a '❯' on its selected option. Echo stays ON here so the watchdog's
+# Escape + typed nudge visibly changes the pane; the follow-up window renders
+# an idle prompt to assert recovery bookkeeping.
+$TM new-window -t "$TEAM_SESSION" -n usagerole \
+  "bash -c 'stty -echo 2>/dev/null; printf \"● Drafting the next section now.\n  You have reached your usage limit.\n ❯ 1. Stop and wait for limit to reset\n   2. Add funds to continue with usage credits\n   3. Switch to Team plan\n Enter to confirm · Esc to cancel\n\"; sleep 600'"
+sleep 1
+scan
+su1="$(state_of usagerole)"; r1="$(field_of usagerole retries)"
+[ "$su1" = "stalled-usage" ] && ok "usagerole -> stalled-usage on first sight" || bad "usagerole expected stalled-usage, got '$su1'"
+[ "$r1" = "1" ] && ok "resume nudge attempted immediately (retries=1)" || bad "expected retries=1, got '$r1'"
+grep -q "USAGE-STALL" "$TEAM_DIR/audit/api-watchdog/usagerole.log" 2>/dev/null \
+  && ok "audit log records USAGE-STALL" || bad "audit log missing USAGE-STALL line"
+# A second scan inside the flat cadence must NOT re-nudge (paced, not spammy).
+scan
+r2="$(field_of usagerole retries)"
+[ "$r2" = "1" ] && ok "no re-nudge inside USAGE_RETRY_SEC cadence" || bad "expected retries still 1, got '$r2'"
+
+echo "step 7: usage returns (dialog gone, prompt back) -> recovery logged"
+$TM kill-window -t "$TEAM_SESSION:usagerole" 2>/dev/null || true
+$TM new-window -t "$TEAM_SESSION" -n usagerole \
+  "bash -c 'stty -echo 2>/dev/null; printf \"● Resuming the unit.\n────\n❯ \n\"; sleep 600'"
+sleep 1
+scan
+su2="$(state_of usagerole)"
+[ "$su2" = "active" ] && ok "usagerole recovered to active" || bad "expected active, got '$su2'"
+grep -q "RECOVERED-USAGE" "$TEAM_DIR/audit/api-watchdog/usagerole.log" 2>/dev/null \
+  && ok "audit log records RECOVERED-USAGE" || bad "audit log missing RECOVERED-USAGE line"
+
 echo
-if [ "$fail" = 0 ]; then echo "PASS: stuck detection + recovery ladder + awaiting-input escalation"; exit 0
+if [ "$fail" = 0 ]; then echo "PASS: stuck detection + recovery ladder + awaiting-input + usage-stall"; exit 0
 else echo "FAIL: see above"; exit 1; fi
