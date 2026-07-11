@@ -38,6 +38,29 @@ _team_hash="$(printf '%s' "$TEAM_REPO" | cksum | cut -d' ' -f1)"
 # silently move a caller's TEAM_DIR onto a different (especially live) path.
 _preset_team_dir="${TEAM_DIR:-}"
 
+# Test-isolation tripwire (2026-07-11 incident). A test sourced from bin/tests/
+# that INHERITS a live run's TEAM_RUN_ID derives the live run's dir, session,
+# and socket, and its cleanup (rm -rf "$TEAM_DIR", kill-session) then destroys
+# the live run — with an internally-consistent env the TEAM_DIR guard below
+# cannot see anything wrong. So: when any caller in the source chain is under
+# bin/tests/, require the throwaway names from bin/tests/lib/isolate.sh.
+_te_caller_is_test=0
+for _te_src in "${BASH_SOURCE[@]:-}"; do
+  case "$_te_src" in */bin/tests/*|bin/tests/*|tests/*) _te_caller_is_test=1;; esac
+done
+if [ "$_te_caller_is_test" = 1 ]; then
+  case "${TEAM_RUN_ID:-}" in
+    test*|wdtest*|potest*) : ;;  # isolate.sh names + grandfathered per-test prefixes
+    *) echo "team-env: caller is under bin/tests/ but TEAM_RUN_ID='${TEAM_RUN_ID:-<unset>}' is not a test id." >&2
+       echo "  Source bin/tests/lib/isolate.sh FIRST (it exports throwaway TEAM_RUN_ID/TEAM_TMUX)." >&2
+       echo "  Refusing: an inherited live run id here is how a test's cleanup wiped a live run." >&2
+       # exit, not return: on `return` the sourcing test would carry on with
+       # partially-derived names, which is exactly the state being prevented.
+       exit 97 ;;
+  esac
+fi
+unset _te_caller_is_test _te_src
+
 if [ -n "${TEAM_RUN_ID:-}" ]; then
   # Per-run: derive port + session + state dir from (clone-path + run-id) so
   # parallel teams in this clone do not collide.
