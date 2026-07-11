@@ -134,6 +134,28 @@ modal_confirm() { cat <<'EOF'
   Enter to confirm · Esc to cancel
 EOF
 }
+# A healthy idle role whose ORDINARY OUTPUT discusses usage limits (this team
+# maintains the watchdog itself, and roles relay operator notes about usage).
+# Must NOT classify stalled-usage: the recovery path injects a prompt, so a
+# prose false positive would spuriously re-prompt an idle role every cadence.
+usage_prose() { cat <<'EOF'
+● Noted: the operator says the usage limit was reached earlier and has reset.
+  I have finished my unit and reported done.
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on · 1 monitor
+EOF
+}
+# Matching dialog text but NO '❯' anywhere in the tail (scrolled output, no
+# rendered prompt): the idle-prompt gate must keep it out of stalled-usage.
+usage_no_prompt() { cat <<'EOF'
+  the dialog said: wait for limit to reset
+  Add funds to continue with usage credits
+  (quoted in a log dump)
+────────────────────────────────────────────────────────────────────────────
+EOF
+}
 
 echo "fingerprint stability (the core stuck discriminator):"
 fa="$(wedged_a | _fingerprint_text)"
@@ -172,6 +194,8 @@ usage_dialog | _has_modal_dialog_text && ok "usage dialog is a modal (Escape nee
 eq "non-usage 'Enter to confirm' modal classifies awaiting-input" "$(modal_confirm | _classify_text)" "awaiting-input"
 idle | _is_usage_stall_text && bad "idle should NOT be a usage stall" || ok "idle not a usage stall"
 stalled | _is_usage_stall_text && bad "api-stalled should NOT be a usage stall" || ok "api-stalled not a usage stall"
+eq "prose ABOUT usage limits classifies active (no injection on healthy roles)" "$(usage_prose | _classify_text)" "active"
+eq "dialog text without a rendered prompt classifies active (idle gate)" "$(usage_no_prompt | _classify_text)" "active"
 
 # A long legitimate THINK: body static, but the token counter climbs. The
 # daemon must read this as alive (not wedged) via the token readout, even

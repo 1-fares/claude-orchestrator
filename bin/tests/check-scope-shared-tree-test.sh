@@ -230,6 +230,38 @@ expect_exit 0 "unknown commit in the list does not fail the gate" "$out" "$rc"
 case "$out" in *"is not in this tree"*) ok "unknown commit is reported" ;;
   *) bad "unknown commit is reported" "output: $out" ;; esac
 
+# ---------------------------------------------------------------------------
+# 10. g3c: explicit list + trailer commits are UNIONED, not overridden.
+#     A commit already marked with a `Unit:` trailer touches an off-limits path;
+#     the explicit list names only a LATER, in-scope commit. Before the fix the
+#     list short-circuited trailer matching, dropping the trailered violation and
+#     letting the unit pass. Union must still catch it.
+# ---------------------------------------------------------------------------
+new_case union-list-and-trailer
+seed; baseline demo-unit
+echo x > "$WT/restricted/off.txt"; commit_marked "trailered off-limits work" demo-unit
+echo a > "$WT/src/allowed.txt";    commit_unmarked "later in-scope work, no trailer"
+later="$(git -C "$WT" rev-parse HEAD)"
+printf '%s\n' "$later" > "$TD/commits/demo-unit"   # list names ONLY the later commit
+brief demo-unit "src/ restricted/off.txt" "restricted/"
+out="$(run_cs demo-unit)"; rc=$?
+expect_exit 1 "union: explicit list does not drop a trailered off-limits commit" "$out" "$rc"
+case "$out" in *"restricted/off.txt"*) ok "union names the trailered off-limits path" ;;
+  *) bad "union names the trailered off-limits path" "output: $out" ;; esac
+
+# ...and the union reports BOTH commits as attributed (not just the listed one).
+new_case union-counts-both
+seed; baseline demo-unit
+echo a > "$WT/src/one.txt"; commit_marked "trailered work" demo-unit
+echo b > "$WT/src/two.txt"; commit_unmarked "listed work, no trailer"
+later="$(git -C "$WT" rev-parse HEAD)"
+printf '%s\n' "$later" > "$TD/commits/demo-unit"
+brief demo-unit "src/" "restricted/"
+out="$(run_cs demo-unit)"; rc=$?
+expect_exit 0 "union: both in-scope commits pass" "$out" "$rc"
+case "$out" in *"commits=2"*) ok "union attributes both commits (commits=2)" ;;
+  *) bad "union attributes both commits (commits=2)" "output: $out" ;; esac
+
 echo
 printf 'passed %d, failed %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

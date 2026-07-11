@@ -44,6 +44,17 @@ zero windows dies), and the run dir is gone with no `CRASH-DETECTED.md`
    destructive operation there (exit 96) unless `RESET_CONFIRM=yes`.
    Dry-run `cleanup.sh` stays allowed anywhere.
 
+## Residual gaps (known, accepted)
+
+The tripwire sees a test only when a file under `bin/tests/` appears in the
+`BASH_SOURCE` chain. Two shapes bypass it: `bash -c '... . bin/team-env.sh'`
+run from inside `bin/tests/` (no file in the chain), and a test that
+*executes* a destructive `bin/` script rather than sourcing team-env itself
+(indistinguishable from normal role usage; the reset.sh/cleanup.sh role
+tripwire covers the destructive endpoints of that shape). The guard is a
+tripwire against the observed accident class, not a sandbox; the binding
+rule remains the CLAUDE.md discipline plus isolate.sh in every test.
+
 ## Recovery playbook (what worked)
 
 1. Confirm the working tree: `git status` / `git log` in the target repo —

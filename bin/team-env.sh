@@ -45,9 +45,16 @@ _preset_team_dir="${TEAM_DIR:-}"
 # cannot see anything wrong. So: when any caller in the source chain is under
 # bin/tests/, require the throwaway names from bin/tests/lib/isolate.sh.
 _te_caller_is_test=0
+# Resolve each caller to an absolute path and compare against THIS repo's
+# bin/tests/ — string-matching the raw BASH_SOURCE is both overbroad (a target
+# project's tests/foo.sh sourcing team-env for a gate is legitimate and must
+# not be killed) and holey (`cd bin/tests && bash ./foo.sh` yields './foo.sh').
 for _te_src in "${BASH_SOURCE[@]:-}"; do
-  case "$_te_src" in */bin/tests/*|bin/tests/*|tests/*) _te_caller_is_test=1;; esac
+  [ -e "$_te_src" ] || continue
+  _te_abs="$(cd "$(dirname "$_te_src")" 2>/dev/null && pwd)/$(basename "$_te_src")"
+  case "$_te_abs" in "$TEAM_REPO/bin/tests/"*) _te_caller_is_test=1;; esac
 done
+unset _te_abs 2>/dev/null || true
 if [ "$_te_caller_is_test" = 1 ]; then
   case "${TEAM_RUN_ID:-}" in
     test*|wdtest*|potest*) : ;;  # isolate.sh names + grandfathered per-test prefixes

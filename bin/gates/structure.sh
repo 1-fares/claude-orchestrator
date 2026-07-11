@@ -47,8 +47,11 @@ for h in rules.get("required_headings", []) or []:
 # Per-section counts (split text on heading boundaries)
 sec_rules = rules.get("sections") or {}
 if sec_rules:
-    # build map: heading -> body text until next heading of same-or-shallower level
-    positions = [(m.start(), m.group(0).count("#"), m.group(1).strip(), m.end())
+    # build map: heading -> body text until next heading of same-or-shallower level.
+    # group(1) is the leading hashes (its length is the heading level); group(2)
+    # is the heading text. The name must come from group(2): using group(1) here
+    # made every section key a run of '#', so per-section ranges never matched.
+    positions = [(m.start(), len(m.group(1)), m.group(2).strip(), m.end())
                  for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", text, re.M)]
     bodies = {}
     for i, (pos, lvl, name, end) in enumerate(positions):
