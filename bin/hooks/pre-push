@@ -15,7 +15,15 @@ while read -r _local_ref local_sha _remote_ref _remote_sha; do
   [ "$local_sha" = "$z40" ] && continue   # ref deletion: nothing outgoing
   # Every commit not already on some remote is outgoing. (A commit already
   # public on another remote is by definition already out.)
-  for c in $(git -C "$repo" rev-list "$local_sha" --not --remotes 2>/dev/null); do
+  # Fail CLOSED: if rev-list itself errors, the outgoing set is unknown and
+  # the push must not proceed unscanned (peer-review finding, 2026-07-11).
+  if ! commits="$(git -C "$repo" rev-list "$local_sha" --not --remotes 2>&1)"; then
+    echo "pre-push: rev-list failed for $local_sha — cannot enumerate outgoing commits, push aborted:" >&2
+    printf '%s\n' "$commits" | sed 's/^/  /' >&2
+    fail=1
+    continue
+  fi
+  for c in $commits; do
     if ! git -C "$repo" show "$c" | bash "$repo/bin/privacy-scan.sh"; then
       echo "pre-push: private data in commit $c — push aborted" >&2
       fail=1
