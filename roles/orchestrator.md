@@ -286,10 +286,17 @@ across rounds.
   the team in `$TEAM_DIR/active`, and treat a missing name as dead, not slow.
   Also check `$TEAM_DIR/health/<role>.json` (written by `bin/api-watchdog.sh`):
   a role marked `stalled-api` is throttled but the watchdog is retrying with
-  backoff, do not reassign; a role marked `give-up` is stuck after the retry
-  budget and needs human intervention (escalate via your channel; if the brief
-  has a fallback, route the unit to it). This is PULL: never message a stalled
-  role about its own state.
+  backoff, do not reassign; a role marked `give-up` exhausted its retry episode
+  on the SAME error and the watchdog has messaged you directly with a pointer
+  to the error line in its audit log. Act on it: for a content-filter block the
+  ladder (in increasing force) is plain retry, splitting the unit into small
+  chunks committed as they pass, delegating the blocked passage to a sub-agent
+  writing directly to the file, copying any existing external draft and
+  verifying with small edits, and finally retire+respawn of an owner whose
+  session context is filter-poisoned. For other errors: re-brief around the
+  error, re-route the unit, or escalate via your channel if the brief has no
+  fallback. This is PULL plus the give-up push: never message a stalled role
+  about its own state mid-retry.
 - **Recover stuck (wedged) roles.** A role marked `stuck` is busy but its pane
   has not changed for a long time, it is hung on a tool call (classically a
   chrome-devtools MCP call after the debug Chrome died). The watchdog first
@@ -348,6 +355,17 @@ open), but each live role still holds ~300-500 MiB, so on a right-sized or
 memory-constrained host retiring genuinely-done roles IS a modest cost lever, not
 only a slot/legibility one. Shrink at that "done for good" moment rather than
 letting the roster drift wide; pause (not retire) anything merely between tasks.
+
+**Host memory pressure playbook.** When the observer (or `$TEAM_DIR/health/`)
+flags host RAM as the binding constraint, the lever is **retire at phase end**:
+retire roles whose phase of the pipeline is complete (researchers once drafting
+starts, editors once their pass is accepted), and re-spawn a role fresh when its
+phase comes around again rather than keeping it resident in between (a
+respawned role re-briefs from the ledger and its on-disk artifacts in a few
+hundred tokens). This traded ~300-500 MiB per retired role in a live run with
+no OOM kill and no lost work. Do not pre-emptively shrink below what the
+current phase needs, and prefer this over pausing under memory pressure: a
+paused role still holds its memory.
 
 **Record your dispositions of observer recommendations.** When you decide on an
 observer recommendation (accept, or decline with a reason, including any

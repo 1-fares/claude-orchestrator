@@ -169,8 +169,7 @@ done
 if [ "$graceful" -eq 1 ]; then
   for wid in "${m_wids[@]}"; do
     wid_in_session "$wid" || continue
-    tmux send-keys -t "$wid" -l "stop: you are being retired; finish the current write and stop." 2>/dev/null \
-      && tmux send-keys -t "$wid" Enter 2>/dev/null || true
+    tmux_submit "$wid" "stop: you are being retired; finish the current write and stop." || true
   done
   sleep 4
 fi

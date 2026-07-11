@@ -229,11 +229,19 @@ file is the portable version of the same discipline.
 - `bin/api-watchdog.sh`: the team's liveness watchdog. Covers these failure modes
   in one scan loop. (a) **API-stall:** a role idled at the prompt by a transient
   Anthropic rate-limit / network error, auto-sends `try again` with exponential
-  backoff (default 30/60/120/300/600s, max 5 retries). (a2) **Usage-stall:** the
+  backoff (default 30/60/120/300/600s, max 5 retries). The retry count is
+  episode-scoped (`API_EPISODE_WINDOW_SEC`, default 1800s, marker file): each
+  retry makes the pane busy, which used to reset the counter, so a role
+  stalling on the same error (classically a content-filter block) retried
+  forever; now give-up is reachable and hands the error to the orchestrator
+  (once per episode) with the recovery-ladder hint. (a2) **Usage-stall:** the
   account ran out of usage/credits and the session is parked on the usage-limit
   modal (no spinner, no error text — invisible to (a)); auto-recovers with
   Escape + a resume nudge on a flat `USAGE_RETRY_SEC` cadence (default 300s),
-  indefinitely, one operator push on entry. Other modal dialogs (`Enter to
+  indefinitely, one operator push on entry. When a role recovers from a usage
+  stall, one deduped wake nudge (`USAGE_WAKE_DEDUPE_SEC`, default 3600s) goes
+  to the orchestrator so an idle orchestrator re-dispatches after the outage
+  instead of the team sitting recovered-but-undirected. Other modal dialogs (`Enter to
   confirm`) classify `awaiting-input` and page the operator. (b) **Stuck (wedged):** a
   role that is busy (spinner up) but shows no liveness for `STUCK_THRESHOLD_SEC`
   (default 480s), it is hung on a tool call (classically a chrome-devtools MCP
@@ -267,9 +275,13 @@ file is the portable version of the same discipline.
   `docs/incident-2026-05-26-tmux-scope-cleanup.md`.
 - `bin/compaction-watchdog.sh`: keeps team sessions' context off the
   auto-compact ceiling (a near-full window is the most expensive state to run in,
-  since every turn re-reads a huge cached context). Multi-target: always watches
-  the orchestrator (window 0), plus every window whose role runs a top-tier
-  model per `$TEAM_DIR/models/<role>`; targets re-enumerated each cycle. Per
+  since every turn re-reads a huge cached context). Multi-target: the `/context`
+  probe always watches the orchestrator (window 0), plus every window whose role
+  runs a top-tier model per `$TEAM_DIR/models/<role>`; the passive ceiling guard
+  (capture+grep for `Context limit reached` / `Compaction failed`, works
+  mid-turn) covers EVERY window, so a default-model worker wedged at the
+  terminal ceiling is escalated instead of invisible; targets re-enumerated
+  each cycle. Per
   pane, at an idle task boundary (pane unchanged for `COMPACT_IDLE_SEC`, not
   busy, input line empty or only dim autocomplete shadow text) it probes
   `/context` and picks the moment with two model-keyed per-role thresholds
