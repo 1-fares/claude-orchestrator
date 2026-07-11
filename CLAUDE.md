@@ -217,6 +217,13 @@ file is the portable version of the same discipline.
   children inherit it), so parallel teams in one clone get their own port,
   session, and state dir (`.team-<run-id>/`) and do not collide on names. No
   `TEAM_RUN_ID` = today's per-clone behavior (state in `.team/`).
+- `bin/tools/`: the shared toolbox — small coding helpers a role runs as
+  `$ORCH_HOME/bin/tools/<name>` instead of re-deriving boilerplate. `probe-env.sh`
+  (detect a repo's build/test/lint and a `verify:` line), `impact-scan.sh`
+  (reverse-dependency scan before editing a file), `red-green.sh` (capture the
+  tester's fail-then-pass evidence pair), `diff-summary.sh` (compact change
+  summary for review). Prefer them over hand-rolling the same boilerplate. Grow
+  the set from the retro loop, not a brainstorm. See `bin/tools/README.md`.
 - `bin/preflight-deploy.sh`, `bin/panic.sh`, `bin/watchdog.sh`, `bin/worktree.sh`,
   `bin/trust-workdir.sh` (pre-accept the workspace-trust prompt for a dir).
 - `bin/api-watchdog.sh`: the team's liveness watchdog. Covers these failure modes
