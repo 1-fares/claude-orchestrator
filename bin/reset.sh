@@ -16,6 +16,17 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 
+# Role tripwire: a team role session (ORCH_HOME is exported into every role by
+# the spawn path) must never reset the run it belongs to — that is an operator
+# action from an outside shell. RESET_CONFIRM=yes overrides for the rare
+# deliberate case (e.g. the operator driving a role pane by hand).
+if [ -n "${ORCH_HOME:-}" ] && [ "${RESET_CONFIRM:-}" != "yes" ]; then
+  echo "reset: refusing — this shell looks like a team role session (ORCH_HOME is set)." >&2
+  echo "  reset.sh destroys the live run's state dir and every role, including the caller." >&2
+  echo "  Run it from an operator shell, or set RESET_CONFIRM=yes if this is deliberate." >&2
+  exit 96
+fi
+
 "$repo/bin/panic.sh"
 rm -rf "$TEAM_DIR"
 echo "reset: team stopped, $TEAM_DIR cleared. Goals and task briefs kept."
