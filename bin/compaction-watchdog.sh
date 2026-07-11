@@ -19,6 +19,16 @@
 # spawned, retired, or re-modelled mid-run is picked up automatically. Per-target
 # state lives in bash associative arrays keyed by role name.
 #
+# CEILING GUARD ON EVERY WINDOW (2026-07-11): the /context probe stays limited
+# to the top-tier targets above (it types keystrokes into the pane), but the
+# passive ceiling-state scan (capture + grep for "Context limit reached" /
+# "Compaction failed") now covers EVERY window. A default-model worker that
+# slipped past both thresholds mid-turn and landed on the terminal "Compaction
+# failed" state was previously invisible to this daemon: not a probe target, so
+# nobody escalated it and the run stalled until a human noticed (fact-checker,
+# 2026-07-11). Ceiling-only targets get the marker + orchestrator retire+respawn
+# escalation, never the probe.
+#
 # Choosing the RIGHT moment (two thresholds, agent-cooperative first):
 #   - At the per-role NUDGE pct the daemon does NOT force anything. It asks the
 #     session to compact ITSELF at its next safe checkpoint (after it has written
@@ -79,6 +89,8 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/lib/compaction-detect.sh
 . "$repo/bin/lib/compaction-detect.sh"
+# shellcheck source=bin/lib/tmux-submit.sh
+. "$repo/bin/lib/tmux-submit.sh"
 
 SOCK="${COMPACT_SOCKET:-orchestrator}"
 SESSION="${COMPACT_SESSION:-}"
@@ -149,6 +161,11 @@ trap 'exit 0' TERM INT
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG"; }
 tmux_o() { tmux -L "$SOCK" "$@"; }
+# submit_o <target> <msg>: verified submit via the shared helper (double-Enter
+# for [Pasted text] blocks + capture-pane check that the input line emptied).
+# Replaces the hand-rolled "-l msg; Enter; sleep 1; Enter" sequences, several of
+# which left long nudges sitting unsubmitted under load.
+submit_o() { _tmux_submit_via tmux_o "$@"; }
 strip_ansi() { sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g'; }
 # Operator push (mirrors api-watchdog.sh): no-op when NTFY_URL is unset, the
 # durable marker carries the signal regardless.
@@ -192,10 +209,16 @@ resolve_thresholds() {
   FORCE_R="${FORCE_OVERRIDE:-$df}"
 }
 
-# enumerate_targets: echo "<role> <target> <orchflag>" lines, one per watched pane:
-# window 0 (the orchestrator) ALWAYS, plus every other window whose role runs fable
-# (per $TEAM_DIR/models/<role>). The window NAME is the role name. orchflag=1 for
-# window 0 (autorecover-eligible), 0 otherwise.
+# enumerate_targets: echo "<role> <target> <orchflag> <probeflag>" lines, one per
+# window. The window NAME is the role name. orchflag=1 for window 0 (the
+# orchestrator, autorecover-eligible), 0 otherwise. probeflag=1 (window 0 plus
+# every fable-model role per $TEAM_DIR/models/<role>) = full watch including the
+# /context probe; probeflag=0 (every other window) = ceiling guard ONLY. The
+# probe types keystrokes into the pane, so it stays limited to the panes whose
+# token cost justifies early compaction — but the ceiling guard is a passive
+# capture+grep, and a default-model worker wedged at the unrecoverable ceiling
+# was invisible while only probe targets were enumerated (a worker hit
+# "Compaction failed" and nothing escalated, 2026-07-11).
 enumerate_targets() {
   local sess wins line widx wname oldifs
   sess="$(orch_session)" || return 1
@@ -213,11 +236,13 @@ enumerate_targets() {
     widx="${line%% *}"; wname="${line#* }"
     [ -n "$wname" ] || continue
     if [ "$widx" = "0" ]; then
-      printf '%s %s:%s 1\n' "$wname" "$sess" "$widx"
+      printf '%s %s:%s 1 1\n' "$wname" "$sess" "$widx"
       continue
     fi
     if grep -qs '^fable' "$MODELS_DIR/$wname" 2>/dev/null; then
-      printf '%s %s:%s 0\n' "$wname" "$sess" "$widx"
+      printf '%s %s:%s 0 1\n' "$wname" "$sess" "$widx"
+    else
+      printf '%s %s:%s 0 0\n' "$wname" "$sess" "$widx"
     fi
   done
   IFS="$oldifs"
@@ -269,10 +294,7 @@ do_nudge() {
   local t="$1" pct="$2"
   local msg="[compaction-watchdog] Context is at ${pct} percent. When you reach a safe checkpoint (ledger and state written, no in-flight subagent), please run /compact so the run stays in a cheap context. Finish the current step first; there is no rush."
   tmux_o send-keys -t "$t" C-u 2>/dev/null
-  tmux_o send-keys -t "$t" -l "$msg" 2>/dev/null
-  tmux_o send-keys -t "$t" Enter 2>/dev/null
-  sleep 1
-  tmux_o send-keys -t "$t" Enter 2>/dev/null   # a long line may collapse to a [Pasted text] block; second Enter submits
+  submit_o "$t" "$msg"
 }
 
 # Backstop: force a controlled compaction with focus instructions.
@@ -298,10 +320,7 @@ do_clear_rebrief() {
   sleep 3
   local brief="You are the orchestrator, auto-recovered from a context-limit wedge (compaction could not reduce below the limit, so the watchdog /cleared you; your state is on disk). Re-join the bus: /is c orchestrator. Then reconstruct the run from ./CLAUDE.md, ./roles/orchestrator.md, and ${TEAM_DIR:-.}/state.md (read the recent tail, including the decision-log). Resume from there; keep context lean (point to files, do not re-read everything, checkpoint+compact at task boundaries). Report status when re-oriented."
   tmux_o send-keys -t "$t" C-u 2>/dev/null
-  tmux_o send-keys -t "$t" -l "$brief" 2>/dev/null
-  tmux_o send-keys -t "$t" Enter 2>/dev/null
-  sleep 1
-  tmux_o send-keys -t "$t" Enter 2>/dev/null
+  submit_o "$t" "$brief"
 }
 
 # Escalate a WORKER that is at the unrecoverable ceiling to the orchestrator (it
@@ -317,10 +336,7 @@ notify_orch_worker_wedged() {
     real) log "[$role] wedge-notice deferred (orchestrator has real unsubmitted input)"; return ;;
   esac
   tmux_o send-keys -t "$ot" C-u 2>/dev/null
-  tmux_o send-keys -t "$ot" -l "[compaction-watchdog] Worker '${role}' is at an unrecoverable context ceiling (${cstate}); compaction cannot recover it. You own retire+respawn: please retire and respawn '${role}'. Its task state is on disk / in its PR; rebrief it fresh." 2>/dev/null
-  tmux_o send-keys -t "$ot" Enter 2>/dev/null
-  sleep 1
-  tmux_o send-keys -t "$ot" Enter 2>/dev/null
+  submit_o "$ot" "[compaction-watchdog] Worker '${role}' is at an unrecoverable context ceiling (${cstate}); compaction cannot recover it. You own retire+respawn: please retire and respawn '${role}'. Its task state is on disk / in its PR; rebrief it fresh."
 }
 
 # Write/refresh a per-role ceiling marker.
@@ -370,8 +386,7 @@ probe_blind_alarm() {
   notify "🔴 [compaction-watchdog/${TEAM_RUN_ID:-legacy}] context probe blind ${n} cycles for '${role}'; early compaction OFF (CC format change OR large-context viewport overflow). See $m"
   # Nudge the role's OWN pane to self-compact.
   tmux_o send-keys -t "$t" C-u 2>/dev/null
-  tmux_o send-keys -t "$t" -l "[compaction-watchdog] I cannot read your context percentage (either the /context format changed, or your context is large enough that the /context total scrolls off the pane), so I cannot compact you early. Please /compact at a safe checkpoint, and flag the probe parser if the format changed." 2>/dev/null
-  tmux_o send-keys -t "$t" Enter 2>/dev/null
+  submit_o "$t" "[compaction-watchdog] I cannot read your context percentage (either the /context format changed, or your context is large enough that the /context total scrolls off the pane), so I cannot compact you early. Please /compact at a safe checkpoint, and flag the probe parser if the format changed."
   # For a WORKER, also tell the orchestrator (it can prompt a compact or retire+respawn).
   if [ "$is_orch" != "1" ]; then
     local ot oet otxt; ot="$(orch_target)" || return 0
@@ -379,18 +394,18 @@ probe_blind_alarm() {
     if [ -z "$otxt" ] || is_busy "$otxt"; then return 0; fi
     case "$(input_class "$otxt" "$oet")" in real) return 0 ;; esac
     tmux_o send-keys -t "$ot" C-u 2>/dev/null
-    tmux_o send-keys -t "$ot" -l "[compaction-watchdog] Worker '${role}' is probe-blind (${n} cycles): I cannot read its context % to compact it early (likely a large context overflowing /context in fullscreen TUI). It risks drifting to the auto-compact ceiling unmanaged — consider prompting it to /compact, or retire+respawn if it wedges." 2>/dev/null
-    tmux_o send-keys -t "$ot" Enter 2>/dev/null
+    submit_o "$ot" "[compaction-watchdog] Worker '${role}' is probe-blind (${n} cycles): I cannot read its context % to compact it early (likely a large context overflowing /context in fullscreen TUI). It risks drifting to the auto-compact ceiling unmanaged — consider prompting it to /compact, or retire+respawn if it wedges."
   fi
 }
 
 # Per-role state (associative arrays keyed by role name).
 declare -A last_fp fp_since last_compact last_nudge last_recover ceiling_seen probe_fail probe_blind_alarmed
 
-# process_target <role> <target> <orchflag>: one pass of the watch logic for a
-# single pane. Returns immediately (no sleep); the caller sleeps once per pass.
+# process_target <role> <target> <orchflag> <probeflag>: one pass of the watch
+# logic for a single pane. probeflag=0 = ceiling guard only, no /context probe.
+# Returns immediately (no sleep); the caller sleeps once per pass.
 process_target() {
-  local role="$1" t="$2" is_orch="$3"
+  local role="$1" t="$2" is_orch="$3" probe="${4:-1}"
   local etxt txt fp nowt cstate idle pct m
   etxt="$(tmux_o capture-pane -e -t "$t" -p 2>/dev/null)"
   txt="$(printf '%s' "$etxt" | strip_ansi)"
@@ -440,6 +455,9 @@ process_target() {
   # healthy pane -> clear a stale ceiling marker
   m="$(role_marker "$role")"
   if [ -f "$m" ]; then rm -f "$m" 2>/dev/null || true; ceiling_seen[$role]=0; log "[$role] CEILING-CLEARED: pane healthy again"; fi
+
+  # Ceiling-guard-only target (default-model worker): no /context probe.
+  [ "$probe" = 1 ] || return
 
   if [ "$fp" != "${last_fp[$role]:-}" ]; then last_fp[$role]="$fp"; fp_since[$role]=$nowt; return; fi
   idle=$(( nowt - ${fp_since[$role]:-$nowt} ))
@@ -516,10 +534,14 @@ canary() {
 start_targets=""
 _st_tmp="${TEAM_DIR:-.}/.compaction-start.$$"
 if enumerate_targets > "$_st_tmp" 2>/dev/null; then
-  while read -r r _ orchf; do
+  while read -r r _ orchf probef; do
     [ -n "$r" ] || continue
-    resolve_thresholds "$r"
-    start_targets+="${r}(${NUDGE_R}/${FORCE_R}$([ "$orchf" = 1 ] && echo ,orch)) "
+    if [ "${probef:-1}" = 1 ]; then
+      resolve_thresholds "$r"
+      start_targets+="${r}(${NUDGE_R}/${FORCE_R}$([ "$orchf" = 1 ] && echo ,orch)) "
+    else
+      start_targets+="${r}(ceiling-only) "
+    fi
   done < "$_st_tmp"
 fi
 rm -f "$_st_tmp" 2>/dev/null
@@ -531,9 +553,9 @@ while :; do
     log "no targets on socket $SOCK (no orch session?)"; rm -f "${TEAM_DIR:-.}/.compaction-targets.$$" 2>/dev/null
     sleep "$INTERVAL"; continue
   fi
-  while read -r role target orchflag; do
+  while read -r role target orchflag probeflag; do
     [ -n "$role" ] || continue
-    process_target "$role" "$target" "$orchflag"
+    process_target "$role" "$target" "$orchflag" "$probeflag"
   done < "${TEAM_DIR:-.}/.compaction-targets.$$"
   rm -f "${TEAM_DIR:-.}/.compaction-targets.$$" 2>/dev/null
   sleep "$INTERVAL"

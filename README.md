@@ -434,7 +434,16 @@ is started at launch, re-ensured on every orchestrator (re)start and role add,
 and self-healed by the tmux-watchdog, so it can never be silently absent while a
 team runs. It is a pure-shell daemon that scans every team window,
 detects the stall, and sends `try again` with exponential backoff
-(30s → 60s → 120s → 300s → 600s, max 5 retries). Per-role state lives in
+(30s → 60s → 120s → 300s → 600s, max 5 retries; `API_BACKOFF_SEC` overrides).
+The retry count is **episode-scoped**: each retry makes the pane busy for a
+scan or two, which resets the per-scan counters, so without a memory a role
+stalling on the *same* error (classically a content-filter block on quoted
+source text) retried forever and never escalated. Stalls separated by less
+than `API_EPISODE_WINDOW_SEC` (default 1800s) are one episode whose count and
+backoff pacing persist in a marker file; after max retries in one episode the
+watchdog gives up **and hands the error to the orchestrator** (which owns the
+recovery ladder: split the unit, delegate the blocked passage to a sub-agent,
+or retire+respawn the owner), once per episode. Per-role state lives in
 `$TEAM_DIR/health/<role>.json` and is visible in the `HEALTH` column of
 `bin/team-status.sh`. With `NTFY_URL` set, it pushes ntfy on state changes
 (first stall, recovery, give-up). The watchdog makes no Claude API call so it
@@ -452,7 +461,12 @@ indefinitely — a usage window returns on the account's schedule, not the
 team's, so there is no give-up. The operator is pushed once on entry (usage
 exhaustion is operator-actionable). Other modal dialogs (`Enter to confirm`
 footers that are not the usage dialog) classify `awaiting-input` and page the
-operator instead of reading as idle.
+operator instead of reading as idle. When a role recovers from a usage stall,
+the watchdog also sends the **orchestrator** one wake-up nudge (deduped per
+`USAGE_WAKE_DEDUPE_SEC`, default 3600s): workers resume their own aborted
+turns when usage returns, but an orchestrator that was idle at its prompt when
+the outage began has no turn to resume, and without the nudge a fully
+recovered team sat undispatched until a human noticed.
 
 ```bash
 # Any ntfy topic works (account-free; open it in the ntfy phone app):
@@ -515,6 +529,17 @@ rate-limited. `COMPACT_NUDGE_DEBOUNCE` / `COMPACT_DEBOUNCE_SEC` bound how often 
 nudges / forces. Disable with `COMPACT_WATCHDOG_DISABLED=1`. Its lifecycle matches
 the api-watchdog (started at launch, re-ensured on orchestrator (re)start and role
 add, self-healed by the tmux-watchdog).
+
+The `/context` probe (which types keystrokes) targets window 0 plus every
+top-tier-model role, but the passive **ceiling guard** — a capture+grep for
+`Context limit reached` / `Compaction failed` that works even mid-turn —
+covers **every** window. A session that slips past both thresholds during a
+long turn and lands on the terminal "Compaction failed" state is escalated:
+the orchestrator auto-recovers via `/clear` + a rebrief from `state.md`; a
+worker gets a durable marker, an ntfy push, and a retire+respawn request
+posted into the orchestrator pane. Before the guard covered all windows, a
+default-model worker in that state was invisible to the daemon and stalled the
+run until a human noticed.
 
 ### Daemon lifecycle
 

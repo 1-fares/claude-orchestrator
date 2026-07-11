@@ -33,8 +33,7 @@ if [ -f "$active" ]; then
     while IFS=$'\t' read -r pid wid role; do
       [ -n "${wid:-}" ] || continue
       [ "${role:-}" = orchestrator ] && continue   # never send the stop prompt to the orchestrator
-      tmux send-keys -t "$wid" -l "stop: teardown, finish the current write and stop." 2>/dev/null && \
-        tmux send-keys -t "$wid" Enter 2>/dev/null || true
+      tmux_submit "$wid" "stop: teardown, finish the current write and stop." || true
     done < "$active"
     sleep 4
   fi

@@ -78,12 +78,17 @@ roster line, ntfy), shared spawn/teardown in `bin/lib/team-spawn.sh` +
 rate-limited. Lifecycle: started at launch, re-ensured on every orchestrator
 (re)start and role add, self-healed by the tmux-watchdog.
 - `api-watchdog.sh`: recovers API rate-limit / network stalls (exponential
-  backoff) and detects wedged roles (busy but no token/pane liveness).
+  backoff, episode-scoped retry count so repeated same-error stalls reach
+  give-up and escalate to the orchestrator instead of looping), usage-limit
+  outages (indefinite auto-retry, plus one orchestrator wake nudge when a role
+  recovers so the team re-dispatches after an outage), and detects wedged
+  roles (busy but no token/pane liveness).
 - `tmux-watchdog.sh`: detects tmux-server crash, snapshots panes, self-heals the
   other daemons.
 - `compaction-watchdog.sh`: compacts the orchestrator and top-tier roles early at
   idle boundaries; multi-target, probe-blind backstop if `/context` parsing
-  breaks.
+  breaks; passive ceiling guard on every window, so a worker wedged at the
+  terminal "Compaction failed" state is escalated for retire+respawn.
 - `chrome-supervisor.sh`: un-wedges roles hung on a chrome MCP call.
 - Resource guards: host-RAM OOM watchdog + heavy-work gate, disk/tmp guard.
 

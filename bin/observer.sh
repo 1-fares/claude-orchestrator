@@ -59,8 +59,9 @@ post_orch() {
   [ -n "$win" ] || win=0
   target="$TEAM_SESSION:$win"
   tmux -L "$TEAM_TMUX" send-keys -t "$target" C-u 2>/dev/null || return 0
-  tmux -L "$TEAM_TMUX" send-keys -t "$target" -l "$text" 2>/dev/null
-  tmux -L "$TEAM_TMUX" send-keys -t "$target" Enter 2>/dev/null
+  # Verified submit (team-env's tmux_submit): a single Enter left long observer
+  # messages collapsed into an unsubmitted [Pasted text] block under load.
+  tmux_submit "$target" "$text" || true
 }
 
 gather_metrics() {

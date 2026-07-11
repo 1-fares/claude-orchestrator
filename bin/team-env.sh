@@ -155,19 +155,14 @@ export TEAM_REPO TEAM_SESSION TEAM_PORT INTER_SESSION_PORT TEAM_TMUX TEAM_TMUX_B
 tmux() { "$TEAM_TMUX_BIN" -L "$TEAM_TMUX" -f "$TEAM_TMUX_CONF" "$@"; }
 
 # tmux_submit <target> <message>: type a literal message into a role's Claude Code
-# pane and submit it. A message long enough to collapse into a [Pasted text] block
-# needs TWO Enters: the first only inserts a newline inside the block, the second
-# submits. A single Enter therefore leaves long broadcasts, approvals, and watchdog
-# nudges sitting unsent in the input. The trailing Enter on an already-submitted
-# (now empty) prompt is a harmless no-op, so this is also correct for short
-# messages. Routes through the team socket via the tmux() wrapper above.
-tmux_submit() {
-  local target="$1" msg="$2"
-  tmux send-keys -t "$target" -l "$msg" 2>/dev/null || return 1
-  tmux send-keys -t "$target" Enter 2>/dev/null || true
-  sleep 0.4
-  tmux send-keys -t "$target" Enter 2>/dev/null || true
-}
+# pane and submit it, then VERIFY the input line emptied. A message long enough to
+# collapse into a [Pasted text] block needs TWO Enters: the first only inserts a
+# newline inside the block, the second submits. The blind double-Enter covers the
+# common case, but under load 0.4s between them is too short and nudges have sat
+# unsubmitted for hours; the shared helper re-checks and re-Enters (see
+# bin/lib/tmux-submit.sh). Routes through the team socket via the tmux() wrapper.
+. "$TEAM_REPO/bin/lib/tmux-submit.sh"
+tmux_submit() { _tmux_submit_via tmux "$@"; }
 
 # Pin Claude Code: native installs auto-update in the BACKGROUND of any running
 # session and silently repoint ~/.local/bin/claude to the newest version -- that
