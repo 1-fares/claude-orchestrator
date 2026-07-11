@@ -115,6 +115,12 @@ keep private data out of the tree.
   protected default or production branch, (b) production deploys (see
   `bin/preflight-deploy.sh`), and (c) destructive pushes (force-push, history
   rewrite, branch deletion), each of which still warrants a `question:` first.
+- **Tests are isolated, always.** Any test under `bin/tests/` sources
+  `bin/tests/lib/isolate.sh` BEFORE `bin/team-env.sh` (throwaway
+  `TEAM_RUN_ID`/`TEAM_TMUX`; `isolate_assert` after). team-env hard-exits a
+  test caller with a non-test run id — an inherited live id is how a test's
+  cleanup once wiped a live run (docs/incident-2026-07-11-*.md). Roles never
+  run `reset.sh` or `cleanup.sh --force`; both refuse inside a role session.
 - **Scripts over judgement.** Where a task is deterministic and rule-based
   (spawn, teardown, validation, file moves, formatting, parsing, status checks),
   call a script in [`bin/`](./bin) or write one; do not spend an LLM turn on it.

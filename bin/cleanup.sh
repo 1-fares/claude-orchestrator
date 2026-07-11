@@ -39,6 +39,13 @@ for a in "$@"; do case "$a" in
   *) echo "unknown arg: $a (try --help)" >&2; exit 2 ;;
 esac; done
 DRY=1; [ "$force" = 1 ] && DRY=0
+# Role tripwire (mirrors reset.sh): a team role session must not --force-clean
+# the run it belongs to. Dry runs stay allowed anywhere (read-only).
+if [ "$DRY" = 0 ] && [ -n "${ORCH_HOME:-}" ] && [ "${RESET_CONFIRM:-}" != "yes" ]; then
+  echo "cleanup: refusing --force — this shell looks like a team role session (ORCH_HOME is set)." >&2
+  echo "  Run from an operator shell, or set RESET_CONFIRM=yes if this is deliberate." >&2
+  exit 96
+fi
 tag(){ [ "$DRY" = 1 ] && printf '[would] %s\n' "$*" || printf '[done]  %s\n' "$*"; }
 
 descendants(){ local p c; for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
