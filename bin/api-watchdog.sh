@@ -297,12 +297,29 @@ scan_once() {
       # (see header); pushed to the operator ONCE on entry.
       if [ "$state" = "stalled-usage" ]; then
         if [ "$prev" != "stalled-usage" ]; then
-          since=$nowts; retries=0; last_retry=0
+          # A retry attempt makes the pane busy for a scan or two before the
+          # dialog re-opens, so one continuous outage re-enters this path many
+          # times. Keep last_retry (nudge pacing survives the blip) and dedupe
+          # the operator push with a marker file: one push per role per
+          # USAGE_PUSH_DEDUPE_SEC (default 3600), not one per oscillation.
+          since=$nowts; retries=0
           echo "$(iso "$nowts") [$name] USAGE-STALL (usage-limit dialog; auto-retrying every ${usage_retry_sec}s)" >> "$af"
-          notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the usage limit; auto-retrying every ${usage_retry_sec}s until usage returns"
+          _upf="$health_dir/$name.usage-pushed"
+          _uplast=$(cat "$_upf" 2>/dev/null || echo 0)
+          case "$_uplast" in ''|*[!0-9]*) _uplast=0;; esac  # truncated/garbled marker => treat as never
+          if [ $((nowts - _uplast)) -ge "${USAGE_PUSH_DEDUPE_SEC:-3600}" ]; then
+            notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the usage limit; auto-retrying every ${usage_retry_sec}s until usage returns"
+            echo "$nowts" > "$_upf"
+          fi
         fi
-        elapsed=$((nowts - last_retry))
-        if [ "$last_retry" -eq 0 ] || [ "$elapsed" -ge "$usage_retry_sec" ]; then
+        # Pace nudges via a marker file rather than last_retry: the health
+        # file's counters are reset by the active/busy paths on every blip
+        # between attempts, but one outage is one episode and the cadence
+        # must span it.
+        _unf="$health_dir/$name.usage-nudged"
+        _unlast=$(cat "$_unf" 2>/dev/null || echo 0)
+        case "$_unlast" in ''|*[!0-9]*) _unlast=0;; esac  # truncated/garbled marker => treat as never
+        if [ $((nowts - _unlast)) -ge "$usage_retry_sec" ]; then
           # A modal swallows typed keys, so dismiss it before nudging.
           if printf '%s' "$visible" | _has_modal_dialog_text; then
             tmux send-keys -t "$wid" Escape 2>/dev/null || true
@@ -310,6 +327,7 @@ scan_once() {
           fi
           tmux_submit "$wid" "try again — the usage limit may have reset; resume your current unit where you left off"
           retries=$((retries + 1)); last_retry=$nowts
+          echo "$nowts" > "$_unf"
           echo "$(iso "$nowts") [$name] usage-retry $retries (cadence ${usage_retry_sec}s)" >> "$af"
         fi
         persist "$hf" "stalled-usage" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
@@ -464,7 +482,12 @@ scan_once() {
       # --- C. ACTIVE / IDLE (not stalled, not busy-frozen) -------------------
       if [ "$prev" = "stalled-usage" ]; then
         echo "$(iso "$nowts") [$name] RECOVERED-USAGE after $retries retries (usage returned)" >> "$af"
-        # No push: recovery is not actionable. Logged only.
+        # No push: recovery is not actionable. Logged only. Keep the pacing
+        # markers: idle-at-prompt scans occur BETWEEN retry attempts during a
+        # still-live outage (this branch cannot tell a real recovery from
+        # one), and clearing them here would defeat the dedupe on the next
+        # oscillation. Stale markers only delay a brand-new outage's first
+        # push/nudge by their window, which is acceptable.
       elif [ "$prev" = "stalled-api" ] || [ "$prev" = "give-up" ]; then
         echo "$(iso "$nowts") [$name] RECOVERED after $retries retries" >> "$af"
         # No push: recovery is not actionable. Logged only.

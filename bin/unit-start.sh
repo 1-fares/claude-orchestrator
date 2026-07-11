@@ -27,6 +27,12 @@ printf '%s' "$unit" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_-]*$' \
 head="$(git -C "$dir" rev-parse HEAD 2>/dev/null)" \
   || { echo "not a git work tree (or no commits yet): $dir" >&2; exit 2; }
 
+tree="$(cd "$dir" && pwd)"
 mkdir -p "$TEAM_DIR/base"
 printf '%s\n' "$head" > "$TEAM_DIR/base/$unit"
-echo "unit-start: baseline for '$unit' = $head  (tree: $(cd "$dir" && pwd))"
+# Record the working tree beside the baseline hash so bin/check-scope.sh can
+# resolve and operate in the right tree regardless of the cwd it is invoked from
+# (guards the wrong-cwd silent pass, g3a). Sidecar, so the baseline file stays a
+# bare commit hash for existing readers.
+printf '%s\n' "$tree" > "$TEAM_DIR/base/$unit.tree"
+echo "unit-start: baseline for '$unit' = $head  (tree: $tree)"
