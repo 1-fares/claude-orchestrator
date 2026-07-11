@@ -50,9 +50,12 @@ AWAIT_RE='Enter to select|Enter to confirm|Do you want to proceed|Would you like
 # turn once usage returns), and unlike the API-stall patterns it shows no "API
 # Error" text and its option line carries a '❯', so before this class existed
 # it fell through every net and classified as healthy-idle "active" — three
-# roles sat silently parked through a real usage outage (2026-07-10). Matched
-# on the dialog's stable option/consequence lines, not the header wording.
-USAGE_RE='wait for limit to reset|Add funds to continue with usage credits|usage limit reached|reached your usage limit'
+# roles sat silently parked through a real usage outage (2026-07-10).
+# Matched ONLY on the dialog's two verbatim OPTION lines, not on prose about
+# usage limits: a role whose ordinary output discusses "usage limit reached"
+# (this team maintains this very file) must never trigger the recovery
+# injection. Both option lines appear in every observed dialog instance.
+USAGE_RE='wait for limit to reset|Add funds to continue with usage credits'
 
 # Per-second-volatile chrome that must be stripped before fingerprinting a pane,
 # or the fingerprint changes every tick even when the role is wedged: the
@@ -74,9 +77,12 @@ _classify_text() {
   visible="$(cat)"
   busy="$(printf '%s' "$visible" | tail -25 | grep -ciE "$BUSY_RE")"
   if [ "$busy" -gt 0 ]; then echo "active"; return; fi
-  if printf '%s' "$visible" | tail -15 | grep -qiE "$USAGE_RE"; then echo "stalled-usage"; return; fi
-  if printf '%s' "$visible" | tail -15 | grep -qiE "$AWAIT_RE"; then echo "awaiting-input"; return; fi
   idle="$(printf '%s' "$visible" | tail -8 | grep -c '❯' || true)"
+  # stalled-usage is gated on the '❯' like stalled-api: the real dialog always
+  # renders it on the selected option, and requiring it keeps the (injecting)
+  # usage recovery off panes that merely scrolled matching text.
+  if [ "$idle" -gt 0 ] && printf '%s' "$visible" | tail -15 | grep -qiE "$USAGE_RE"; then echo "stalled-usage"; return; fi
+  if printf '%s' "$visible" | tail -15 | grep -qiE "$AWAIT_RE"; then echo "awaiting-input"; return; fi
   if [ "$idle" -eq 0 ]; then echo "active"; return; fi
   hit="$(printf '%s' "$visible" | tail -15 | grep -iE "${pattern_regex:-$^}" | head -1 || true)"
   if [ -n "$hit" ]; then echo "stalled-api"; return; fi

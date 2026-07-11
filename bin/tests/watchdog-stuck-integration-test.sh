@@ -8,9 +8,9 @@
 set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Isolated run: own socket + own .team dir under the worktree.
-export TEAM_RUN_ID="wdtest$$"
-export TEAM_TMUX="wdt$$"
+# Isolated run: own socket + own .team dir under the worktree, via the
+# mandatory isolation prelude (see docs/incident-2026-07-11-*).
+. "$repo/bin/tests/lib/isolate.sh"
 export STUCK_THRESHOLD_SEC=2
 export STUCK_MAX_NUDGES=2
 export AWAIT_OPERATOR_SEC=2
@@ -19,6 +19,7 @@ unset NTFY_URL
 
 # Resolve derived names without disturbing anything live.
 . "$repo/bin/team-env.sh"
+isolate_assert
 TM="$TEAM_TMUX_BIN -L $TEAM_TMUX"
 hf="$TEAM_DIR/health"
 

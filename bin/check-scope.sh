@@ -88,12 +88,62 @@ printf '%s' "$unit" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_-]*$' \
 brief="$TEAM_DIR/tasks/$unit.md"
 [ -f "$brief" ] || brief="$repo/tasks/$unit.md"
 [ -f "$brief" ] || { echo "no task brief for '$unit' (looked in $TEAM_DIR/tasks and $repo/tasks)" >&2; exit 2; }
+
+# Resolve the intended working tree from the baseline stamp's sidecar, written by
+# bin/unit-start.sh, and operate there regardless of cwd (g3a). Without this a run
+# from the wrong cwd (e.g. the orchestrator clone instead of the unit's tree)
+# attributed the wrong tree's files, or nothing, and still exited 0. The sidecar
+# is optional: legacy stamps and the greenfield first unit have none, and then the
+# current working directory is used, as before.
+basefile="$TEAM_DIR/base/$unit"
+treefile="$TEAM_DIR/base/$unit.tree"
+if [ -f "$treefile" ]; then
+  recorded_tree="$(cat "$treefile" 2>/dev/null || true)"
+  if [ -n "$recorded_tree" ] && [ -d "$recorded_tree" ] \
+     && git -C "$recorded_tree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    cd "$recorded_tree" || { echo "cannot cd to recorded tree '$recorded_tree' for '$unit'" >&2; exit 2; }
+  else
+    echo "check-scope: recorded working tree for '$unit' is unusable: '$recorded_tree'" >&2
+    echo "  (from $treefile). Re-run bin/unit-start.sh from the unit's tree." >&2
+    exit 2
+  fi
+fi
+
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not a git tree: $PWD" >&2; exit 2; }
 
-basefile="$TEAM_DIR/base/$unit"
-[ -n "$base" ] || { [ -f "$basefile" ] && base="$(cat "$basefile" 2>/dev/null || true)"; }
+# Baseline resolution, tracking where the base came from so an unresolvable value
+# is handled by origin: a stamp that does not resolve in this tree is the wrong
+# tree (g3a, hard error); a stale explicit-arg or upstream ref is tolerated.
+base_from_stamp=0
+if [ -z "$base" ] && [ -f "$basefile" ]; then
+  base="$(cat "$basefile" 2>/dev/null || true)"
+  [ -n "$base" ] && base_from_stamp=1
+fi
 [ -n "$base" ] || base="$(git merge-base HEAD '@{upstream}' 2>/dev/null || true)"
-[ -n "$base" ] && ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1 && base=""
+if [ -n "$base" ] && ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1; then
+  if [ "$base_from_stamp" -eq 1 ]; then
+    echo "check-scope: baseline commit '$base' (from $basefile) is not in the tree at $PWD." >&2
+    echo "  check-scope must run in the unit's working tree; this looks like the wrong tree." >&2
+    echo "  Record the tree with bin/unit-start.sh so cwd no longer matters." >&2
+    exit 2
+  fi
+  base=""   # stale explicit-arg or upstream ref: ignore, as before
+fi
+
+# A missing baseline is genuine greenfield ONLY when the unit has no committed
+# work to bound. If HEAD history already carries this unit's commits (a `Unit:`
+# trailer) but no stamp is visible, the stamp is missing, not absent by design:
+# the trailer path would find commits=0 and the gate would scan nothing (g3b).
+# Fail loudly rather than silently fall through to greenfield.
+if [ -z "$base" ] \
+   && git log --format='%B' HEAD 2>/dev/null \
+        | grep -Eqi "^Unit:[[:space:]]*${unit}[[:space:]]*$"; then
+  echo "check-scope: no baseline for '$unit' (looked for $basefile), yet HEAD carries" >&2
+  echo "  commits marked 'Unit: $unit'. Without a baseline the commit range cannot be" >&2
+  echo "  bounded and the gate would inspect nothing. Run bin/unit-start.sh for '$unit'" >&2
+  echo "  in its working tree, or pass an explicit base-ref." >&2
+  exit 2
+fi
 
 claimfile="$TEAM_DIR/claims/$unit"
 commitfile="$TEAM_DIR/commits/$unit"
@@ -114,17 +164,30 @@ path_matches() {
 }
 
 # --- attribute the unit's commits ------------------------------------------
+# The explicit commit list and the Unit: trailer are UNIONED, not mutually
+# exclusive (g3c). Previously an explicit list SHORT-CIRCUITED trailer matching,
+# so recording one new sha in $TEAM_DIR/commits/<unit> silently dropped every
+# commit the unit had already marked with a trailer. Both sources now contribute;
+# commits are de-duplicated by resolved sha. The baseline fallback (every commit
+# since the baseline) still applies ONLY when NEITHER source is active, preserving
+# the g2 attribution semantics.
 marked_range=0
-commit_mode="all-since-baseline"
 commit_files=""
 ncommits=0
+seen_shas=" "
 add_commit_files() {
+  local sha
+  sha="$(git rev-parse --verify --quiet "${1}^{commit}" 2>/dev/null)" || return 0
+  case "$seen_shas" in *" $sha "*) return 0 ;; esac   # already attributed
+  seen_shas="$seen_shas$sha "
   ncommits=$((ncommits + 1))
-  commit_files="$commit_files$(git show --pretty=format: --name-only "$1")
+  commit_files="$commit_files$(git show --pretty=format: --name-only "$sha")
 "
 }
+
+explicit_used=0
 if [ -f "$commitfile" ]; then
-  commit_mode="explicit list"
+  explicit_used=1
   while IFS= read -r c; do
     c="$(printf '%s' "$c" | sed -e 's/#.*//' -e 's/[[:space:]]//g')"
     [ -n "$c" ] || continue
@@ -134,19 +197,37 @@ if [ -f "$commitfile" ]; then
       echo "check-scope: commit '$c' in $commitfile is not in this tree; ignoring" >&2
     fi
   done < "$commitfile"
-elif [ -n "$base" ]; then
-  if git log --format='%B' "$base..HEAD" 2>/dev/null \
-      | grep -Eqi '^Unit:[[:space:]]*[A-Za-z0-9][A-Za-z0-9_-]*[[:space:]]*$'; then
-    marked_range=1
-    commit_mode="marked trailer"
-  fi
+fi
+
+trailer_used=0
+if [ -n "$base" ] \
+   && git log --format='%B' "$base..HEAD" 2>/dev/null \
+        | grep -Eqi '^Unit:[[:space:]]*[A-Za-z0-9][A-Za-z0-9_-]*[[:space:]]*$'; then
+  marked_range=1
+  trailer_used=1
   for c in $(git rev-list --no-merges "$base..HEAD" 2>/dev/null); do
-    if [ "$marked_range" -eq 1 ]; then
-      git show -s --format='%B' "$c" \
-        | grep -Eqi "^Unit:[[:space:]]*${unit}[[:space:]]*$" || continue
-    fi
+    git show -s --format='%B' "$c" \
+      | grep -Eqi "^Unit:[[:space:]]*${unit}[[:space:]]*$" || continue
     add_commit_files "$c"
   done
+fi
+
+# Baseline fallback: only when neither an explicit list nor a marked range is in
+# play (the per-unit-worktree / single-unit case, no foreign work to confuse).
+if [ "$explicit_used" -eq 0 ] && [ "$trailer_used" -eq 0 ] && [ -n "$base" ]; then
+  for c in $(git rev-list --no-merges "$base..HEAD" 2>/dev/null); do
+    add_commit_files "$c"
+  done
+fi
+
+if [ "$explicit_used" -eq 1 ] && [ "$trailer_used" -eq 1 ]; then
+  commit_mode="explicit list + marked trailer"
+elif [ "$explicit_used" -eq 1 ]; then
+  commit_mode="explicit list"
+elif [ "$trailer_used" -eq 1 ]; then
+  commit_mode="marked trailer"
+else
+  commit_mode="all-since-baseline"
 fi
 
 # --- attribute the unit's uncommitted changes -------------------------------
