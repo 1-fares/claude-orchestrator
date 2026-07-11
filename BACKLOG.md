@@ -6,9 +6,9 @@ research precedes build on all of them: adopt or integrate a mature existing
 tool before reinventing.
 
 Open: B2 (autonomous mode), B3 (portability), B4 (remote-control phone test),
-B10 (fold in Agent Teams features), B12 (SDK credit pool). Built and removed
-from this list: B9 (dynamic scaling), B11 (visual dashboard), and the B3
-attribution/licence/CJK work; see STATUS.md.
+B10 (fold in Agent Teams features), B12 (SDK credit pool), B13 (continuous
+learning loop). Built and removed from this list: B9 (dynamic scaling), B11
+(visual dashboard), and the B3 attribution/licence/CJK work; see STATUS.md.
 
 ---
 
@@ -157,6 +157,54 @@ change).
 - [Use the Claude Agent SDK with your Claude plan](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
 - [Manage usage credits for paid Claude plans](https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans)
 - [Claude API pricing (Managed Agents section)](https://platform.claude.com/docs/en/about-claude/pricing)
+
+---
+
+## B13 - Continuous learning loop (lesson capture + gated prompt evolution)
+
+**What.** Continuously capture what fought the team during a run and turn
+recurring friction into improvements to the role prompts, the charter, and the
+`bin/tools/` toolbox — instead of relying on the operator noticing and
+hand-editing between runs.
+
+**Why.** The improvement loop already runs, manually: the commit history is the
+operator editing `roles/`, `CLAUDE.md`, and `bin/` as lessons surface.
+Formalizing it captures them at the moment of highest signal (when the friction
+happens), not whenever it is next noticed.
+
+**Design — capture and apply are different risk profiles, govern them apart.**
+- *Capture: continuous and cheap.* A `lesson-observer` on the `bin/observer.sh`
+  pattern (slow cadence, cheap model, reads the run's exhaust — bus log, health,
+  gate rejections — not the working agents), plus a standing role-prompt line to
+  volunteer a one-line lesson on friction. Dedups like `observer.sh` dedups its
+  headline, so the log is signal not noise.
+- *Apply: routed by blast radius.* Project-scoped lessons (about the target
+  codebase) → the target repo's `CLAUDE.md`, applied live. Framework-scoped
+  lessons (role prompts, this charter, gates) → staged as a proposed diff the
+  operator reviews, never self-applied mid-run. Self-editing the governing
+  prompts of a running system is the hazard; propose-and-review removes the
+  failure class.
+
+**State.** Design agreed; the substrate exists — `bin/observer.sh` is the
+working template (cheap headless advisor that reasons over run exhaust, writes a
+file, nudges the orchestrator, which already records dispositions). Not built:
+the lesson lens, the lessons-log format, the project-vs-framework routing.
+
+**Relation to the toolbox.** `bin/tools/` (shipped) is the crystallization half:
+when the loop notices a task done by hand across runs, that recurrence is the
+signal to add a `bin/tools/` script. The loop discovers the toil; the toolbox is
+where it becomes a tool. Grow the toolbox from the loop, not a brainstorm.
+
+**To build.**
+- `bin/lesson-observer.sh` (or a second lens on `bin/observer.sh`): periodic,
+  cheap, reads exhaust, emits candidate lessons to `$TEAM_DIR/lessons/`.
+- A standing "volunteer a lesson on friction" line in `roles/_TEMPLATE.md`.
+- Routing + a teardown flush of the stream in `bin/stop-team.sh`.
+
+**Smallest first experiment.** At teardown, the orchestrator writes `retro.md`
+by hand ("what fought us, what I'd change in the prompts/tooling"). If two or
+three runs produce changes worth merging, wire the daemon. Cheap to try;
+de-risks the one part worth building.
 
 ---
 
