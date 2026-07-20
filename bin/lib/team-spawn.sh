@@ -276,16 +276,37 @@ _compaction_watchdog_running() {
   kill -0 "$p" 2>/dev/null && ps -p "$p" -o args= 2>/dev/null | grep -q 'bin/compaction-watchdog\.sh'
 }
 
+# Reap-before-spawn: kill any prior instance of a per-TEAM_DIR daemon AND its
+# backgrounded `sleep` child (which inherits the flock fd) so a restart / resume
+# refreshes the daemon onto the current code instead of leaking a second set
+# beside the old one -- the 2026-07-20 duplicate-/compact incident, where an
+# older pre-flock-guard watchdog ran alongside the new one and doubled every
+# /compact + /context keystroke. Scoped to THIS team via $TEAM_DIR/<name>.pid;
+# a no-op on a fresh launch. pkill -P frees the flock at once (a bare kill of the
+# parent would orphan the sleep, which holds the lock and blocks the relaunch).
+_reap_prior_daemon() {
+  local name="$1" pidf="$TEAM_DIR/$1.pid" pid
+  [ -f "$pidf" ] || return 0
+  pid="$(cat "$pidf" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    sleep 0.3
+    pkill -KILL -P "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+    echo "reaped prior $name (pid $pid) before respawn"
+  fi
+  rm -f "$pidf"
+}
+
 start_compaction_watchdog() {
   [ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
   [ -x "$repo/bin/compaction-watchdog.sh" ] || return 0
   mkdir -p "$TEAM_DIR"
-  # Per-TEAM_DIR flock liveness (the daemon owns the pidfile after it wins the
-  # lock; the launcher does not pre-write it, mirroring start_api_watchdog).
-  if _compaction_watchdog_running; then
-    echo "compaction-watchdog already running"
-    return 0
-  fi
+  # Reap-before-spawn so a restart never leaks a second watchdog beside the old
+  # one. The daemon owns its pidfile after it wins the per-TEAM_DIR flock; the
+  # launcher does not pre-write it (mirrors start_api_watchdog).
+  _reap_prior_daemon compaction-watchdog
   # 9>&- for the same flock reason as start_api_watchdog. Pass the team's socket,
   # session and log so it targets this team's orchestrator and logs under TEAM_DIR.
   COMPACT_SOCKET="$TEAM_TMUX" COMPACT_SESSION="$TEAM_SESSION" \
