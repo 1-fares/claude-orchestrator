@@ -555,8 +555,10 @@ reused pid) before deciding to (re)start, so calling them repeatedly is safe.
 | `api-watchdog.sh` | auto-recover API rate-limit / network stalls | `launch-team.sh`, **`start-orchestrator.sh`** (incl. recovery), `add-role.sh`, and **self-healed every 15s by `tmux-watchdog.sh`** | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `compaction-watchdog.sh` | compact the orchestrator early at idle boundaries to keep context (and cost) off the auto-compact ceiling | `launch-team.sh`, `start-orchestrator.sh` (incl. recovery), `add-role.sh`, and self-healed by `tmux-watchdog.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `tmux-watchdog.sh` | detect tmux-server crash, snapshot panes, self-heal the api-watchdog | `launch-team.sh`, `start-orchestrator.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
+| `host-ram-watchdog.sh` | host OOM guard | `launch-team.sh`, `start-orchestrator.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
+| `disk-tmp-watchdog.sh` | disk / tmp usage guard | `launch-team.sh`, `start-orchestrator.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `chrome-supervisor.sh` | un-wedge roles stuck on a hung chrome MCP call | `launch-team.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
-| `communicator` / observer | bus + optional efficiency observer | `launch-team.sh`, `add-role.sh` | `stop-team.sh` |
+| `communicator` / observer | bus + optional efficiency observer | `launch-team.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh` |
 
 **The lifecycle invariant:** any path that brings the team (or just the
 orchestrator) up must ensure the watchdogs, not only the cold `launch-team.sh`
@@ -567,6 +569,21 @@ restarts the `api-watchdog` within one 15s poll if it ever dies. This closes a
 real hole: a recovery via `start-orchestrator.sh` after a `stop-team.sh` (which
 kills the api-watchdog) would otherwise leave the watchdog absent, so every
 transient rate-limit stall halts the team until a human nudges it.
+
+**Restart reaps the daemon set first (reap-before-spawn).** `panic.sh` reaps
+EVERY detached daemon by pidfile — the intake poller, observer,
+chrome-supervisor, tmux-watchdog, and ALL resource watchdogs (compaction /
+host-ram / disk-tmp) — *and each one's backgrounded `sleep` child*, which
+inherits the per-`TEAM_DIR` flock fd. Reaping the child (via `pkill -P`) frees
+the singleton lock immediately, so a resume's fresh daemon wins the lock instead
+of exiting-at-birth beside a surviving old instance. The spawners also
+reap-before-spawn (`_reap_prior_daemon` in `team-spawn.sh`), so a restart
+refreshes daemons onto the current code rather than leaving a long-lived
+instance running pre-fix logic. Net: a restart can never leak a second set — the
+2026-07-20 duplicate-watchdog failure, where an old-code instance survived every
+restart and doubled each `/compact` keystroke. If you ever see two of one
+watchdog: `pgrep -af '<name>-watchdog.sh'` should show exactly one; if not,
+`panic.sh` then resume.
 
 ### Rate limits and cost
 

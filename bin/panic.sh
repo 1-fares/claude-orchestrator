@@ -58,20 +58,38 @@ if [ -f "$wd_pidf" ]; then
   rm -f "$wd_pidf"
 fi
 
-# tmux-watchdog, chrome-supervisor, observer, intake-poller (detached nohup
-# daemons; the tmux pane-tree sweep above does NOT reach them, so panic must kill
-# them by pidfile or they leak past a panic). 2026-06-01: panic killed only the
-# api-watchdog + dashboard and orphaned the rest.
-for _d in compaction-watchdog tmux-watchdog chrome-supervisor observer intake-poller; do
-  _pidf="$TEAM_DIR/$_d.pid"
-  if [ -f "$_pidf" ]; then
-    _pid="$(cat "$_pidf" 2>/dev/null || true)"
-    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
-      kill -KILL "$_pid" 2>/dev/null || true
-      echo "panic: killed $_d (pid $_pid)"; killed=1
-    fi
-    rm -f "$_pidf"
+# All detached nohup daemons: tmux-watchdog, chrome-supervisor, observer, the
+# intake poller, AND every resource watchdog (compaction / host-ram / disk-tmp).
+# The tmux pane-tree sweep above does NOT reach them, so panic must reap them by
+# pidfile or they leak past a panic. History: 2026-06-01 panic killed only the
+# api-watchdog + dashboard and orphaned the rest; 2026-07-20 the reap list was
+# MISSING the host-ram/disk-tmp resource watchdogs, so their OLD instances
+# survived every restart and ran alongside the fresh set -- two compaction-style
+# watchdogs doubling /compact + /context keystrokes into panes.
+#
+# Reap correctness: each watchdog backgrounds a `sleep` that INHERITS the
+# per-TEAM_DIR flock fd. A bare `kill` of the parent orphans that sleep
+# (reparented to init), which keeps the singleton lock held for up to one
+# INTERVAL -- long enough to block the resume's relaunch. So reap the CHILD too:
+# `kill -TERM` lets the daemon's own TERM/EXIT trap reap its sleep, and
+# `pkill -P` frees the lock at once for the pre-trap (older-code) instances.
+_reap_daemon() {
+  local name="$1" pidf="$TEAM_DIR/$1.pid" pid
+  [ -f "$pidf" ] || return 0
+  pid="$(cat "$pidf" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true          # trap-aware exit (new code self-reaps its sleep)
+    pkill -TERM -P "$pid" 2>/dev/null || true       # reap the sleep child -> frees the flock fd now
+    sleep 0.3
+    pkill -KILL -P "$pid" 2>/dev/null || true       # force any survivor sleep
+    kill -KILL "$pid" 2>/dev/null || true           # force the parent if it ignored TERM
+    echo "panic: killed $name (pid $pid) + reaped its sleep child"; killed=1
   fi
+  rm -f "$pidf"
+}
+for _d in compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
+          tmux-watchdog chrome-supervisor observer intake-poller; do
+  _reap_daemon "$_d"
 done
 
 # Dashboard server (if launch-team.sh started one).

@@ -14,6 +14,13 @@
 #   OBSERVER_MODEL=sonnet   model for the recommendation (sonnet|haiku|opus|id)
 #   OBSERVER_IDLE_SEC=1800  a role idle longer than this is shrink-eligible
 #   OBSERVER_CALL_TIMEOUT=120  max seconds for one model call
+#   OBSERVER_GH_DISABLED=1  do NOT fetch/fold in GitHub ground truth (default on)
+#
+# GitHub ground truth: each cycle the observer runs bin/observer-github-groundtruth.sh
+# (self-gated to at most every OBSERVER_GH_MIN_INTERVAL secs), then folds the
+# resulting file into the model context and adds a prompt rule forbidding
+# unlabelled external-state claims. The fetcher is generic (repo list from CONFIG);
+# with no config file it is a no-op, so this stays inert out of the box.
 #
 # Started once per run by bin/lib/team-spawn.sh (idempotent via a pidfile),
 # same shape as the watchdogs.
@@ -31,7 +38,49 @@ obs_dir="$TEAM_DIR/observer"
 mkdir -p "$obs_dir"
 last_headline=""
 
+# GitHub ground-truth file the fetcher writes and we fold into the model context.
+# Keep in sync with the fetcher's default (OBSERVER_GH_GROUNDTRUTH).
+gh_groundtruth="${OBSERVER_GH_GROUNDTRUTH:-$obs_dir/github-ground-truth.txt}"
+export OBSERVER_GH_GROUNDTRUTH="$gh_groundtruth"
+
 iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+
+# Refresh the GitHub ground-truth file (best-effort, self-gated by the fetcher's
+# own min-interval). Never fatal: on any failure the fetcher keeps the last good
+# file with its stale fetched_at, which is the visible signal we surface to the
+# model below. Skipped entirely if OBSERVER_GH_DISABLED=1.
+refresh_gh_groundtruth() {
+  [ "${OBSERVER_GH_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/observer-github-groundtruth.sh" ] || return 0
+  timeout "$(( call_timeout * 2 ))" "$repo/bin/observer-github-groundtruth.sh" >/dev/null 2>&1 || true
+}
+
+# Emit the GITHUB GROUND TRUTH block for the observation, with a computed age so
+# the model can judge staleness. If the file is missing or its fetched_at is old,
+# say so explicitly — an old/absent timestamp means the last fetch failed.
+gh_groundtruth_block() {
+  [ "${OBSERVER_GH_DISABLED:-0}" = "1" ] && { echo "  (GitHub ground truth disabled)"; return 0; }
+  if [ ! -f "$gh_groundtruth" ]; then
+    echo "  (no github-ground-truth file yet — fetcher has not produced one; treat ALL external PR/issue state as UNVERIFIED)"
+    return 0
+  fi
+  local fa fa_epoch now age_min age_note
+  fa="$(grep -m1 '^fetched_at:' "$gh_groundtruth" 2>/dev/null | sed 's/^fetched_at:[[:space:]]*//')"
+  fa_epoch="$(date -u -d "${fa:-}" +%s 2>/dev/null || echo 0)"
+  now="$(date -u +%s)"
+  if [ "$fa_epoch" -gt 0 ]; then
+    age_min=$(( (now - fa_epoch) / 60 ))
+    if [ "$age_min" -ge 30 ]; then
+      age_note="AGE ${age_min}m — STALE: the last fetch likely FAILED; do not trust these rows as current, treat as UNVERIFIED"
+    else
+      age_note="AGE ${age_min}m — fresh"
+    fi
+  else
+    age_note="AGE unknown — treat as UNVERIFIED"
+  fi
+  echo "  [$age_note]"
+  sed 's/^/  /' "$gh_groundtruth"
+}
 
 # Convert team-status IDLE tokens (3s, 12m, 1h, 2d) to seconds.
 idle_to_sec() {
@@ -149,6 +198,8 @@ SHRINK-ELIGIBLE (idle >= ${idle_sec}s): ${idle_roles}
 PIPELINE (unit status counts): ${pipe:-none}
 GOAL: ${goal:-unknown}
 BUS: ~${msgs} recent messages logged
+GITHUB GROUND TRUTH (authoritative external PR/merge state; the ONLY sanctioned source for such claims):
+$(gh_groundtruth_block)
 EOF
 }
 
@@ -187,6 +238,16 @@ done. Re-raising a settled disposition just burns the orchestrator's turn.
 Current observation:
 ${metrics}
 
+GROUND-TRUTH RULE (BINDING): Never assert external PR/issue/GitHub state (a PR is
+open/merged/blocked/approved, a review is pending, a merge landed, etc.) that is
+not present in the GITHUB GROUND TRUTH block above. That block is the only
+sanctioned source for such claims. If you must infer external state that is not in
+it — or if the block is missing, disabled, or its AGE marks it STALE — you MUST
+label that statement "UNVERIFIED". Do not restate PR claims from the bus log,
+dispositions, or the pipeline counts as fact; those are historical and were the
+source of repeated DAY-OLD "blocked PR" claims. When the ground truth and an older
+note disagree, the ground truth wins.
+
 In <= 16 lines, give a concrete recommendation:
 1) First line EXACTLY: "HEADLINE: <one terse sentence: grow/shrink/hold + host sizing>"
 2) TEAM: which roles (if any) to retire now (idle and no in-flight unit) and why;
@@ -204,6 +265,7 @@ EOF
 
 observe_once() {
   local metrics prompt out headline
+  refresh_gh_groundtruth
   metrics="$(gather_metrics)"
   prompt="$(build_prompt "$metrics")"
   out="$(timeout "$call_timeout" claude -p "$prompt" --model "$model" 2>/dev/null)"
