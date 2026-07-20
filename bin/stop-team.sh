@@ -96,6 +96,24 @@ if [ -f "$cw_pidf" ]; then
   rm -f "$cw_pidf"
 fi
 
+# Kill the host-ram and disk-tmp resource watchdogs (same leak class as the
+# compaction watchdog: detached nohup daemons; missing from this list until
+# 2026-07-20, so they survived a stop-team and ran beside the next launch's
+# fresh set). pkill -P reaps each one's backgrounded sleep child, which holds
+# the per-TEAM_DIR flock fd and would otherwise block a relaunch for one INTERVAL.
+for _rw in host-ram-watchdog disk-tmp-watchdog; do
+  _rw_pidf="$TEAM_DIR/$_rw.pid"
+  if [ -f "$_rw_pidf" ]; then
+    _rw_pid="$(cat "$_rw_pidf" 2>/dev/null || true)"
+    if [ -n "$_rw_pid" ] && kill -0 "$_rw_pid" 2>/dev/null; then
+      kill -TERM "$_rw_pid" 2>/dev/null || true
+      pkill -TERM -P "$_rw_pid" 2>/dev/null || true
+      echo "stopped $_rw (pid $_rw_pid)"; killed=1
+    fi
+    rm -f "$_rw_pidf"
+  fi
+done
+
 # Kill the chrome-devtools supervisor, if launch-team.sh started one for this run.
 cs_pidf="$TEAM_DIR/chrome-supervisor.pid"
 if [ -f "$cs_pidf" ]; then

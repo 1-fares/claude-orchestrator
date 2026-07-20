@@ -153,16 +153,20 @@ if [ -f "$tw_pidf" ]; then
   fi
 fi
 
-# 3b''. compaction-watchdog, chrome-supervisor, observer, intake-poller (detached
-# nohup daemons that cleanup did not handle before 2026-06-01, so they leaked past
-# a cleanup/reset).
-for _d in compaction-watchdog chrome-supervisor observer intake-poller; do
+# 3b''. compaction-watchdog, host-ram-watchdog, disk-tmp-watchdog,
+# chrome-supervisor, observer, intake-poller (detached nohup daemons that cleanup
+# did not handle before 2026-06-01, so they leaked past a cleanup/reset; the
+# host-ram/disk-tmp pair was missing from this list until 2026-07-20). pkill -P
+# reaps each daemon's backgrounded sleep child, which holds the per-TEAM_DIR
+# flock fd and would otherwise block a relaunch for one INTERVAL.
+for _d in compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
+          chrome-supervisor observer intake-poller; do
   _pidf="$TEAM_DIR/$_d.pid"
   if [ -f "$_pidf" ]; then
     _pid="$(cat "$_pidf" 2>/dev/null || true)"
     if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
       tag "kill $_d (pid $_pid)"
-      [ "$DRY" = 0 ] && { kill -TERM "$_pid" 2>/dev/null || true; sleep 1; kill -KILL "$_pid" 2>/dev/null || true; rm -f "$_pidf"; }
+      [ "$DRY" = 0 ] && { kill -TERM "$_pid" 2>/dev/null || true; pkill -TERM -P "$_pid" 2>/dev/null || true; sleep 1; pkill -KILL -P "$_pid" 2>/dev/null || true; kill -KILL "$_pid" 2>/dev/null || true; rm -f "$_pidf"; }
     else
       [ "$DRY" = 0 ] && rm -f "$_pidf"
     fi
