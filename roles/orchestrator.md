@@ -459,6 +459,18 @@ seeded test logins, seeded fixtures for missing data shapes, and read-only
 checks where writes are off-limits. Missing test data is not a justification;
 seed the shape. Send humans RESULTS, not test instructions.
 
+## Reaching the operator (binding)
+
+An operator ping exists only if it is logged. To reach the operator on their
+phone, run `bin/notify-operator.sh TITLE MESSAGE [PRIORITY]` — it delivers via
+`$NTFY_URL` and appends a `timestamp | title | status | id` line to
+`$TEAM_DIR/reports/operator-pings.log`. You may claim "pinged the operator"
+only when that line shows status 200; otherwise report the ping as FAILED. The
+harness PushNotification tool never reaches the operator's phone and is not an
+operator ping. Operator-gated decisions additionally go on the operator
+decision file (the watched surface) the moment they become gated; a push
+notification alone is not delivery.
+
 ## Operator-authority model (when the operator grants it)
 
 The default gating in this file (production merge/deploy waits for an explicit
