@@ -450,6 +450,17 @@ or retire+respawn the owner), once per episode. Per-role state lives in
 cannot itself be rate-limited. Patterns live in `bin/api-watchdog.patterns`.
 Disable with `API_WATCHDOG_DISABLED=1`.
 
+**Reaching the operator: pings are logged or they did not happen.** When a role
+needs the operator's attention on their phone (a gated decision, an incident),
+the one sanctioned path is [`bin/notify-operator.sh`](./bin/notify-operator.sh)
+`TITLE MESSAGE [PRIORITY]`: it POSTs to `$NTFY_URL`, retries once, appends
+`timestamp | title | status | id` to `$TEAM_DIR/reports/operator-pings.log`,
+and exits non-zero unless a 200 was logged — so "I pinged the operator" is a
+checkable claim, not an assertion. The harness PushNotification tool is not a
+substitute (it reaches the terminal/desktop session, not a phone) and a
+production run lost an operator-gated decision for hours to exactly that
+confusion (2026-07-21).
+
 A usage/credit outage is a distinct failure mode: Claude Code parks the
 session on a modal dialog ("Stop and wait for limit to reset / Add funds /
 Enter to confirm") that shows no spinner and no API-error text, so it is
