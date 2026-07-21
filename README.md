@@ -450,6 +450,19 @@ or retire+respawn the owner), once per episode. Per-role state lives in
 cannot itself be rate-limited. Patterns live in `bin/api-watchdog.patterns`.
 Disable with `API_WATCHDOG_DISABLED=1`.
 
+**Downloading issue/PR attachments.** A plain unauthenticated fetch of a GitHub
+`user-attachments` URL returns 404, which is easily misread as "attachments need
+a browser login the team does not have." They do not.
+[`bin/gh-attachments.sh`](./bin/gh-attachments.sh) `<issue-or-pr-url>` (or
+`<owner>/<repo> <num>`) pulls the body and all comments via the `full+json` media
+type, extracts every attachment, and downloads each into a per-ticket dir: images
+and videos via the short-lived signed `jwt` URLs GitHub rewrites them to (no auth
+header), plain files via the `gh` token. It self-diagnoses the one credential
+gotcha: GitHub does not honor a **fine-grained** PAT for `user-attachments`
+downloads, so file attachments need a classic PAT or an oauth `gh auth login`
+(images/videos still work regardless). This lets a role get full bug context from
+a ticket's screenshots instead of asking the reporter to re-send them.
+
 **Reaching the operator: pings are logged or they did not happen.** When a role
 needs the operator's attention on their phone (a gated decision, an incident),
 the one sanctioned path is [`bin/notify-operator.sh`](./bin/notify-operator.sh)
