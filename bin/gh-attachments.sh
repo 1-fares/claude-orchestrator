@@ -18,6 +18,11 @@
 #   ./gh-attachments/<owner>-<repo>-<num>/
 #
 # Deps: gh (authenticated), curl, file. Engine-generic; no project specifics.
+#
+# Auth: images/videos download with no auth header (signed jwt urls). Non-image
+# FILES (.docx/.pdf) need a CLASSIC read-only PAT that a fine-grained PAT 404s on.
+# Point GH_ATTACHMENTS_TOKEN at that classic token to enable file downloads without
+# touching your normal gh auth; otherwise the ambient `gh auth token` is used.
 
 set -uo pipefail
 
@@ -45,8 +50,12 @@ else
 fi
 [[ "$num" =~ ^[0-9]+$ ]] || die "number must be numeric: $num"
 
-token="$(gh auth token 2>/dev/null || true)"
-[ -n "$token" ] || die "no gh token (run: gh auth login)"
+# Auth token for the fallback header. Prefer a DEDICATED download token
+# (GH_ATTACHMENTS_TOKEN) when set -- a classic read-only PAT that can fetch
+# non-image user-attachments/files, which a fine-grained PAT 404s on -- WITHOUT
+# replacing the normal gh auth. Fall back to the ambient gh token otherwise.
+token="${GH_ATTACHMENTS_TOKEN:-$(gh auth token 2>/dev/null || true)}"
+[ -n "$token" ] || die "no token (set GH_ATTACHMENTS_TOKEN or run: gh auth login)"
 
 # --- output dir ---
 root="${GH_ATTACHMENTS_DIR:-}"
@@ -129,11 +138,13 @@ if [ "$fail" -gt 0 ]; then
   case "$token" in
     github_pat_*)
       {
-        echo "gh-attachments: NOTE: your gh token is a fine-grained PAT (github_pat_...)."
+        echo "gh-attachments: NOTE: the auth token is a fine-grained PAT (github_pat_...)."
         echo "  GitHub does not authenticate user-attachments downloads with a fine-grained"
         echo "  PAT, so plain file attachments 404. Images/videos still work (no-auth jwt),"
-        echo "  but files need a CLASSIC PAT or oauth login. Fix: export GH_TOKEN=<classic ghp_ token>"
-        echo "  (or run: gh auth login) and re-run."
+        echo "  but files need a CLASSIC read-only PAT (ghp_...). Provide one WITHOUT changing"
+        echo "  your normal gh auth: put a classic ghp_ token (one line) in the gitignored"
+        echo "  secret file \$TEAM_REPO/.secrets/gh-attachments-token (team-env.sh exports it"
+        echo "  as GH_ATTACHMENTS_TOKEN), or export GH_ATTACHMENTS_TOKEN directly, then re-run."
       } >&2
       ;;
   esac
