@@ -650,13 +650,28 @@ cp -f "$report" "$dreams/latest-report.md"
 # Leave a self-announcing pointer near the top of state.md so the orchestrator
 # sees the dream on its next ledger read (no pane nudge: it may be asleep, and
 # a nudge would start a paid turn). Idempotent: replaces the previous marker.
+# Same lost-update guard as every other ledger write: build a copy, re-stat,
+# atomic swap on the SAME filesystem; skip silently if the orchestrator wrote
+# in between (the report still exists either way).
 if [ "$report_only" -ne 1 ] && [ -f "$TEAM_DIR/state.md" ]; then
   marker="_last dream: $stamp, report: dreams/report-$stamp.md_"
+  mfile="$dreams/.marker.tmp"
+  mref="$(stat -c '%s %Y' "$TEAM_DIR/state.md")"
   if grep -q '^_last dream: ' "$TEAM_DIR/state.md"; then
-    sed -i "s|^_last dream: .*_\$|$marker|" "$TEAM_DIR/state.md"
+    # replace the first marker, drop any stale extras
+    awk -v m="$marker" '
+      /^_last dream: / { if (!done) { print m; done = 1 }; next }
+      { print }
+    ' "$TEAM_DIR/state.md" > "$mfile"
   else
-    sed -i "1a\\
-$marker" "$TEAM_DIR/state.md"
+    awk -v m="$marker" 'NR == 1 { print; print m; next } { print }' \
+      "$TEAM_DIR/state.md" > "$mfile"
+  fi
+  if dream_swap "$TEAM_DIR/state.md" "$mfile" "$mref" 2>/dev/null; then
+    :
+  else
+    rm -f "$mfile"
+    say "dream marker skipped (ledger changed mid-write); report still at $report"
   fi
 fi
 
