@@ -192,7 +192,12 @@ across rounds.
   (roughly >400 lines), move closed (`done:`) units and old decision-log entries
   into `$TEAM_DIR/state-archive.md` (append-only, never re-read into context,
   greppable on demand). Keep the live ledger to active/recent units plus a recent
-  decision window.
+  decision window. Where the operator has wired the nightly dreamer
+  (bin/dreamer.sh, docs/dreaming.md), it does this consolidation for you while
+  the team is quiet: a `_last dream: ..._` marker near the top of `state.md`
+  points at its report (`dreams/report-*.md`); read the report when you see a
+  new marker, and check `dreams/proposed/` for staged engine-change proposals
+  awaiting operator review. Anything it moved is verbatim in `state-archive.md`.
 - **Drain the inbox in batches.** When several `/is` messages are queued, process
   them all in one turn and act once, rather than one full-context turn per
   message. Most inbound is `done:`/`answer:`; acknowledge in bulk.

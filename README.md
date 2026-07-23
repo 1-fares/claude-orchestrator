@@ -609,6 +609,24 @@ restart and doubled each `/compact` keystroke. If you ever see two of one
 watchdog: `pgrep -af '<name>-watchdog.sh'` should show exactly one; if not,
 `panic.sh` then resume.
 
+### Nightly memory consolidation (dreaming)
+
+The run's knowledge ledgers grow append-only: `state.md` accretes superseded
+derive/challenge/re-derive chains, the decisions file keeps every intermediate
+verdict of closed sagas, `observer/history.md` restates a near-identical
+snapshot every cycle. [`bin/dreamer.sh`](./bin/dreamer.sh) is a cron-driven,
+quiescence-gated consolidator: the model emits an **edit script** against
+exact section headers (never a wholesale rewrite), application is mechanical,
+removed content is archived verbatim BEFORE an atomic swap, fresh/undated
+sections are untouchable, and every cycle leaves a reviewable report + diffs
+under `dreams/`. Strategic facts can be promoted into a durable memory bank
+(`DREAMER_MEMORY_DIR`); proposed changes to tracked files are only ever staged
+for operator review (B13's propose-and-review rule).
+[`bin/night-janitor.sh`](./bin/night-janitor.sh) is its deterministic sibling
+for non-knowledge bulk (ledger backups, re-downloadable ticket media, archive
+expiry, opt-in bus retention), dry-run by default. Full design and cron
+examples: [docs/dreaming.md](./docs/dreaming.md).
+
 ### Rate limits and cost
 
 Claude Code retries transient failures (429 / 529 / timeouts) with backoff. For
