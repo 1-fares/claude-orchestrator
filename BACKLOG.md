@@ -206,6 +206,14 @@ by hand ("what fought us, what I'd change in the prompts/tooling"). If two or
 three runs produce changes worth merging, wire the daemon. Cheap to try;
 de-risks the one part worth building.
 
+**Partially built (2026-07-23).** `bin/dreamer.sh` (docs/dreaming.md)
+implements the consolidation/apply half offline: nightly, quiescence-gated
+rewriting of the run ledgers under hard safety rules, strategic-fact promotion
+into a durable memory bank, and, per this item's own hazard rule, tracked-file
+changes only ever STAGED under `dreams/proposed/` for operator review. Still
+open from B13: the continuous in-run lesson-observer (capture during the day,
+not only at night) and the roles/_TEMPLATE.md "volunteer a lesson" line.
+
 ---
 
 ## Prior-art findings (reference)
