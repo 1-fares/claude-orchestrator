@@ -186,6 +186,83 @@ dream_apply_ops() {
   [ "$applied" -gt 0 ]
 }
 
+# dream_index_line <entryfile>
+# Emit "<type>\t- [<name>](<basename>) — <description>" from a bank entry's
+# YAML frontmatter (name/description/metadata.type). Missing name falls back
+# to the basename without .md; missing type to "reference". Used to maintain
+# the MEMORY.md index deterministically (append-only), instead of trusting a
+# model to rewrite the whole index without dropping entries.
+dream_index_line() {
+  local f="$1" base name desc type
+  base="$(basename "$f")"
+  # Read only the frontmatter block (between the first two '---' lines).
+  name="$(awk '/^---[[:space:]]*$/{n++; next} n==1 && /^name:/{sub(/^name:[[:space:]]*/,""); print; exit}' "$f")"
+  desc="$(awk '/^---[[:space:]]*$/{n++; next} n==1 && /^description:/{sub(/^description:[[:space:]]*/,""); print; exit}' "$f")"
+  type="$(awk '/^---[[:space:]]*$/{n++; next} n==1 && /^[[:space:]]+type:/{sub(/^[[:space:]]*type:[[:space:]]*/,""); print; exit}' "$f")"
+  name="${name:-${base%.md}}"
+  type="${type:-reference}"
+  # strip surrounding quotes and any leading list/type-union noise
+  desc="${desc%\"}"; desc="${desc#\"}"
+  type="${type%% *}"; type="${type%\"}"; type="${type#\"}"
+  # keep the index line one-line and bounded
+  desc="$(printf '%s' "$desc" | tr -d '\n' | cut -c1-200)"
+  printf '%s\t- [%s](%s) — %s\n' "$type" "$name" "$base" "$desc"
+}
+
+# dream_append_index <memory_md> <entryfile...> -> writes a NEW MEMORY.md to
+# stdout with an index line appended for each entry not already referenced,
+# each under its "## <type>" section (created at EOF if absent). Append-only:
+# existing lines are never modified or dropped. Idempotent: an entry whose
+# basename already appears anywhere in the index is skipped.
+dream_append_index() {
+  local mem="$1"; shift
+  local f base tsv
+  local adds="$(mktemp)"
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    base="$(basename "$f")"
+    grep -qF "($base)" "$mem" 2>/dev/null && continue   # already indexed
+    dream_index_line "$f" >> "$adds"
+  done
+  if [ ! -s "$adds" ]; then rm -f "$adds"; cat "$mem"; return 0; fi
+  awk -F'\t' -v addf="$adds" '
+    BEGIN {
+      while ((getline line < addf) > 0) {
+        ti = index(line, "\t")
+        t = substr(line, 1, ti-1); l = substr(line, ti+1)
+        add[t] = add[t] l "\n"
+      }
+      close(addf)
+    }
+    # Buffer the whole file so we can insert at each section end.
+    { buf[NR] = $0 }
+    /^##[[:space:]]/ {
+      # close the previous section: flush its pending adds before this header
+      hdr = $0; sub(/^##[[:space:]]+/, "", hdr)
+      sect[NR] = tolower(hdr)
+    }
+    END {
+      # Walk lines; when a section (## <type>) ends, emit its adds.
+      cur = ""
+      for (i = 1; i <= NR; i++) {
+        if (i in sect) {
+          # entering a new section: first flush the one we were in
+          if (cur != "" && (cur in add)) { printf "%s", add[cur]; delete add[cur] }
+          cur = sect[i]
+        }
+        print buf[i]
+      }
+      # flush the last section
+      if (cur != "" && (cur in add)) { printf "%s", add[cur]; delete add[cur] }
+      # any types with no matching section: append under a new header
+      for (t in add) {
+        printf "\n## %s\n%s", t, add[t]
+      }
+    }
+  ' "$mem"
+  rm -f "$adds"
+}
+
 # dream_swap <src> <newfile> <ref_stat>
 # Atomic replace with a lost-update guard: refuse when <src> changed since it
 # was read (<ref_stat> = "size mtime" captured at read time). Preserves mode.
