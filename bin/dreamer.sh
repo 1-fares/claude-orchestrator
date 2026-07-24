@@ -508,9 +508,14 @@ consolidate_bank() {
     echo "'sources:' provenance and 'valid_until:'/'superseded_by:' when"
     echo "invalidating. If nothing qualifies: <<<DREAM-NO-OPS>>>"
     echo
+    echo "Each entry file MUST start with YAML frontmatter (name, description,"
+    echo "metadata.type = user|feedback|project|reference); the MEMORY.md index"
+    echo "is maintained automatically from that frontmatter, so do NOT emit a"
+    echo "MEMORY.md write."
+    echo
     echo "Ops (filenames only, no directories):"
     echo '<<<DREAM-OP BANK-WRITE path=some-entry.md>>>'
-    echo '...full new file content...'
+    echo '...full new file content (frontmatter + body)...'
     echo '<<<END-OP>>>'
     echo "For a change to ENGINE/tracked files (roles/*.md, CLAUDE.md, bin/*):"
     echo '<<<DREAM-OP PROPOSE title=short-title>>>'
@@ -561,6 +566,7 @@ consolidate_bank() {
   ' "$ofile"
 
   local i=1 kind path content wrote=0 proposed=0
+  local -a bank_written=()
   while [ -f "$blocks/$i.kind" ]; do
     kind="$(cat "$blocks/$i.kind")"; path="$(cat "$blocks/$i.path")"; content="$blocks/$i.content"
     if [ ! -s "$content" ]; then i=$((i+1)); continue; fi
@@ -579,18 +585,12 @@ consolidate_bank() {
         *) log "- bank: REJECTED write (not .md): $path"; i=$((i+1)); continue ;;
       esac
       if [ "$path" = "MEMORY.md" ]; then
-        # Index-integrity gate: every entry file must still be referenced.
-        local missing=""
-        local f
-        for f in "$bank"/*.md; do
-          [ -f "$f" ] || continue
-          [ "$(basename "$f")" = "MEMORY.md" ] && continue
-          grep -qF "$(basename "$f")" "$content" || missing="$missing $(basename "$f")"
-        done
-        if [ -n "$missing" ]; then
-          log "- bank: REJECTED MEMORY.md rewrite (drops:$missing)"
-          i=$((i+1)); continue
-        fi
+        # The index is maintained DETERMINISTICALLY below (dream_append_index),
+        # not by the model: a model rewrite of the whole index kept dropping
+        # existing entries (integrity gate rejected it every run, leaving new
+        # entries unindexed). Ignore any model-emitted MEMORY.md write.
+        log "- bank: ignoring model MEMORY.md rewrite (index maintained deterministically)"
+        i=$((i+1)); continue
       fi
       if [ "$report_only" -eq 1 ]; then
         mkdir -p "$staged/bank"
@@ -601,10 +601,37 @@ consolidate_bank() {
         cp "$content" "$bank/$path"
         log "- bank: wrote $path ($(stat -c%s "$bank/$path") bytes)"
       fi
+      bank_written+=( "$path" )
       wrote=$((wrote+1))
     fi
     i=$((i+1))
   done
+
+  # Maintain MEMORY.md deterministically: append a one-line index entry for
+  # each written entry not already referenced (append-only; cannot drop
+  # existing lines). Guarded swap like every other ledger write.
+  if [ "${#bank_written[@]}" -gt 0 ] && [ -f "$bank/MEMORY.md" ]; then
+    local -a wpaths=()
+    local p
+    for p in "${bank_written[@]}"; do
+      [ "$report_only" -eq 1 ] && wpaths+=( "$staged/bank/$p" ) || wpaths+=( "$bank/$p" )
+    done
+    local newidx="$tmp/MEMORY.md.new" idxref
+    if [ "$report_only" -eq 1 ]; then
+      dream_append_index "$bank/MEMORY.md" "${wpaths[@]}" > "$newidx"
+      cp "$newidx" "$staged/bank/MEMORY.md"
+      log "- bank: index updates staged for ${#bank_written[@]} entry(ies)"
+    else
+      idxref="$(stat -c '%s %Y' "$bank/MEMORY.md")"
+      dream_append_index "$bank/MEMORY.md" "${wpaths[@]}" > "$newidx"
+      cp "$bank/MEMORY.md" "$arch_dir/bank-MEMORY.md.pre"
+      if dream_swap "$bank/MEMORY.md" "$newidx" "$idxref"; then
+        log "- bank: MEMORY.md index appended for ${#bank_written[@]} entry(ies)"
+      else
+        log "- bank: MEMORY.md index append skipped (index changed mid-run)"
+      fi
+    fi
+  fi
   log "- bank: $wrote write(s), $proposed proposal(s)"
 }
 
