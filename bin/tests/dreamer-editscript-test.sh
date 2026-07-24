@@ -162,6 +162,60 @@ else
   bad "swap guard: clean swap failed"
 fi
 
+# --- bank index maintenance (dream_append_index) -------------------------
+bank="$tmp/bank"; mkdir -p "$bank"
+cat > "$bank/MEMORY.md" <<'EOF'
+# Memory bank
+
+## feedback
+- [existing-fb](feedback_existing.md) — an existing feedback entry.
+
+## reference
+- [existing-ref](existing-ref.md) — an existing reference entry.
+EOF
+cat > "$bank/feedback_existing.md" <<'EOF'
+---
+name: existing-fb
+description: an existing feedback entry.
+metadata:
+  type: feedback
+---
+body
+EOF
+cat > "$bank/new-ref.md" <<'EOF'
+---
+name: new-ref
+description: "a fresh reference fact, promoted tonight."
+metadata:
+  type: reference
+---
+body
+EOF
+cat > "$bank/proj-x.md" <<'EOF'
+---
+name: proj-x
+description: a project status entry.
+metadata:
+  type: project
+---
+body
+EOF
+
+il="$(dream_index_line "$bank/new-ref.md")"
+check "index-line: type prefix" "$(printf '%s' "$il" | grep -q '^reference	'; echo $?)"
+check "index-line: markdown link + desc" "$(printf '%s' "$il" | grep -qF -- '- [new-ref](new-ref.md) — a fresh reference fact'; echo $?)"
+
+dream_append_index "$bank/MEMORY.md" "$bank/new-ref.md" "$bank/proj-x.md" "$bank/feedback_existing.md" > "$tmp/mem.new"
+check "append: new-ref indexed under reference section" "$(awk '/^## reference/{r=1;next} /^## /{r=0} r && /\(new-ref.md\)/{f=1} END{exit !f}' "$tmp/mem.new"; echo $?)"
+check "append: existing reference line preserved" "$(grep -qF '(existing-ref.md)' "$tmp/mem.new"; echo $?)"
+check "append: existing feedback line preserved" "$(grep -qF '(feedback_existing.md)' "$tmp/mem.new"; echo $?)"
+check "append: already-indexed entry not duplicated" "$([ "$(grep -cF '(feedback_existing.md)' "$tmp/mem.new")" -eq 1 ]; echo $?)"
+check "append: new project type gets its own section" "$(awk '/^## project/{p=1} p && /\(proj-x.md\)/{f=1} END{exit !f}' "$tmp/mem.new"; echo $?)"
+check "append: no line dropped (line count grew by 2)" "$([ "$(grep -c '^- \[' "$tmp/mem.new")" -eq 4 ]; echo $?)"
+# idempotency: re-running adds nothing
+dream_append_index "$tmp/mem.new" "$bank/new-ref.md" "$bank/proj-x.md" > "$tmp/mem.new2"
+check "append: idempotent on re-run" "$(diff -q "$tmp/mem.new" "$tmp/mem.new2" >/dev/null; echo $?)"
+
 echo
 echo "dreamer-editscript: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
