@@ -9,8 +9,8 @@
 #     4 consecutive actions were blocked.
 #     Do you want to proceed?  1. Yes  2. Yes, and don't ask again  3. No
 #
-# for a `gh pr merge` into dev. Fares got the api-watchdog escalations on his
-# phone and could do nothing with them: answering a tmux selection menu needs a
+# for a `gh pr merge` into dev. The operator got the api-watchdog escalations on
+# his phone and could do nothing with them: answering a tmux selection menu needs a
 # laptop. The whole run stopped on a prompt that should never have existed.
 #
 # ROOT CAUSE, measured not assumed. Every session is spawned with

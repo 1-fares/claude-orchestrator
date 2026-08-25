@@ -3,8 +3,8 @@
 # confirming a prompt it does not understand.
 #
 # 2026-08-25: the orchestrator sat ~30m on the auto-mode classifier gate for a
-# `gh pr merge` into dev. Fares got the phone escalations and could not act on
-# them, because answering a tmux selection menu needs a laptop. The pane had
+# `gh pr merge` into dev. The operator got the phone escalations and could not act
+# on them, because answering a tmux selection menu needs a laptop. The pane had
 # silently drifted from "bypass permissions on" to "auto mode on" at some point
 # after launch, despite being spawned with --dangerously-skip-permissions; in
 # bypass the classifier gate never arms, so holding the mode removes the whole
