@@ -268,7 +268,7 @@ file is the portable version of the same discipline.
   run was launched with. Drift off `bypass permissions` is silent, sticky and one
   stray shift+tab away in the pane humans type into; it turns routine commands
   into confirmation menus nobody can answer remotely (2026-08-25: a `gh pr merge`
-  parked an orchestrator ~30 min). Restores the mode, and cancels the auto-mode
+  parked an orchestrator six times in one afternoon, ~158 min in total). Restores the mode, and cancels the auto-mode
   classifier gate with Escape. It never confirms a prompt, never presses keys into
   an open menu, and never cycles a mode it cannot read. Disable with
   `PERMISSION_MODE_WATCHDOG_DISABLED=1`.

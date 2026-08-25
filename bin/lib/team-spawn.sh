@@ -423,8 +423,9 @@ start_observer() {
 # 2026-08-25: an orchestrator pane had silently drifted from bypass to auto mode
 # despite being spawned with --dangerously-skip-permissions (its roles were still
 # in bypass, so it was runtime drift, not the flag), and the auto-mode classifier
-# then gated a `gh pr merge` behind a selection menu. The run stopped for ~30m and
-# the operator, who was not at a laptop, could not answer it from the phone. This
+# then gated a `gh pr merge` behind a selection menu. It parked the run six times
+# in one afternoon, ~158 minutes in total; every escalation reached the ntfy topic
+# and none could be answered, because a selection menu needs a laptop. This
 # daemon holds the launched mode so that class of prompt does not arise.
 start_permission_mode_watchdog() {
   [ "${PERMISSION_MODE_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
