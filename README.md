@@ -578,6 +578,7 @@ reused pid) before deciding to (re)start, so calling them repeatedly is safe.
 |---|---|---|---|
 | `api-watchdog.sh` | auto-recover API rate-limit / network stalls | `launch-team.sh`, **`start-orchestrator.sh`** (incl. recovery), `add-role.sh`, and **self-healed every 15s by `tmux-watchdog.sh`** | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `compaction-watchdog.sh` | compact the orchestrator early at idle boundaries to keep context (and cost) off the auto-compact ceiling | `launch-team.sh`, `start-orchestrator.sh` (incl. recovery), `add-role.sh`, and self-healed by `tmux-watchdog.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
+| `permission-mode-watchdog.sh` | hold every pane in the permission mode the run was launched with, so drift cannot park the run on a confirmation prompt | `launch-team.sh`, `start-orchestrator.sh` (incl. recovery), `add-role.sh`, and self-healed by `tmux-watchdog.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `tmux-watchdog.sh` | detect tmux-server crash, snapshot panes, self-heal the api-watchdog | `launch-team.sh`, `start-orchestrator.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `host-ram-watchdog.sh` | host OOM guard | `launch-team.sh`, `start-orchestrator.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
 | `disk-tmp-watchdog.sh` | disk / tmp usage guard | `launch-team.sh`, `start-orchestrator.sh`, `add-role.sh` | `stop-team.sh`, `panic.sh`, `cleanup.sh` |
@@ -596,7 +597,7 @@ transient rate-limit stall halts the team until a human nudges it.
 
 **Restart reaps the daemon set first (reap-before-spawn).** `panic.sh` reaps
 EVERY detached daemon by pidfile — the intake poller, observer,
-chrome-supervisor, tmux-watchdog, and ALL resource watchdogs (compaction /
+chrome-supervisor, tmux-watchdog, permission-mode-watchdog, and ALL resource watchdogs (compaction /
 host-ram / disk-tmp) — *and each one's backgrounded `sleep` child*, which
 inherits the per-`TEAM_DIR` flock fd. Reaping the child (via `pkill -P`) frees
 the singleton lock immediately, so a resume's fresh daemon wins the lock instead

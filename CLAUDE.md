@@ -264,6 +264,14 @@ file is the portable version of the same discipline.
   awareness is pull-only: the orchestrator reads `$TEAM_DIR/health/` to decide.
   Patterns at `bin/api-watchdog.patterns`. Disable the whole watchdog with
   `API_WATCHDOG_DISABLED=1`, or just stuck detection with `STUCK_WATCHDOG_DISABLED=1`.
+- `bin/permission-mode-watchdog.sh`: holds every pane in the permission mode the
+  run was launched with. Drift off `bypass permissions` is silent, sticky and one
+  stray shift+tab away in the pane humans type into; it turns routine commands
+  into confirmation menus nobody can answer remotely (2026-08-25: a `gh pr merge`
+  parked an orchestrator ~30 min). Restores the mode, and cancels the auto-mode
+  classifier gate with Escape. It never confirms a prompt, never presses keys into
+  an open menu, and never cycles a mode it cannot read. Disable with
+  `PERMISSION_MODE_WATCHDOG_DISABLED=1`.
 - `bin/tmux-watchdog.sh`: detects the tmux server itself going away (systemd
   scope cleanup, WSL2 suspend/resume, daemon-reload from other tooling) and
   flips `$TEAM_DIR/health/tmux.json` to `state=crashed`, drops
