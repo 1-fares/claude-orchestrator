@@ -2,9 +2,10 @@
 # The permission-mode watchdog must restore a drifted pane WITHOUT ever
 # confirming a prompt it does not understand.
 #
-# 2026-08-25: the orchestrator sat ~30m on the auto-mode classifier gate for a
-# `gh pr merge` into dev. The operator got the phone escalations and could not act
-# on them, because answering a tmux selection menu needs a laptop. The pane had
+# 2026-08-25: the orchestrator was parked on the auto-mode classifier gate for a
+# `gh pr merge` into dev SIX times in one afternoon, about 158 minutes of run time
+# in total. Each one escalated to the configured ntfy topic, and none could be
+# answered, because a tmux selection menu needs a laptop. The pane had
 # silently drifted from "bypass permissions on" to "auto mode on" at some point
 # after launch, despite being spawned with --dangerously-skip-permissions; in
 # bypass the classifier gate never arms, so holding the mode removes the whole

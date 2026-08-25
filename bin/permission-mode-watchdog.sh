@@ -3,15 +3,21 @@
 # run was LAUNCHED with, and undo the drift silently instead of parking the run
 # on a prompt only a human at a laptop can answer.
 #
-# Why (2026-08-25 incident): the orchestrator sat blocked ~30m on
+# Why (2026-08-25 incident): the orchestrator was repeatedly parked on
 #
 #     Auto mode classifier requires confirmation for this command.
 #     4 consecutive actions were blocked.
 #     Do you want to proceed?  1. Yes  2. Yes, and don't ask again  3. No
 #
-# for a `gh pr merge` into dev. The operator got the api-watchdog escalations on
-# his phone and could do nothing with them: answering a tmux selection menu needs a
-# laptop. The whole run stopped on a prompt that should never have existed.
+# for a `gh pr merge` into dev. The api-watchdog escalated on every occurrence to
+# the ntfy topic it is configured with, but the operator was away from a laptop,
+# and a tmux selection menu cannot be answered from anywhere else. It happened SIX
+# times that afternoon -- 14:43-15:59Z, 16:00-16:15Z, 16:18-16:30Z, 16:34-17:02Z,
+# 17:03-17:21Z and 17:22-17:31Z -- about 158 minutes of run time blocked in total,
+# not one bad moment. (An earlier version of this comment said "~30m" and "his
+# phone": the first was one occurrence mistaken for all of them, the second was
+# never established. The per-role log at audit/api-watchdog/orchestrator.log is
+# the source for the timings above.)
 #
 # ROOT CAUSE, measured not assumed. Every session is spawned with
 # --dangerously-skip-permissions (start-orchestrator.sh:31, launch-team.sh:54,
