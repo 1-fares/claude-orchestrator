@@ -417,10 +417,40 @@ start_observer() {
 # (recovery path) and add-role.sh (mid-run grow), so no path leaves a different
 # set running. The dashboard is deliberately not here: observability only, with
 # its own operator prompt in launch-team.sh.
+# Start the permission-mode watchdog for this team, once. Idempotent the same way
+# as the tmux watchdog. Set PERMISSION_MODE_WATCHDOG_DISABLED=1 to skip.
+#
+# 2026-08-25: an orchestrator pane had silently drifted from bypass to auto mode
+# despite being spawned with --dangerously-skip-permissions (its roles were still
+# in bypass, so it was runtime drift, not the flag), and the auto-mode classifier
+# then gated a `gh pr merge` behind a selection menu. The run stopped for ~30m and
+# the operator, who was not at a laptop, could not answer it from the phone. This
+# daemon holds the launched mode so that class of prompt does not arise.
+start_permission_mode_watchdog() {
+  [ "${PERMISSION_MODE_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/permission-mode-watchdog.sh" ] || return 0
+  mkdir -p "$TEAM_DIR"
+  local pidf="$TEAM_DIR/permission-mode-watchdog.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    # pid-reuse guard: match the exec'd script PATH, not a bare name (see start_api_watchdog).
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/permission-mode-watchdog\.sh'; then
+      echo "permission-mode-watchdog already running (pid $oldpid)"
+      return 0
+    fi
+  fi
+  PMW_SOCKET="$TEAM_TMUX" PMW_SESSION="$TEAM_SESSION" \
+    nohup "$repo/bin/permission-mode-watchdog.sh" >"$TEAM_DIR/permission-mode-watchdog.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "permission-mode-watchdog started (pid $!, log: $TEAM_DIR/permission-mode-watchdog.log)"
+}
+
 ensure_team_daemons() {
   start_api_watchdog || true
   start_compaction_watchdog || true
   start_tmux_watchdog || true
+  start_permission_mode_watchdog || true
   start_host_ram_watchdog || true
   start_disk_tmp_watchdog || true
   start_observer || true

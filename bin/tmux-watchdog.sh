@@ -192,6 +192,28 @@ ensure_observer() {
   notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] observer was down; tmux-watchdog restarted it (pid $!)"
 }
 
+# Keep the permission-mode watchdog alive. Without it a pane that drifts off the
+# launched permission mode starts gating ordinary commands behind confirmation
+# menus that only an operator at a laptop can answer, which is exactly how a run
+# stalls unattended. Opt-out: PERMISSION_MODE_WATCHDOG_DISABLED=1.
+ensure_permission_mode_watchdog() {
+  [ "${PERMISSION_MODE_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  [ -x "$repo/bin/permission-mode-watchdog.sh" ] || return 0
+  local pidf="$TEAM_DIR/permission-mode-watchdog.pid" oldpid
+  if [ -f "$pidf" ]; then
+    oldpid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+         && ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/permission-mode-watchdog\.sh'; then
+      return 0
+    fi
+  fi
+  PMW_SOCKET="$TEAM_TMUX" PMW_SESSION="$TEAM_SESSION" \
+    nohup "$repo/bin/permission-mode-watchdog.sh" >"$TEAM_DIR/permission-mode-watchdog.log" 2>&1 9>&- &
+  echo "$!" > "$pidf"
+  echo "$(iso) SELF-HEAL: permission-mode-watchdog was down; restarted (pid $!)" >> "$af"
+  notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] permission-mode-watchdog was down; tmux-watchdog restarted it (pid $!)"
+}
+
 # Keep the project intake poller alive -- the team's only inbound channel. It was
 # unsupervised (hand-started, in no ensure set), so its death = silent intake
 # loss. Resolve the script from project.conf (INTAKE_POLLER), pgrep on the path
@@ -235,11 +257,12 @@ while true; do
     prev_state=ok
     write_state ok "$nowts" "$since"
     # While the team is actually running, keep the supervisor daemons alive
-    # (self-heal): api + compaction watchdogs, the observer, and the intake
-    # poller (the team's only inbound channel).
+    # (self-heal): api + compaction watchdogs, the observer, the intake
+    # poller (the team's only inbound channel), and the permission-mode watchdog.
     if active_has_entries; then
       ensure_api_watchdog; ensure_compaction_watchdog
       ensure_observer; ensure_intake_poller
+      ensure_permission_mode_watchdog
     fi
     # Periodic forensic snapshot.
     if [ $((nowts - last_snap)) -ge "$snap_interval" ]; then

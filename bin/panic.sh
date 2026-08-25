@@ -88,7 +88,7 @@ _reap_daemon() {
   rm -f "$pidf"
 }
 for _d in compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
-          tmux-watchdog chrome-supervisor observer intake-poller; do
+          tmux-watchdog permission-mode-watchdog chrome-supervisor observer intake-poller; do
   _reap_daemon "$_d"
 done
 
