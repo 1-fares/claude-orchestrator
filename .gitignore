@@ -40,3 +40,6 @@ bin/preflight-cutover-observation.sh
 # Operator's working notes for resuming a paused run. Personal to one run id;
 # not part of the template.
 RESUME-HERE.md
+
+# per-clone availability hook (see bin/status-hook.example.sh)
+bin/status-hook.sh
