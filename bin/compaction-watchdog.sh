@@ -75,6 +75,9 @@
 #   COMPACT_THRESHOLD_PCT        legacy alias for COMPACT_NUDGE_PCT
 #   COMPACT_NUDGE_DEBOUNCE=600   min seconds between two cooperative nudges (per role)
 #   COMPACT_DEBOUNCE_SEC=900     min seconds between two forced compactions (per role)
+#   COMPACT_FORCE_ESCALATE=3     forced /compact attempts that leave the pane near-full
+#                                before CEILING-STUCK: ntfy + status hook, once per episode.
+#                                (2026-09-01: five forces over 66 minutes, nobody told.)
 #   COMPACT_CHECK_INTERVAL=180   seconds between full passes over all targets
 #   COMPACT_IDLE_SEC=45          pane must be unchanged this long = task boundary
 #   COMPACT_PRESERVE=<text>      focus instructions for a forced /compact
@@ -91,6 +94,8 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/lib/compaction-detect.sh"
 # shellcheck source=bin/lib/tmux-submit.sh
 . "$repo/bin/lib/tmux-submit.sh"
+# shellcheck source=bin/lib/status-hook.sh
+. "$repo/bin/lib/status-hook.sh"
 
 SOCK="${COMPACT_SOCKET:-orchestrator}"
 SESSION="${COMPACT_SESSION:-}"
@@ -100,6 +105,7 @@ NUDGE_OVERRIDE="${COMPACT_NUDGE_PCT:-${COMPACT_THRESHOLD_PCT:-}}"
 FORCE_OVERRIDE="${COMPACT_FORCE_PCT:-}"
 NUDGE_DEBOUNCE="${COMPACT_NUDGE_DEBOUNCE:-600}"
 DEBOUNCE="${COMPACT_DEBOUNCE_SEC:-900}"
+FORCE_ESCALATE="${COMPACT_FORCE_ESCALATE:-3}"
 INTERVAL="${COMPACT_CHECK_INTERVAL:-180}"
 IDLE_SEC="${COMPACT_IDLE_SEC:-45}"
 PROBE_WAIT="${COMPACT_PROBE_WAIT:-4}"
@@ -399,7 +405,7 @@ probe_blind_alarm() {
 }
 
 # Per-role state (associative arrays keyed by role name).
-declare -A last_fp fp_since last_compact last_nudge last_recover ceiling_seen probe_fail probe_blind_alarmed
+declare -A last_fp fp_since last_compact last_nudge last_recover ceiling_seen probe_fail probe_blind_alarmed force_count force_stuck_alarmed
 
 # process_target <role> <target> <orchflag> <probeflag>: one pass of the watch
 # logic for a single pane. probeflag=0 = ceiling guard only, no /context probe.
@@ -423,8 +429,19 @@ process_target() {
       warn)
         ceiling_seen[$role]=0
         if [ $(( nowt - ${last_compact[$role]:-0} )) -ge "$DEBOUNCE" ]; then
-          log "[$role] CEILING-WARN: near-full warning on pane (busy-agnostic); forcing /compact"
+          force_count[$role]=$(( ${force_count[$role]:-0} + 1 ))
+          log "[$role] CEILING-WARN: near-full warning on pane (busy-agnostic); forcing /compact (attempt ${force_count[$role]} this episode)"
           do_compact "$t"; last_compact[$role]=$nowt
+          # A forced /compact that does not clear the warning is not progress. Keep
+          # forcing (it eventually lands when the pane goes idle), but after
+          # FORCE_ESCALATE attempts say so, once, to the operator and the status hook:
+          # a coordinator that cannot compact is a coordinator that is not answering.
+          if [ "${force_count[$role]}" -ge "$FORCE_ESCALATE" ] && [ "${force_stuck_alarmed[$role]:-0}" != 1 ]; then
+            force_stuck_alarmed[$role]=1
+            log "[$role] CEILING-STUCK: ${force_count[$role]} forced compactions and the pane is still near-full; escalating (ntfy + status hook)"
+            notify "🔴 [compaction-watchdog/${TEAM_RUN_ID:-legacy}] '${role}' still near-full after ${force_count[$role]} forced /compact attempts (~$(( force_count[$role] * DEBOUNCE / 60 ))m); it may not be answering. Marker: $(role_marker "$role")"
+            status_hook compact-stuck "$role" "context near-full and ${force_count[$role]} forced compactions did not clear it; the operator has been alerted"
+          fi
         else
           log "[$role] CEILING-WARN: near-full warning (within ${DEBOUNCE}s compact debounce; marker written)"
         fi ;;
@@ -454,7 +471,12 @@ process_target() {
   fi
   # healthy pane -> clear a stale ceiling marker
   m="$(role_marker "$role")"
-  if [ -f "$m" ]; then rm -f "$m" 2>/dev/null || true; ceiling_seen[$role]=0; log "[$role] CEILING-CLEARED: pane healthy again"; fi
+  if [ -f "$m" ]; then
+    rm -f "$m" 2>/dev/null || true; ceiling_seen[$role]=0
+    log "[$role] CEILING-CLEARED: pane healthy again (forced compactions this episode: ${force_count[$role]:-0})"
+    [ "${force_stuck_alarmed[$role]:-0}" = 1 ] && status_hook recovered "$role" "context compacted after ${force_count[$role]:-0} forced attempts; answering again"
+    force_count[$role]=0; force_stuck_alarmed[$role]=0
+  fi
 
   # Ceiling-guard-only target (default-model worker): no /context probe.
   [ "$probe" = 1 ] || return

@@ -125,6 +125,17 @@ TEAM_TMUX_BIN="$(command -v tmux 2>/dev/null || echo tmux)"
 TEAM_TMUX_CONF="$TEAM_REPO/team.tmux.conf"
 unset _team_hash
 
+# Project-supplied availability hook (bin/lib/status-hook.sh). When the team stops
+# being able to work (usage wall, operator prompt, wedge, stuck compaction) the
+# daemons call this executable with <event> <role> <detail>; it decides who besides
+# the operator is told, and where. Unset = nobody outside the operator hears of it,
+# which is how 2026-08-25 and 2026-08-30 went. Default: an executable
+# bin/status-hook.sh in this clone (per-clone, gitignored; see bin/status-hook.example.sh).
+if [ -z "${TEAM_STATUS_HOOK:-}" ] && [ -x "$TEAM_REPO/bin/status-hook.sh" ]; then
+  TEAM_STATUS_HOOK="$TEAM_REPO/bin/status-hook.sh"
+fi
+export TEAM_STATUS_HOOK="${TEAM_STATUS_HOOK:-}"
+
 # Generate the team's tmux config once, importing your prefix/mouse from
 # ~/.tmux.conf but none of the plugins. Edit it freely afterwards; it is
 # per-clone and gitignored.

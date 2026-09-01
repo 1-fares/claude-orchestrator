@@ -88,6 +88,10 @@
 #                             blips between retries (see the A. path below)
 #   API_BACKOFF_SEC="30 60 120 300 600"  space-separated retry backoff schedule
 #   NTFY_URL=<url>            push notifications target (e.g. https://ntfy.sh/orch-example)
+#   TEAM_STATUS_HOOK=<exe>    project hook told when the team stops being able to work
+#                             (usage wall, operator prompt, wedge); see bin/lib/status-hook.sh
+#   USAGE_RECOVERED_CONFIRM_SEC=600  a role must stay off the usage dialog this long
+#                             before "usage-recovered" is reported (the retry path blips)
 #   API_WATCHDOG_PATTERNS     path to a patterns file (default bin/api-watchdog.patterns)
 
 set -uo pipefail
@@ -192,10 +196,13 @@ pattern_regex="$(grep -vE '^[[:space:]]*(#|$)' "$patterns_file" | paste -sd'|' -
 # so a committed fix takes effect without a manual restart. Track $0 + every lib sourced
 # above. Checked once per loop below.
 . "$repo/bin/lib/self-reload.sh"
+# shellcheck source=bin/lib/status-hook.sh
+. "$repo/bin/lib/status-hook.sh"
 self_reload_init "$0" \
   "$repo/bin/team-env.sh" \
   "$repo/bin/lib/tmux-submit.sh" \
   "$repo/bin/lib/watchdog-detect.sh" \
+  "$repo/bin/lib/status-hook.sh" \
   "$repo/bin/lib/self-reload.sh"
 
 notify() {
@@ -269,6 +276,7 @@ escalate_stuck() {
       && mv -f "$TEAM_DIR/PENDING.md.tmp.$$" "$TEAM_DIR/PENDING.md" 2>/dev/null \
       || rm -f "$TEAM_DIR/PENDING.md.tmp.$$" 2>/dev/null || true
     notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] ORCHESTRATOR wedged ~${mins}m; operator intervention needed (see PENDING.md)"
+    status_hook wedged orchestrator "orchestrator made no progress for ~${mins}m while busy; the operator has been asked to intervene"
     return
   fi
   local msg="[watchdog] role '$name' is wedged: ~${mins}m with no pane progress while busy, and ${stuck_max_nudges} interrupt+nudge attempts did not clear it (likely a hung tool call, e.g. the chrome-devtools MCP). Recommend retire+respawn: bin/retire-role.sh $name --force --reason 'stuck/hung tool call' then bin/add-role.sh <goal> $name, then re-brief it on its in-flight unit."
@@ -330,6 +338,26 @@ scan_once() {
       if [ "$state" != "awaiting-input" ] && { [ "$prev" = "awaiting-input" ] || [ "$prev" = "awaiting-input-esc" ]; }; then
         echo "$(iso "$nowts") [$name] RECOVERED-AWAIT (interactive prompt cleared)" >> "$af"
         rm -f "$health_dir/awaiting-$name.md" 2>/dev/null || true
+        # Only an ESCALATED wait was announced outside, so only that gets a recovery notice.
+        [ "$prev" = "awaiting-input-esc" ] && status_hook operator-answered "$name" "the interactive prompt cleared; work resumes"
+      fi
+
+      # USAGE-RECOVERED, confirmed. Leaving stalled-usage is not proof of recovery: each
+      # "try again" makes the pane busy for a scan before the dialog re-opens, so one
+      # outage leaves and re-enters the state many times. Report recovery only after the
+      # role has stayed OFF the dialog for USAGE_RECOVERED_CONFIRM_SEC (marker file).
+      _urf="$health_dir/$name.usage-left"
+      if [ "$state" = "stalled-usage" ]; then
+        rm -f "$_urf" 2>/dev/null || true
+      elif [ "$prev" = "stalled-usage" ]; then
+        echo "$nowts" > "$_urf" 2>/dev/null || true
+      elif [ -f "$_urf" ]; then
+        _urt=$(cat "$_urf" 2>/dev/null || echo 0); case "$_urt" in ''|*[!0-9]*) _urt=0;; esac
+        if [ $((nowts - _urt)) -ge "${USAGE_RECOVERED_CONFIRM_SEC:-600}" ]; then
+          rm -f "$_urf" 2>/dev/null || true
+          echo "$(iso "$nowts") [$name] USAGE-RECOVERED (off the usage dialog for ${USAGE_RECOVERED_CONFIRM_SEC:-600}s)" >> "$af"
+          status_hook usage-recovered "$name" "working again; the usage limit dialog has stayed clear for $(( ${USAGE_RECOVERED_CONFIRM_SEC:-600} / 60 )) minutes"
+        fi
       fi
 
       # --- E. USAGE-STALL path (parked on the usage-limit dialog) ------------
@@ -351,6 +379,7 @@ scan_once() {
           if [ $((nowts - _uplast)) -ge "${USAGE_PUSH_DEDUPE_SEC:-3600}" ]; then
             notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the usage limit; auto-retrying every ${usage_retry_sec}s until usage returns"
             echo "$nowts" > "$_upf"
+            status_hook usage-wall "$name" "usage limit reached; paused until it resets (auto-retry every ${usage_retry_sec}s)"
           fi
         fi
         # Pace nudges via a marker file rather than last_retry: the health
@@ -410,6 +439,7 @@ scan_once() {
           if [ ! -f "$_gf" ]; then
             echo "$(iso "$nowts") [$name] GIVE-UP after $retries retries (episode window ${episode_window}s; error: ${errline:-unavailable}); asked orchestrator to intervene" >> "$af"
             notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' still failing after $retries retries (${errline:-api error}); orchestrator asked to intervene"
+            status_hook wedged "$name" "the same API error persisted through $retries retries; the orchestrator has been asked to intervene"
             escalate_apistall "$name" "$retries" "$errline"
             echo "$nowts" > "$_gf"
           fi
@@ -458,6 +488,7 @@ scan_once() {
             echo '```'
           } > "$marker" 2>/dev/null || true
           echo "$(iso "$nowts") [$name] AWAITING-INPUT-ESCALATED (blocked ${mins}m; marker=$marker)" >> "$af"
+          status_hook awaiting-operator "$name" "blocked ${mins}m on an interactive prompt that only its operator can answer; nothing it owns proceeds until then"
           notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' blocked ${mins}m on an interactive prompt; operator decision needed (see $marker)"
           persist "$hf" "awaiting-input-esc" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
           continue

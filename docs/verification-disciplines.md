@@ -97,3 +97,45 @@ verdict; no-human-test-outsourcing keeps all three executable by the team
 itself. Together they move the adversarial spend to the cheapest point: a
 skeptic on a one-paragraph diagnosis costs minutes, a skeptic on a finished
 fix costs the fix.
+
+## 5. Evidence retention for manual operations
+
+A manual operation on a shared system (a verification re-run by hand, a
+container restart, a seeding step done outside the pipeline) exists only if
+its command identifier and its full output are written to the run's evidence
+directory and linked from the ledger entry that relies on it. A sentence in a
+pane ("tenant-a 0-PII clean") is a claim, not evidence: it cannot be re-read, it
+cannot be counted, and it cannot be handed to the person who has to trust it.
+
+The bar is the same one the pipeline meets by accident: a GitHub Actions step
+leaves a log anyone can open later. When a step is repeated by hand because the
+pipeline skipped it, the hand-run must leave at least as much behind, or the
+safety claim that matters most in the incident is the one nobody can audit.
+
+Measured, 2026-09-01: a refresh's anonymisation gate timed out on one tenant
+database; the re-verification was done by hand under the environment owner's
+instruction, reported as "clean", and left no artefact. Asked for, it took
+ninety seconds to produce: SSM command id, instance, full output,
+`0 residual findings`, three warnings named individually. That file is what
+turns "we think it is fine" into "it was checked, here".
+
+## 6. Attribution by identifier
+
+When an event is attributed to a person (who deployed, who approved, who asked
+for a change), cite the identifier the system recorded: the login, the actor
+id, the message id, the commit author field. Add the mapped human name only
+after it, and only from a source that can be quoted (a profile, a roster file),
+never from memory of who usually does what. An incident record that names the
+wrong colleague as the cause is worse than one that names nobody, because it
+is quotable.
+
+Measured, 2026-09-01: an incident entry said a deploy was "triggered by
+engineer A". The run's `triggering_actor` was a different login whose profile
+resolves to a different person. The two accounts had been conflated from
+habit. The corrected form, `login-b (Engineer B)`, keeps the identifier first
+so the next reader can check it in one call.
+
+The same discipline applies to agreement: "the vendor know and agreed" is not a
+record; "engineer A, message <message-id>, 12:57: finish manually" is. The
+authority model's quoted-OK rule (docs/authority-model.md) is this discipline
+applied to consent.
