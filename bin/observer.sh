@@ -15,6 +15,9 @@
 #   OBSERVER_IDLE_SEC=1800  a role idle longer than this is shrink-eligible
 #   OBSERVER_CALL_TIMEOUT=120  max seconds for one model call
 #   OBSERVER_GH_DISABLED=1  do NOT fetch/fold in GitHub ground truth (default on)
+#   OBSERVER_RENUDGE_SEC=14400  a verdict already nudged within this window stays
+#                           silent even if another verdict came between (anti-flap;
+#                           see bin/lib/observer-nudge.sh for the measured case)
 #
 # GitHub ground truth: each cycle the observer runs bin/observer-github-groundtruth.sh
 # (self-gated to at most every OBSERVER_GH_MIN_INTERVAL secs), then folds the
@@ -29,6 +32,8 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$repo/bin/team-env.sh"
+# shellcheck source=bin/lib/observer-nudge.sh
+. "$repo/bin/lib/observer-nudge.sh"
 
 interval="${OBSERVER_INTERVAL:-900}"
 model="${OBSERVER_MODEL:-sonnet}"
@@ -248,29 +253,36 @@ dispositions, or the pipeline counts as fact; those are historical and were the
 source of repeated DAY-OLD "blocked PR" claims. When the ground truth and an older
 note disagree, the ground truth wins.
 
-In <= 16 lines, give a concrete recommendation:
-1) First line EXACTLY: "HEADLINE: <one terse sentence: grow/shrink/hold + host sizing>"
-2) TEAM: which roles (if any) to retire now (idle and no in-flight unit) and why;
+In <= 17 lines, give a concrete recommendation:
+1) First line EXACTLY: "VERDICT: team=<hold|retire|add> models=<keep|up|down> host=<ok|grow|shrink> flags=<none|issue>"
+   Use these exact tokens. Set a field to a non-default value ONLY when you recommend
+   that change THIS pass; keep the line identical across passes when nothing material
+   changed (the default is "team=hold models=keep host=ok flags=none"). This line is
+   parsed to decide whether the orchestrator is interrupted, so a condition that was
+   already reported and has not changed must NOT flip a field back and forth.
+2) Second line EXACTLY: "HEADLINE: <one terse sentence: grow/shrink/hold + host sizing>"
+3) TEAM: which roles (if any) to retire now (idle and no in-flight unit) and why;
    whether to add a role (a backlog with no owner). If none, say "hold".
-3) HOST: is the instance over/under-sized for this load? (Consider: API-bound, so
+4) HOST: is the instance over/under-sized for this load? (Consider: API-bound, so
    idle CPU is expected; judge on RAM headroom and peak role count, not CPU.)
-4) MODELS: for each NON-CORE role only, suggest model/effort up or down with a
+5) MODELS: for each NON-CORE role only, suggest model/effort up or down with a
    one-line reason; mark core roles "keep high". Do NOT suggest anything carrying a
    DECLINED disposition (incl. model-pins). If every role is core, settled by a
    disposition, or already right-sized, say "no change".
-5) FLAGS: anything off (a role wedged, pipeline stalled, runaway memory). Else none.
+6) FLAGS: anything off (a role wedged, pipeline stalled, runaway memory). Else none.
 Be specific and brief. Do not suggest acting yourself; the orchestrator decides.
 EOF
 }
 
 observe_once() {
-  local metrics prompt out headline
+  local metrics prompt out headline verdict_sig
   refresh_gh_groundtruth
   metrics="$(gather_metrics)"
   prompt="$(build_prompt "$metrics")"
   out="$(timeout "$call_timeout" claude -p "$prompt" --model "$model" 2>/dev/null)"
   [ -z "$out" ] && out="(model call failed or timed out; metrics only)"
   headline="$(printf '%s\n' "$out" | grep -m1 -E '^HEADLINE:' | sed 's/^HEADLINE:[[:space:]]*//')"
+  verdict_sig="$(printf '%s\n' "$out" | _verdict_sig)"
 
   {
     echo "# Observer recommendation"
@@ -286,12 +298,15 @@ observe_once() {
   } > "$obs_dir/latest.md"
   { echo "=== $(iso) ==="; printf '%s\n' "$out"; echo; } >> "$obs_dir/history.md"
 
-  # Nudge the orchestrator only when the headline changes (avoid nagging).
-  if [ -n "$headline" ] && [ "$headline" != "$last_headline" ]; then
-    post_orch "observer: ${headline} (full advice: ${obs_dir}/latest.md)"
+  # Nudge the orchestrator only for a verdict it has not heard within the re-nudge
+  # window. The headline is prose and reworded every pass; the verdict tokens are
+  # the key, and the window catches a model flapping one token on unchanged facts
+  # (bin/lib/observer-nudge.sh). latest.md is written every pass regardless.
+  if observer_nudge_should "$verdict_sig" "$(date +%s)" "$obs_dir/.nudge-ring"; then
+    post_orch "observer: ${headline:-recommendation changed} (full advice: ${obs_dir}/latest.md)"
     last_headline="$headline"
   fi
-  echo "$(iso) observer: ${headline:-no headline}"
+  echo "$(iso) observer: ${headline:-no headline} [verdict ${verdict_sig}]"
 }
 
 # --once: run a single observation and exit (testing / external schedulers).
