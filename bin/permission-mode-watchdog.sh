@@ -76,10 +76,19 @@
 #   NTFY_URL              operator push (team-env exports it)
 
 set -uo pipefail
+# Original invocation args, captured before any parsing, so self-reload can re-exec
+# this daemon with the same flags (bin/lib/self-reload.sh).
+_SR_ORIG_ARGS=("$@")
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/team-env.sh
 . "$repo/bin/team-env.sh"
+# Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
+# fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
+# code for nine hours after the fix landed, because only api-watchdog reloaded itself.
+# shellcheck source=bin/lib/self-reload.sh
+. "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/self-reload.sh"
 
 [ "${PERMISSION_MODE_WATCHDOG_DISABLED:-0}" = "1" ] && exit 0
 
@@ -257,6 +266,7 @@ if [ "${PMW_ONESHOT:-0}" = "1" ]; then sweep_all; exit 0; fi
 log "permission-mode-watchdog started (socket=$SOCKET session=$SESSION expected='$EXPECTED' interval=${INTERVAL}s)"
 
 while :; do
+  self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   sweep_all
   sleep "$INTERVAL"
 done

@@ -32,10 +32,19 @@
 #   the last snapshot is the closest thing to a post-mortem.
 
 set -uo pipefail
+# Original invocation args, captured before any parsing, so self-reload can re-exec
+# this daemon with the same flags (bin/lib/self-reload.sh).
+_SR_ORIG_ARGS=("$@")
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$repo/bin/team-env.sh"
+# Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
+# fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
+# code for nine hours after the fix landed, because only api-watchdog reloaded itself.
+# shellcheck source=bin/lib/self-reload.sh
+. "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/self-reload.sh"
 
 interval=${TMUX_WATCHDOG_INTERVAL_S:-15}
 snap_interval=${TMUX_WATCHDOG_SNAPSHOT_S:-60}
@@ -246,6 +255,7 @@ ensure_intake_poller() {
 }
 
 while true; do
+  self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   nowts=$(now)
   if command tmux -L "$TEAM_TMUX" has-session -t "$TEAM_SESSION" 2>/dev/null; then
     if [ "$prev_state" != "ok" ]; then

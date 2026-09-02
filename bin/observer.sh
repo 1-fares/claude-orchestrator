@@ -28,12 +28,21 @@
 # Started once per run by bin/lib/team-spawn.sh (idempotent via a pidfile),
 # same shape as the watchdogs.
 set -uo pipefail
+# Original invocation args, captured before any parsing, so self-reload can re-exec
+# this daemon with the same flags (bin/lib/self-reload.sh).
+_SR_ORIG_ARGS=("$@")
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$repo/bin/team-env.sh"
 # shellcheck source=bin/lib/observer-nudge.sh
 . "$repo/bin/lib/observer-nudge.sh"
+# Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
+# fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
+# code for nine hours after the fix landed, because only api-watchdog reloaded itself.
+# shellcheck source=bin/lib/self-reload.sh
+. "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/observer-nudge.sh" "$repo/bin/lib/self-reload.sh"
 
 interval="${OBSERVER_INTERVAL:-900}"
 model="${OBSERVER_MODEL:-sonnet}"
@@ -317,6 +326,7 @@ fi
 
 echo "observer: starting team=${TEAM_SESSION:-?} run=${TEAM_RUN_ID:-legacy} interval=${interval}s model=${model} idle>=${idle_sec}s"
 while :; do
+  self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   observe_once || echo "$(iso) observer: tick error (continuing)"
   sleep "$interval"
 done

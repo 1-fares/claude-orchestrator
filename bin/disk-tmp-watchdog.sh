@@ -21,10 +21,19 @@
 # Env: DISK_TMP_WATCHDOG_DISABLED=1 | DTW_*_PCT (see lib) | DTW_INTERVAL (default 120s —
 #      disk fills slower than RAM) | DTW_LOG | DTW_HEALTH_DIR | DTW_MARKER | NTFY_URL.
 set -uo pipefail
+# Original invocation args, captured before any parsing, so self-reload can re-exec
+# this daemon with the same flags (bin/lib/self-reload.sh).
+_SR_ORIG_ARGS=("$@")
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/lib/disk-tmp.sh
 . "$repo/bin/lib/disk-tmp.sh"   # fs_used_pct, disk_tmp_band + the band thresholds (single-sourced with the gate)
+# Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
+# fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
+# code for nine hours after the fix landed, because only api-watchdog reloaded itself.
+# shellcheck source=bin/lib/self-reload.sh
+. "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/lib/disk-tmp.sh" "$repo/bin/lib/self-reload.sh"
 ROOT_RESUME="$DTW_ROOT_RESUME_PCT"; TMP_RESUME="$DTW_TMP_RESUME_PCT"
 INTERVAL="${DTW_INTERVAL:-120}"
 LOG="${DTW_LOG:-${TEAM_DIR:-.}/disk-tmp-watchdog.log}"
@@ -87,6 +96,7 @@ if [ "${DTW_TEST:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
 log "start: warn />=${DTW_ROOT_WARN_PCT}% or tmp>=${DTW_TMP_WARN_PCT}%; freeze />=${DTW_ROOT_FREEZE_PCT}% or tmp>=${DTW_TMP_FREEZE_PCT}%; interval=${INTERVAL}s marker=${MARKER}"
 cur_band=""
 while :; do
+  self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   root="$(fs_used_pct /)"; tmp="$(fs_used_pct /tmp)"
   if [ -z "$root" ] && [ -z "$tmp" ]; then log "could not read df for / or /tmp"; _dtw_sleep "$INTERVAL"; continue; fi
   root="${root:-0}"; tmp="${tmp:-0}"
