@@ -24,10 +24,19 @@
 #      HRW_INTERVAL (default 30s — short, since RAM can spike fast) | HRW_LOG |
 #      HRW_HEALTH_DIR | HRW_MARKER | NTFY_URL.
 set -uo pipefail
+# Original invocation args, captured before any parsing, so self-reload can re-exec
+# this daemon with the same flags (bin/lib/self-reload.sh).
+_SR_ORIG_ARGS=("$@")
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/lib/host-ram.sh
 . "$repo/bin/lib/host-ram.sh"   # ram_used_pct, swap_used_pct + the band thresholds (single-sourced with the gate)
+# Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
+# fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
+# code for nine hours after the fix landed, because only api-watchdog reloaded itself.
+# shellcheck source=bin/lib/self-reload.sh
+. "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/lib/host-ram.sh" "$repo/bin/lib/self-reload.sh"
 WARN_PCT="$HRW_WARN_PCT"; FREEZE_PCT="$HRW_FREEZE_PCT"; RESUME_PCT="$HRW_RESUME_PCT"
 SWAP_HI_PCT="$HRW_SWAP_HI_PCT"; SWAP_AMP_RAM_PCT="$HRW_SWAP_AMP_RAM_PCT"
 INTERVAL="${HRW_INTERVAL:-30}"
@@ -94,6 +103,7 @@ if [ "${HRW_TEST:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
 log "start: warn ram>=${WARN_PCT}% (or ram>=${SWAP_AMP_RAM_PCT}%+swap>=${SWAP_HI_PCT}%) freeze ram>=${FREEZE_PCT}% resume ram<${RESUME_PCT}% interval=${INTERVAL}s marker=${MARKER}"
 cur_band=""
 while :; do
+  self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   used="$(ram_used_pct < /proc/meminfo 2>/dev/null)"
   if [ -z "$used" ]; then log "could not read /proc/meminfo"; _hrw_sleep "$INTERVAL"; continue; fi
   swap="$(swap_used_pct < /proc/meminfo 2>/dev/null)"; swap="${swap:-0}"

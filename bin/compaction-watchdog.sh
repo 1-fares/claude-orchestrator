@@ -88,6 +88,9 @@
 #   COMPACT_LOG=<path>           audit log (default ${TEAM_DIR:-.}/compaction-watchdog.log)
 
 set -uo pipefail
+# Original invocation args, captured before any parsing, so self-reload can re-exec
+# this daemon with the same flags (bin/lib/self-reload.sh).
+_SR_ORIG_ARGS=("$@")
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/lib/compaction-detect.sh
@@ -96,6 +99,12 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/lib/tmux-submit.sh"
 # shellcheck source=bin/lib/status-hook.sh
 . "$repo/bin/lib/status-hook.sh"
+# Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
+# fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
+# code for nine hours after the fix landed, because only api-watchdog reloaded itself.
+# shellcheck source=bin/lib/self-reload.sh
+. "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/lib/compaction-detect.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/status-hook.sh" "$repo/bin/lib/self-reload.sh"
 
 SOCK="${COMPACT_SOCKET:-orchestrator}"
 SESSION="${COMPACT_SESSION:-}"
@@ -571,6 +580,7 @@ log "start: multi-target watching: ${start_targets:-<none yet>}| idle=${IDLE_SEC
 canary
 
 while :; do
+  self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   if ! enumerate_targets > "${TEAM_DIR:-.}/.compaction-targets.$$" 2>/dev/null || [ ! -s "${TEAM_DIR:-.}/.compaction-targets.$$" ]; then
     log "no targets on socket $SOCK (no orch session?)"; rm -f "${TEAM_DIR:-.}/.compaction-targets.$$" 2>/dev/null
     sleep "$INTERVAL"; continue

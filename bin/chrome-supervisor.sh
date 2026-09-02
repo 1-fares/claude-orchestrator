@@ -47,8 +47,17 @@
 #   MEM_WARN_MB=800                log a warning when MemAvailable falls below this
 
 set -uo pipefail
+# Original invocation args, captured before any parsing, so self-reload can re-exec
+# this daemon with the same flags (bin/lib/self-reload.sh).
+_SR_ORIG_ARGS=("$@")
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
+# Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
+# fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
+# code for nine hours after the fix landed, because only api-watchdog reloaded itself.
+# shellcheck source=bin/lib/self-reload.sh
+. "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/self-reload.sh"
 
 interval="${CHROME_SUPERVISOR_INTERVAL:-20}"
 unwedge_disabled="${CHROME_UNWEDGE_DISABLED:-0}"
@@ -172,6 +181,7 @@ scan() {
 log "chrome-supervisor: starting team=$TEAM_SESSION run=${TEAM_RUN_ID:-legacy} interval=${interval}s unwedge=$([ "$unwedge_disabled" = 1 ] && echo off || echo on)"
 if [ "$once" = 1 ]; then scan; exit 0; fi
 while :; do
+  self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   scan
   sleep "$interval"
 done
