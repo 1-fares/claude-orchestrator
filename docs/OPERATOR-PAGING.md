@@ -104,3 +104,22 @@ and a production write once executed (the operator wants to see those in the dig
 7. A message from the product owner or the vendor unanswered for 60 minutes in working hours: `action`
    (the acknowledge-with-time rule is the hive's; the page is the backstop).
 8. The status hook's external posts and every executed production write: `info`.
+
+## Maintenance mute/unmute procedure
+
+Before a planned restart or maintenance window, mute action/info notifications so
+they queue instead of firing during the downtime:
+
+```bash
+bin/notify-operator.sh --mute "$(date -d '+2 hours' +%s)"   # mute for 2 hours
+bin/notify-operator.sh --mute "2026-09-07T16:00:00+02:00"    # mute until a specific time
+```
+
+Pages still go through (prefixed `[maintenance]`). After the window:
+
+```bash
+bin/notify-operator.sh --unmute
+bin/notify-operator.sh --flush    # push any actions queued during mute
+```
+
+The daily cron (08:03 Zurich) flushes automatically on workday mornings.

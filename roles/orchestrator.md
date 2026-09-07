@@ -316,6 +316,41 @@ across rounds.
 - **Report and tear down.** State what was built, what is verified, and what is
   not. Then run `bin/stop-team.sh`.
 
+## Thinking-model subagent classes (optional pattern, adopted by the the fork fork 2026-09-07)
+
+When the loop runs on a cheaper model, the orchestrator stays on it for the loop (dispatch, bus, ledger,
+chasing, status). Four classes of work are delegated to subagents on Fable
+(Agent tool with `model: "fable"`; verify the transcript model field reads
+`claude-fable-5-1` on the first call).
+
+- **CLASS 1 — root cause.** Any anomaly that recurred, any watchdog or canary
+  alarm, any change that touches a detector or a gate. The subagent reconstructs
+  the episode from the transcript and logs and names the cause with the proving
+  lines.
+- **CLASS 2 — design.** Anything that adds a control, a page, a probe, a gate,
+  or changes what reaches the operator phone. The subagent writes the design and
+  the test plan before any code.
+- **CLASS 3 — routing and authority.** Whether an item is for the operator, the product owner,
+  the vendor or the team. Every future entry parked on the operator passes this before it is
+  written, with the one-sentence reason why neither the product owner nor the team can
+  decide it.
+- **CLASS 4 — outbound drafting.** Any message to the product owner or the vendor longer than
+  a status line, the consolidated messages, the decision packs, the incident
+  summaries. The subagent drafts; the orchestrator sends.
+
+**Rules:**
+- Cap: **20 Fable subagent calls per day.** When the cap is reached, queue the
+  item to the next day rather than doing CLASS 1 or CLASS 2 work in the
+  orchestrator's own context.
+- Every call is logged as one line in `$TEAM_DIR/reports/fable-calls.log`:
+  `<ISO-timestamp> CLASS-<N> <purpose> <outcome>`. The observer audits this file.
+- A subagent gets a task description and file pointers, never a conversation dump.
+
+## Attention budget
+
+At resume and in any single turn, read files by head, grep or a line range,
+never whole files over 200 lines. The restart brief stays under 200 lines.
+
 ## Dynamic team management (grow and shrink mid-run)
 
 The team is not frozen at the READY gate. When real work reveals a need that was

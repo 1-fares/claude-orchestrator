@@ -118,7 +118,7 @@ FORCE_ESCALATE="${COMPACT_FORCE_ESCALATE:-3}"
 INTERVAL="${COMPACT_CHECK_INTERVAL:-180}"
 IDLE_SEC="${COMPACT_IDLE_SEC:-45}"
 PROBE_WAIT="${COMPACT_PROBE_WAIT:-4}"
-PRESERVE="${COMPACT_PRESERVE:-preserve the current task state, open decisions, and in-flight work}"
+PRESERVE="${COMPACT_PRESERVE:-preserve verbatim the standing rules card (RULES-IN-FORCE.md) if present and the state.md unit table, then the current task state, open decisions and in-flight work}"
 LOG="${COMPACT_LOG:-${TEAM_DIR:-.}/compaction-watchdog.log}"
 # Ceiling guard (busy-agnostic). A near-full / wedged session renders the
 # warning/limit/failed strings in its pane even while busy; the idle-gated probe
