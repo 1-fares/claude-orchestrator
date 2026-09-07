@@ -63,8 +63,17 @@ parse_context_pct() {
 # signature: that footer is live chrome in 2.1.x (see the near_full fixture).
 _context_render_present() { grep -qiE 'context usage|/context all to expand|⛁ (system prompt|system tools|memory files|skills|messages):|⛶ free space:'; }
 
+# _chrome_lines: drop lines that cannot be Claude Code status chrome: quoted text,
+# regex alternation, a Read-tool line-number gutter, or shell keywords. The
+# ceiling strings live in this file, in its tests and in commit diffs, and a
+# session that views any of them puts the words on its own pane. Measured
+# 2026-09-07 08:13-08:16Z: the orchestrator was porting the render fix, its pane
+# showed this function's grep line, the watchdog read compact-failed twice and
+# ran /clear + rebrief on a healthy session.
+_chrome_lines() { grep -vE "['\"|]|[0-9]+→|(^|[[:space:]])(grep|printf|sed|awk|echo)[[:space:]]"; }
+
 _ceiling_state() {
-  local t; t="$(cat)"
+  local t; t="$(cat | _chrome_lines)"
   if printf '%s' "$t" | grep -qiE 'compaction failed|could not be reduced below'; then echo compact-failed; return; fi
   if printf '%s' "$t" | grep -qiE 'context limit reached'; then echo limit; return; fi
   if printf '%s' "$t" | grep -qiE 'context is [0-9]+% full|autocompact will trigger'; then
