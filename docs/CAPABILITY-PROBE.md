@@ -36,3 +36,13 @@ push topic); one model call. Keep every probe side-effect free.
    denials by the principal and keep the probe daily. Rollback is the reverse of the one
    command that removed the grant; write it down before the change.
 5. **Close.** Record the result in the ledger; the observer keeps checking (i) daily.
+
+## The working tree is live
+
+Daemons and crons run from the checked-out tree. Never `git checkout <branch>`,
+`git stash -u`/`-a` or `git clean` in it; read another branch with `git show <ref>:<path>`
+or `git worktree add` elsewhere. A fork learned this on 2026-09-07: an operator session on
+the upstream branch (whose `.gitignore` differs) ran `git stash -u`, which swept the
+`.secrets/` directory and fifteen other untracked files; the paging topic and a token were
+gone until the probe's secret-file rows were written. Probe every secret file the engine
+loads (`test -s <file>`), and keep such a rule on the standing-rules card.
