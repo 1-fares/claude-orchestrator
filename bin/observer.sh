@@ -258,6 +258,8 @@ gather_audit_evidence() {
   find "$td/health" "$td" -maxdepth 1 \( -name '*.marker' -o -name '*.alarm' -o -name '*-blind*.md' \) -mtime +1 2>/dev/null | sed 's/^/  /' | grep . || echo "  (none over 24h)"
   echo "UNIT TABLE (state.md open units):"
   [ -f "$td/state.md" ] && grep -A 100 '^| Unit ' "$td/state.md" 2>/dev/null | head -20 | sed 's/^/  /' || echo "  (no state.md)"
+  echo "CAPABILITY PROBE (last result, bin/capability-probe.sh):"
+  if [ -f "$td/health/capability-probe.json" ]; then sed 's/^/  /' "$td/health/capability-probe.json" | cut -c1-400; else echo "  (never run)"; fi
   echo "THINKING-MODEL CALLS LOG:"
   local fcl="$td/reports/fable-calls.log" cls
   if [ -f "$fcl" ]; then
@@ -332,7 +334,7 @@ In <= 17 lines, give a concrete recommendation:
 Be specific and brief. Do not suggest acting yourself; the orchestrator decides.
 
 --- AUDIT MANDATE (binding) ---
-After the recommendation block, emit an AUDIT section answering items (a)-(h) with
+After the recommendation block, emit an AUDIT section answering items (a)-(i) with
 evidence from the AUDIT EVIDENCE section of this prompt. "Evidence" means a specific
 log line, timestamp, file state or value, not a restatement of the metrics summary.
 Each item gets one line minimum. "No issues" is valid only with the evidence that
@@ -352,6 +354,9 @@ proves it. Format: "AUDIT-x: PASS|FAIL|UNKNOWN - <evidence>"
 (h) UNIT TABLE: for each row of the state.md unit table, done, in progress or overdue
     (past its due date and not done); count the thinking-model calls per class since
     the previous pass; flag any unit overdue by more than a day.
+(i) CAPABILITY PROBE: the last probe result must be under 24 h old with zero FAIL;
+    name every failed probe (a permission or dependency the team lost) and whether a
+    permission change preceded it.
 
 AUDIT EVIDENCE (gathered from primary sources by the observer daemon):
 ${audit_evidence:-  (no audit evidence collected)}
