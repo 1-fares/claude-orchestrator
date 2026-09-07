@@ -88,6 +88,11 @@ near_full()    { printf '%s\n' '⚠ Context is 96% full' 'Autocompact will trigg
 autocompact()  { printf '%s\n' 'Autocompact will trigger soon'; }
 hard_limit()   { printf '%s\n' '⎿  Context limit reached · /compact or /clear to continue'; }
 compact_fail() { printf '%s\n' '⎿  Error: Compaction failed · conversation could not be reduced below the context limit'; }
+# The probe's own /context render carries the same banner and stays on the pane
+# after the compaction it asked for has happened; it must NOT read as a live
+# near-full warning (seven false CEILING-STUCK firings, 2-6 Sep 2026).
+render_banner() { printf '%s\n' '  ⎿  Context Usage' '     ⛁ System prompt: 7.7k tokens (3.8%)' '     ⛁ Messages: 150.1k tokens (75.1%)' '     /context all to expand' '      ⚠ Context is 91% full' '        Autocompact will trigger soon, which discards older messages.' '❯ '; }
+render_and_limit() { render_banner; hard_limit; }
 
 echo "_ceiling_state (busy-agnostic ceiling guard):"
 eq "healthy/busy pane -> empty"            "$(healthy_busy | _ceiling_state)" ""
@@ -95,6 +100,8 @@ eq "near-full warning -> warn"             "$(near_full    | _ceiling_state)" "w
 eq "autocompact-soon -> warn"              "$(autocompact  | _ceiling_state)" "warn"
 eq "context limit reached -> limit"        "$(hard_limit   | _ceiling_state)" "limit"
 eq "compaction failed -> compact-failed"   "$(compact_fail | _ceiling_state)" "compact-failed"
+eq "/context render carrying the banner -> empty (stale render, not chrome)" "$(render_banner | _ceiling_state)" ""
+eq "render present but hard limit shown -> limit" "$(render_and_limit | _ceiling_state)" "limit"
 # worst-first priority: a pane showing BOTH limit and failed reads as compact-failed
 eq "limit+failed together -> compact-failed (worst first)" "$( { hard_limit; compact_fail; } | _ceiling_state)" "compact-failed"
 
