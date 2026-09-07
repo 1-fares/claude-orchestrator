@@ -320,6 +320,15 @@ do_compact() {
   tmux_o send-keys -t "$t" Enter 2>/dev/null
 }
 
+# compact_refused <target>: after a /compact, did Claude Code answer "Not enough
+# messages to compact"? An idle session answers within a second; a busy session
+# queues the keystroke and answers nothing, which leaves the escalation path below
+# intact for a session that is genuinely climbing while busy.
+compact_refused() {
+  sleep "$PROBE_WAIT"
+  tmux_o capture-pane -t "$1" -p 2>/dev/null | strip_ansi | grep -qi 'not enough messages to compact'
+}
+
 # Last-resort recovery for the ORCHESTRATOR at the UNRECOVERABLE ceiling
 # (compaction failed / hard limit): /clear, then re-brief so it rebuilds from
 # disk. This is the manual recovery (forced /clear + rehydrate from state.md)
@@ -441,11 +450,19 @@ process_target() {
           force_count[$role]=$(( ${force_count[$role]:-0} + 1 ))
           log "[$role] CEILING-WARN: near-full warning on pane (busy-agnostic); forcing /compact (attempt ${force_count[$role]} this episode)"
           do_compact "$t"; last_compact[$role]=$nowt
+          # Claude Code's own verdict beats layout inference. "Not enough messages to
+          # compact" means the session is at its FLOOR: the near-full text on the pane
+          # is stale (a render or chrome that has not scrolled off), not a ceiling.
+          # End the episode instead of counting the refusal towards CEILING-STUCK.
+          if compact_refused "$t"; then
+            log "[$role] CEILING-STALE: /compact refused (not enough messages to compact); near-full text is stale, episode reset (forced this episode: ${force_count[$role]})"
+            force_count[$role]=0; force_stuck_alarmed[$role]=0
+            rm -f "$(role_marker "$role")" 2>/dev/null || true
           # A forced /compact that does not clear the warning is not progress. Keep
           # forcing (it eventually lands when the pane goes idle), but after
           # FORCE_ESCALATE attempts say so, once, to the operator and the status hook:
           # a coordinator that cannot compact is a coordinator that is not answering.
-          if [ "${force_count[$role]}" -ge "$FORCE_ESCALATE" ] && [ "${force_stuck_alarmed[$role]:-0}" != 1 ]; then
+          elif [ "${force_count[$role]}" -ge "$FORCE_ESCALATE" ] && [ "${force_stuck_alarmed[$role]:-0}" != 1 ]; then
             force_stuck_alarmed[$role]=1
             log "[$role] CEILING-STUCK: ${force_count[$role]} forced compactions and the pane is still near-full; escalating (ntfy + status hook)"
             notify "🔴 [compaction-watchdog/${TEAM_RUN_ID:-legacy}] '${role}' still near-full after ${force_count[$role]} forced /compact attempts (~$(( force_count[$role] * DEBOUNCE / 60 ))m); it may not be answering. Marker: $(role_marker "$role")"

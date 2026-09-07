@@ -58,10 +58,25 @@ parse_context_pct() {
 #   warn           : "Context is NN% full" / "Autocompact will trigger soon"
 #                    (near-full, still compactable -> force a compact now)
 #   (empty)        : healthy
+# _context_render_present: stdin holds a /context render (the probe's own output)
+# rather than live status chrome. "NN% context used" is deliberately NOT a
+# signature: that footer is live chrome in 2.1.x (see the near_full fixture).
+_context_render_present() { grep -qiE 'context usage|/context all to expand|⛁ (system prompt|system tools|memory files|skills|messages):|⛶ free space:'; }
+
 _ceiling_state() {
   local t; t="$(cat)"
   if printf '%s' "$t" | grep -qiE 'compaction failed|could not be reduced below'; then echo compact-failed; return; fi
   if printf '%s' "$t" | grep -qiE 'context limit reached'; then echo limit; return; fi
-  if printf '%s' "$t" | grep -qiE 'context is [0-9]+% full|autocompact will trigger'; then echo warn; return; fi
+  if printf '%s' "$t" | grep -qiE 'context is [0-9]+% full|autocompact will trigger'; then
+    # The banner is also part of the /context render that probe_pct injects, and it
+    # stays on the pane after the compaction it asked for has happened. Measured on
+    # run r1780489249, 2-6 Sep 2026: all seven CEILING-STUCK firings read this banner
+    # back from the watchdog's own render; the first /compact of each episode had
+    # already landed (180k -> 28k tokens) and the next three were refused with "Not
+    # enough messages to compact". With a render signature present the banner is the
+    # render's, and the number that counts is parse_context_pct on the same text.
+    if printf '%s' "$t" | _context_render_present; then echo ''; return; fi
+    echo warn; return
+  fi
   echo ''
 }

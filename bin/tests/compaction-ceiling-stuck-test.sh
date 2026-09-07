@@ -29,6 +29,8 @@ case "\$cmd" in
   capture-pane)
     if [ "\$(cat "$TD/mode")" = warn ]; then
       printf '%s\n' '● thinking…' 'Context is 91% full, autocompact will trigger at 95%' '❯ '
+    elif [ "\$(cat "$TD/mode")" = stale ]; then
+      printf '%s\n' '● thinking…' 'Context is 91% full, autocompact will trigger at 95%' '⎿  Not enough messages to compact.' '❯ '
     else
       printf '%s\n' '● standing by.' '8% context used · /model opus[1m]' '❯ '
     fi ;;
@@ -68,4 +70,30 @@ grep -q '^compact-stuck|orchestrator$' "$TD/hook-calls" 2>/dev/null && ok "statu
 grep -q 'CEILING-CLEARED: pane healthy again (forced compactions this episode: [0-9]' "$TD/log" && ok "CEILING-CLEARED reports the episode's force count" || bad "CEILING-CLEARED missing or without count"
 grep -q '^recovered|orchestrator$' "$TD/hook-calls" 2>/dev/null && ok "status hook told recovered" || bad "hook not called with recovered"
 grep -q 'FIRE compact-stuck orchestrator' "$TD/reports/status-hook.log" 2>/dev/null && ok "status-hook.log records the fire" || bad "status-hook.log missing FIRE"
+
+# --- Second episode: the pane shows the near-full banner AND Claude Code's reply
+# "Not enough messages to compact". The reply is the verdict: the session is at its
+# floor and the banner is stale text. Expect CEILING-STALE and an episode reset,
+# never CEILING-STUCK, never a compact-stuck hook call. (Seven false firings on run
+# r1780489249, 2-6 Sep 2026, each after one real compaction and three refusals.)
+rm -f "$TD/hook-calls" "$TD/log" "$TD/lock" "$TD/pid" "$TD/reports/status-hook.log" "$TD/health/"* 2>/dev/null
+echo stale > "$TD/mode"
+PATH="$FAKEBIN:$PATH" TEAM_DIR="$TD" TEAM_RUN_ID=testrun TEAM_STATUS_HOOK="$TD/hook.sh" \
+  STATUS_HOOK_DEDUPE_SEC=0 \
+  COMPACT_SOCKET=x COMPACT_SESSION=orch-sess \
+  COMPACT_LOCK="$TD/lock" COMPACT_PIDFILE="$TD/pid" COMPACT_LOG="$TD/log" \
+  COMPACT_HEALTH_DIR="$TD/health" \
+  COMPACT_CHECK_INTERVAL=1 COMPACT_IDLE_SEC=0 COMPACT_PROBE_WAIT=0 \
+  COMPACT_DEBOUNCE_SEC=0 COMPACT_FORCE_ESCALATE=3 COMPACT_RECOVER_DEBOUNCE=0 NTFY_URL='' \
+  timeout 20 bash "$repo/bin/compaction-watchdog.sh" >/dev/null 2>&1 &
+wd=$!
+sleep 6
+kill "$wd" 2>/dev/null; wait "$wd" 2>/dev/null; wait
+n_stale=$(grep -c 'CEILING-STALE' "$TD/log" 2>/dev/null); n_stale=${n_stale:-0}
+n_stuck2=$(grep -c 'CEILING-STUCK' "$TD/log" 2>/dev/null); n_stuck2=${n_stuck2:-0}
+[ "$n_stale" -ge 1 ] && ok "refused /compact logged as CEILING-STALE ($n_stale)" || bad "no CEILING-STALE on a refused /compact"
+[ "$n_stuck2" = 0 ] && ok "no CEILING-STUCK when /compact is refused" || bad "CEILING-STUCK fired $n_stuck2 times on a refused /compact"
+grep -q '^compact-stuck|' "$TD/hook-calls" 2>/dev/null && bad "status hook told compact-stuck on a stale banner" || ok "status hook not called on a stale banner"
+[ -f "$TD/health/ceiling-orchestrator.md" ] && bad "ceiling marker left behind after CEILING-STALE" || ok "ceiling marker removed on CEILING-STALE"
+
 [ "$fail" = 0 ] && echo "compaction-ceiling-stuck-test: PASS" || { echo "compaction-ceiling-stuck-test: FAIL"; sed -n 1,20p "$TD/log"; exit 1; }
