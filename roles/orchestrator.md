@@ -316,7 +316,7 @@ across rounds.
 - **Report and tear down.** State what was built, what is verified, and what is
   not. Then run `bin/stop-team.sh`.
 
-## Thinking-model subagent classes (optional pattern, adopted by the the fork fork 2026-09-07)
+## Thinking-model subagent classes (optional pattern, adopted by a production fork on 2026-09-07)
 
 When the loop runs on a cheaper model, the orchestrator stays on it for the loop (dispatch, bus, ledger,
 chasing, status). Four classes of work are delegated to subagents on Fable

@@ -649,7 +649,7 @@ want observer  && consolidate_observer
 want state     && consolidate_ledger "$TEAM_DIR/state.md" "$TEAM_DIR/state-archive.md" "state"
 want decisions && {
   # Any DECISIONS-*.md at the run root (deployments name the operator file
-  # differently, e.g. DECISIONS-FOR-FARES.md); archive target mirrors the name.
+  # differently, e.g. DECISIONS-FOR-OPERATOR.md); archive target mirrors the name.
   found=0
   for f in "$TEAM_DIR"/DECISIONS*.md; do
     [ -f "$f" ] || continue

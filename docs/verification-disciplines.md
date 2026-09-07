@@ -104,7 +104,7 @@ A manual operation on a shared system (a verification re-run by hand, a
 container restart, a seeding step done outside the pipeline) exists only if
 its command identifier and its full output are written to the run's evidence
 directory and linked from the ledger entry that relies on it. A sentence in a
-pane ("tenant-a 0-PII clean") is a claim, not evidence: it cannot be re-read, it
+pane ("tenant A: 0 PII findings") is a claim, not evidence: it cannot be re-read, it
 cannot be counted, and it cannot be handed to the person who has to trust it.
 
 The bar is the same one the pipeline meets by accident: a GitHub Actions step
@@ -132,10 +132,10 @@ is quotable.
 Measured, 2026-09-01: an incident entry said a deploy was "triggered by
 engineer A". The run's `triggering_actor` was a different login whose profile
 resolves to a different person. The two accounts had been conflated from
-habit. The corrected form, `login-b (Engineer B)`, keeps the identifier first
+habit. The corrected form, `<login> (<name from the profile>)`, keeps the identifier first
 so the next reader can check it in one call.
 
-The same discipline applies to agreement: "the vendor know and agreed" is not a
-record; "engineer A, message <message-id>, 12:57: finish manually" is. The
+The same discipline applies to agreement: "the vendor knows and agreed" is not a
+record; "<engineer>, message <id>, 12:57: finish manually" is. The
 authority model's quoted-OK rule (docs/authority-model.md) is this discipline
 applied to consent.
