@@ -103,8 +103,8 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
-. "$repo/bin/lib/self-reload.sh"
-self_reload_init "$0" "$repo/bin/lib/compaction-detect.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/status-hook.sh" "$repo/bin/lib/self-reload.sh"
+. "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+self_reload_init "$0" "$repo/bin/lib/compaction-detect.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/status-hook.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
 
 SOCK="${COMPACT_SOCKET:-orchestrator}"
 SESSION="${COMPACT_SESSION:-}"
@@ -184,10 +184,14 @@ submit_o() { _tmux_submit_via tmux_o "$@"; }
 strip_ansi() { sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g'; }
 # Operator push (mirrors api-watchdog.sh): no-op when NTFY_URL is unset, the
 # durable marker carries the signal regardless.
-notify() {
-  [ -z "${NTFY_URL:-}" ] && return 0
-  curl -sS -m 5 -X POST -d "$1" "$NTFY_URL" -o /dev/null 2>/dev/null || true
-}
+# 2026-09-07: the phone is reached only through bin/lib/notify.sh (classes, mute,
+# dedupe, digest, audit). The old one-argument form is kept; notify_legacy maps
+# 🔴 to action and everything else to info. Declare page/action explicitly for the
+# few sites that need a human now: see docs/OPERATOR-PAGING.md.
+# shellcheck disable=SC1091
+. "$repo/bin/lib/notify.sh"
+NOTIFY_SOURCE=compaction-watchdog
+notify() { notify_legacy "$@"; }
 
 # Resolve the team session name. Honor COMPACT_SESSION if set, else take the first
 # orch-* session on the socket.

@@ -195,7 +195,7 @@ pattern_regex="$(grep -vE '^[[:space:]]*(#|$)' "$patterns_file" | paste -sd'|' -
 # Self-reload: re-exec this daemon when its own source or a sourced lib changes on disk,
 # so a committed fix takes effect without a manual restart. Track $0 + every lib sourced
 # above. Checked once per loop below.
-. "$repo/bin/lib/self-reload.sh"
+. "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
 # shellcheck source=bin/lib/status-hook.sh
 . "$repo/bin/lib/status-hook.sh"
 self_reload_init "$0" \
@@ -203,12 +203,16 @@ self_reload_init "$0" \
   "$repo/bin/lib/tmux-submit.sh" \
   "$repo/bin/lib/watchdog-detect.sh" \
   "$repo/bin/lib/status-hook.sh" \
-  "$repo/bin/lib/self-reload.sh"
+  "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
 
-notify() {
-  [ -z "${NTFY_URL:-}" ] && return 0
-  curl -sS -m 5 -X POST -d "$1" "$NTFY_URL" -o /dev/null 2>/dev/null || true
-}
+# 2026-09-07: the phone is reached only through bin/lib/notify.sh (classes, mute,
+# dedupe, digest, audit). The old one-argument form is kept; notify_legacy maps
+# 🔴 to action and everything else to info. Declare page/action explicitly for the
+# few sites that need a human now: see docs/OPERATOR-PAGING.md.
+# shellcheck disable=SC1091
+. "$repo/bin/lib/notify.sh"
+NOTIFY_SOURCE=api-watchdog
+notify() { notify_legacy "$@"; }
 
 now() { date +%s; }
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null; }
