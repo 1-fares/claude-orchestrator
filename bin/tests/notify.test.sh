@@ -40,11 +40,11 @@ NOTIFY_NOW=$(at "2026-09-07 07:00") notify_flush
 
 # 4. maintenance mute: action dropped and logged, page still sent with a prefix.
 reset; mkdir -p "$TD/health"; echo "$(at "2026-09-07 08:30")" > "$TD/health/maintenance-until"
-NOTIFY_NOW=$(at "2026-09-07 07:35") notify_operator action "watch stale" "delivery-newfile"
+NOTIFY_NOW=$(at "2026-09-07 07:35") notify_operator action "watch stale" "watch-a"
 [ "$(posts)" = 0 ] && grep -q "MUTED action watch stale" "$TD/log" && ok "action muted during maintenance" || bad "action not muted"
-NOTIFY_NOW=$(at "2026-09-07 07:36") notify_operator page "production down" "app.the-fork.ch 502 x3"
+NOTIFY_NOW=$(at "2026-09-07 07:36") notify_operator page "production down" "app.example.com 502 x3"
 [ "$(posts)" = 1 ] && [[ "$(last)" == "5|[maintenance] [testrun] production down|"* ]] && ok "page sent during mute with prefix" || bad "page wrong under mute: $(last)"
-NOTIFY_NOW=$(at "2026-09-07 09:00") notify_operator action "watch stale" "delivery-newfile"
+NOTIFY_NOW=$(at "2026-09-07 09:00") notify_operator action "watch stale" "watch-a"
 [ "$(posts)" = 2 ] && ok "action sent once mute expired" || bad "action still muted after expiry"
 
 # 5. page repeats every 30 min until resolved; resolved pushes priority 3 and clears.

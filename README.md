@@ -565,6 +565,49 @@ posted into the orchestrator pane. Before the guard covered all windows, a
 default-model worker in that state was invisible to the daemon and stalled the
 run until a human noticed.
 
+### Operator paging (what reaches the phone)
+
+Every push to the operator goes through one library, [`bin/lib/notify.sh`](./bin/lib/notify.sh)
+(CLI: `bin/notify-operator.sh TITLE MESSAGE [page|action|info]`). Three classes: `page`
+(a human must act now; re-paged every 30 minutes until resolved), `action` (a human must
+act today; one per subject per six hours, queued outside working hours), `info` (never
+pushed alone; one silent digest a day). Deny by default: the daemons' legacy one-line
+notices map to `action` or `info`, and nothing pages unless its call site says `page`.
+A maintenance mute (`--mute <until>`) holds everything but pages during planned work, and
+every decision is one line in `$TEAM_DIR/reports/operator-pings.log`. The policy, the
+case it was built from and the call-site migration list are in
+[`docs/OPERATOR-PAGING.md`](./docs/OPERATOR-PAGING.md).
+
+### Standing rules that survive compaction
+
+A rule that lives only in the conversation is gone at the next compaction. The pattern in
+[`docs/STANDING-RULES.md`](./docs/STANDING-RULES.md): a ten-line card
+(`RULES-IN-FORCE.md`, template in [`RULES-IN-FORCE.example.md`](./RULES-IN-FORCE.example.md))
+pasted at the top of the project `CLAUDE.md`; a hook that re-prints it at every session
+start and after every compaction and prints measured deviations on each prompt; and tool
+gates in [`bin/hooks/`](./bin/hooks) that refuse a whole-file read over 200 lines, a long
+outbound message without a logged draft pass, or a thinking-model subagent past its daily
+cap, and that write the subagent call log themselves.
+
+### The observer audit
+
+[`bin/observer.sh`](./bin/observer.sh) is a read-only daemon that recommends, never acts.
+Besides sizing the roster it now audits from primary sources every pass (crontab jobs,
+daemon liveness, what reached the phone, ledger freshness, git state per working tree,
+stale markers, the unit table, subagent calls per class) and must cite evidence for each
+item. Run it on the strongest model at a low cadence (`OBSERVER_MODEL`,
+`OBSERVER_INTERVAL`); a cheap model at a high cadence reported nothing wrong for weeks
+while a backup job was missing from the crontab.
+
+### Daemons reach the bus, and reload themselves
+
+The `/is` sender is session-bound: from a daemon or cron job it cannot find a listener
+and fails silently. Daemons use [`bin/bus-send.py`](./bin/bus-send.py), which registers a
+named transient peer with the shared token. Every long-running daemon sources
+[`bin/lib/self-reload.sh`](./bin/lib/self-reload.sh) and re-executes itself when its own
+source or a library it tracks changes, so a fix on disk is a fix in memory without a
+manual restart; the reload is written to `$TEAM_DIR/audit/`.
+
 ### Daemon lifecycle
 
 A running team has several detached supervisor daemons alongside the role
@@ -714,25 +757,33 @@ Full comparison and the honest moat in
 ```
 claude-orchestrator/
 ├── README.md  CLAUDE.md  STATUS.md  BACKLOG.md  LICENSE
-├── .claude/settings.json     # deny-list
+├── RULES-IN-FORCE.example.md # template for the standing-rules card
+├── .claude/settings.json     # deny-list and hook registrations
 ├── roles/                    # one prompt per role (incl. integrator, communicator)
 │   └── _TEMPLATE.md          # for orchestrator-authored ad-hoc roles
 ├── goals/                    # per-feature briefs (_TEMPLATE.md + curated demos)
 ├── tasks/                    # per-unit task briefs (_TEMPLATE.md)
 ├── templates/state.md        # ledger format -> $TEAM_DIR/state.md
-├── docs/                     # default-to-act, native-agents comparison, incident notes
+├── docs/                     # paging policy, standing rules, verification disciplines,
+│                             # authority model, model policy, dreaming, incident notes
 ├── bin/
 │   ├── run.sh                # the one-command entry point
 │   ├── team-env.sh           # per-clone bus port + tmux session (sourced)
-│   ├── lib/                  # sourced helpers: team-spawn.sh, roster.sh
+│   ├── lib/                  # sourced helpers: team-spawn.sh, roster.sh, notify.sh,
+│   │                         # self-reload.sh, compaction-detect.sh, status-hook.sh
 │   ├── gates/                # non-code gate library
+│   ├── hooks/                # standing-rules hook and the refusing tool gates
 │   ├── dashboard/            # second-screen HTTP server + static assets
+│   ├── tests/                # pure shell tests, one per mechanism
 │   ├── start-orchestrator.sh launch-team.sh stop-team.sh reset.sh panic.sh
 │   ├── add-role.sh retire-role.sh   # dynamic team scaling
 │   ├── communicator.sh dashboard.sh # operator surfaces
-│   ├── api-watchdog.sh tmux-watchdog.sh watchdog.sh
+│   ├── api-watchdog.sh tmux-watchdog.sh compaction-watchdog.sh watchdog.sh
+│   ├── permission-mode-watchdog.sh host-ram-watchdog.sh disk-tmp-watchdog.sh
+│   ├── observer.sh observer-github-groundtruth.sh dreamer.sh night-janitor.sh
+│   ├── notify-operator.sh notify-via-ntfy.sh bus-send.py privacy-scan.sh
 │   ├── new-goal.sh new-project.sh worktree.sh unit-start.sh
-│   ├── verify-unit.sh check-scope.sh preflight-deploy.sh
+│   ├── verify-unit.sh check-scope.sh preflight-deploy.sh rotate-team-logs.sh
 │   └── team-status.sh team-watch.sh team-broadcast.sh team-logs.sh inbox.sh
 └── .team-<run-id>/           # transient per-run: ledger, briefs, active record, logs
 ```
@@ -746,8 +797,9 @@ claude-orchestrator/
 - [`STATUS.md`](./STATUS.md): what is built versus pending, with the locked
   design decisions behind it.
 - [`BACKLOG.md`](./BACKLOG.md): forward-looking work items.
-- [`docs/`](./docs): supplementary notes (default-to-act, native agents
-  comparison, incident reports).
+- [`docs/`](./docs): the operator paging policy, standing rules, verification
+  disciplines, the authority model, model policy, dreaming, the version pin,
+  default-to-act, the native-agents comparison, and incident reports.
 - Claude Code features this pattern composes:
   [agent teams](https://code.claude.com/docs/en/agent-teams),
   [routines](https://code.claude.com/docs/en/routines),
