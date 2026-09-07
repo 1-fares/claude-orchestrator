@@ -279,7 +279,7 @@ escalate_stuck() {
     } > "$TEAM_DIR/PENDING.md.tmp.$$" 2>/dev/null \
       && mv -f "$TEAM_DIR/PENDING.md.tmp.$$" "$TEAM_DIR/PENDING.md" 2>/dev/null \
       || rm -f "$TEAM_DIR/PENDING.md.tmp.$$" 2>/dev/null || true
-    notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] ORCHESTRATOR wedged ~${mins}m; operator intervention needed (see PENDING.md)"
+    notify_operator page "ORCHESTRATOR wedged" "[orchestrator/${TEAM_RUN_ID:-legacy}] ORCHESTRATOR wedged ~${mins}m; operator intervention needed (see PENDING.md)"
     status_hook wedged orchestrator "orchestrator made no progress for ~${mins}m while busy; the operator has been asked to intervene"
     return
   fi
@@ -493,7 +493,7 @@ scan_once() {
           } > "$marker" 2>/dev/null || true
           echo "$(iso "$nowts") [$name] AWAITING-INPUT-ESCALATED (blocked ${mins}m; marker=$marker)" >> "$af"
           status_hook awaiting-operator "$name" "blocked ${mins}m on an interactive prompt that only its operator can answer; nothing it owns proceeds until then"
-          notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' blocked ${mins}m on an interactive prompt; operator decision needed (see $marker)"
+          notify_operator action "role blocked: $name" "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' blocked ${mins}m on an interactive prompt; operator decision needed (see $marker)"
           persist "$hf" "awaiting-input-esc" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
           continue
         fi
@@ -549,7 +549,7 @@ scan_once() {
           # ONCE (mark -esc so it never repeats).
           if [ "$prev" = "stuck-giveup" ] && [ "$frozen" -ge "$stuck_operator_sec" ]; then
             echo "$(iso "$nowts") [$name] STUCK-UNRECOVERED (frozen ${mins}m; auto retire+respawn did not clear it)" >> "$af"
-            notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' STILL stuck ${mins}m; auto retire+respawn did not clear it, manual intervention needed"
+            notify_operator page "role stuck past -esc: $name" "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' STILL stuck ${mins}m; auto retire+respawn did not clear it, manual intervention needed"
             persist "$hf" "stuck-giveup-esc" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$nowts"
             continue
           fi

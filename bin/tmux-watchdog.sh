@@ -288,7 +288,7 @@ while true; do
       if [ "$prev_state" != "crashed" ]; then
         since=$nowts
         echo "$(iso "$nowts") CRASH: tmux session $TEAM_SESSION is GONE but active/ has live entries ($(wc -l < "$TEAM_DIR/active") roles); team is down" >> "$af"
-        notify "🔴 [orchestrator/${TEAM_RUN_ID:-legacy}] TEAM CRASH: tmux session $TEAM_SESSION died. Roles lost. Bus + dashboard may still be running. Recover with: TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/start-orchestrator.sh goals/<goal>.md"
+        notify_operator page "TEAM CRASH: tmux session died" "[orchestrator/${TEAM_RUN_ID:-legacy}] TEAM CRASH: tmux session $TEAM_SESSION died. Roles lost. Bus + dashboard may still be running. Recover with: TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/start-orchestrator.sh goals/<goal>.md"
         # Drop a marker file so the operator-watching session notices.
         {
           echo "# tmux session crashed"

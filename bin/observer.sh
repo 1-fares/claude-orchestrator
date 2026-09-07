@@ -12,6 +12,9 @@
 #   OBSERVER_DISABLED=1     do not run
 #   OBSERVER_INTERVAL=900   seconds between observations (default 15 min)
 #   OBSERVER_MODEL=sonnet   model for the recommendation (sonnet|haiku|opus|id)
+#                           an auditor pass benefits from the strongest model at a low cadence
+#   OBSERVER_AUDIT_DAEMONS  space list of bin/<daemon> names the audit expects alive
+#   TEAM_WORKTREES          space list of extra working trees for the git-state audit
 #   OBSERVER_IDLE_SEC=1800  a role idle longer than this is shrink-eligible
 #   OBSERVER_CALL_TIMEOUT=120  max seconds for one model call
 #   OBSERVER_GH_DISABLED=1  do NOT fetch/fold in GitHub ground truth (default on)
@@ -217,8 +220,55 @@ $(gh_groundtruth_block)
 EOF
 }
 
+
+# gather_audit_evidence: primary-source facts for the AUDIT section (2026-09-07). The
+# metrics block summarises; this reads the crontab, the run dir, the pings log, the
+# ledgers and git, so the model audits evidence instead of restating a summary. Generic:
+# daemon and worktree lists come from env (OBSERVER_AUDIT_DAEMONS, TEAM_WORKTREES).
+gather_audit_evidence() {
+  local td="${TEAM_DIR:-}" now_s; now_s="$(date +%s)"
+  echo "CRONTAB (filtered for expected jobs):"
+  crontab -l 2>/dev/null | grep -E '(backup|digest|ensure|tests-run|notify-operator)' | sed 's/^/  /' || echo "  (none found)"
+  echo "DAEMON LIVENESS:"
+  local d pid
+  for d in ${OBSERVER_AUDIT_DAEMONS:-observer api-watchdog tmux-watchdog compaction-watchdog permission-mode-watchdog session-headroom-watchdog}; do
+    pid="$(pgrep -f "bin/${d}" 2>/dev/null | head -1)"
+    [ -n "$pid" ] && echo "  $d: alive pid=$pid" || echo "  $d: NOT RUNNING"
+  done
+  echo "OPERATOR PHONE (last 10 lines of the pings log):"
+  local pf; pf="$(ls "$td"/reports/operator-pings.log "$td"/reports/*-pings.log 2>/dev/null | head -1)"
+  [ -n "$pf" ] && tail -10 "$pf" | sed 's/^/  /' || echo "  (no pings log)"
+  echo "LEDGER/DECISIONS FRESHNESS:"
+  local f mt age_h
+  for f in "$td"/DECISIONS-FOR-*.md "$td/state.md"; do
+    [ -f "$f" ] || continue
+    mt="$(stat -c '%Y' "$f" 2>/dev/null || echo 0)"; age_h=$(( (now_s - mt) / 3600 ))
+    echo "  $(basename "$f"): modified $(date -u -d "@$mt" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) (${age_h}h ago)"
+  done
+  echo "GIT STATE PER WORKING TREE:"
+  local wt br dirty unpushed
+  for wt in "$repo" ${TEAM_WORKTREES:-}; do
+    [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || continue
+    br="$(git -C "$wt" branch --show-current 2>/dev/null)"
+    dirty="$(git -C "$wt" status --porcelain 2>/dev/null | wc -l)"
+    unpushed="$(git -C "$wt" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l)"
+    echo "  $(basename "$wt") ($br): dirty=$dirty unpushed=$unpushed"
+  done
+  echo "STALE MARKERS/ALARMS (>24h):"
+  find "$td/health" "$td" -maxdepth 1 \( -name '*.marker' -o -name '*.alarm' -o -name '*-blind*.md' \) -mtime +1 2>/dev/null | sed 's/^/  /' | grep . || echo "  (none over 24h)"
+  echo "UNIT TABLE (state.md open units):"
+  [ -f "$td/state.md" ] && grep -A 100 '^| Unit ' "$td/state.md" 2>/dev/null | head -20 | sed 's/^/  /' || echo "  (no state.md)"
+  echo "THINKING-MODEL CALLS LOG:"
+  local fcl="$td/reports/fable-calls.log" cls
+  if [ -f "$fcl" ]; then
+    echo "  total lines: $(wc -l < "$fcl")"
+    for cls in CLASS-1 CLASS-2 CLASS-3 CLASS-4 SKIPPED; do echo "  $cls: $(grep -c "$cls" "$fcl" 2>/dev/null || echo 0)"; done
+    echo "  last 5:"; tail -5 "$fcl" | sed 's/^/    /'
+  else echo "  (no fable-calls.log)"; fi
+}
+
 build_prompt() {
-  local metrics="$1"
+  local metrics="$1" audit_evidence="${2:-}"
   cat <<EOF
 You are the read-only efficiency observer for a long-running team of Claude Code
 agents (an orchestrator plus worker roles, each a separate process ~300-500 MiB).
@@ -280,6 +330,31 @@ In <= 17 lines, give a concrete recommendation:
    disposition, or already right-sized, say "no change".
 6) FLAGS: anything off (a role wedged, pipeline stalled, runaway memory). Else none.
 Be specific and brief. Do not suggest acting yourself; the orchestrator decides.
+
+--- AUDIT MANDATE (binding) ---
+After the recommendation block, emit an AUDIT section answering items (a)-(h) with
+evidence from the AUDIT EVIDENCE section of this prompt. "Evidence" means a specific
+log line, timestamp, file state or value, not a restatement of the metrics summary.
+Each item gets one line minimum. "No issues" is valid only with the evidence that
+proves it. Format: "AUDIT-x: PASS|FAIL|UNKNOWN - <evidence>"
+(a) CRONTAB JOBS: every expected job present and run when due (cross-check timestamps).
+(b) WATCHES/DAEMONS: every expected daemon alive with a fresh heartbeat; name anything
+    dead or stale with its exit reason if visible.
+(c) OPERATOR PHONE: what reached the phone since the last pass, and whether each push
+    was a genuine page or action under docs/OPERATOR-PAGING.md.
+(d) LEDGER FRESHNESS: are the decisions file and state.md fresher than the newest event
+    they should record? Anything parked on the operator that the product owner or the
+    team could decide?
+(e) GIT STATE: unpushed commits and dirty files in every working tree.
+(f) STALE MARKERS: any alarm or marker older than a day that nobody cleared.
+(g) ANOMALY RECONSTRUCTION: for any anomaly flagged above, the reconstruction from the
+    evidence that proves the CAUSE, not the symptom. "Clean" if none.
+(h) UNIT TABLE: for each row of the state.md unit table, done, in progress or overdue
+    (past its due date and not done); count the thinking-model calls per class since
+    the previous pass; flag any unit overdue by more than a day.
+
+AUDIT EVIDENCE (gathered from primary sources by the observer daemon):
+${audit_evidence:-  (no audit evidence collected)}
 EOF
 }
 
@@ -287,7 +362,8 @@ observe_once() {
   local metrics prompt out headline verdict_sig
   refresh_gh_groundtruth
   metrics="$(gather_metrics)"
-  prompt="$(build_prompt "$metrics")"
+  audit_ev="$(gather_audit_evidence 2>/dev/null)" || true
+  prompt="$(build_prompt "$metrics" "$audit_ev")"
   out="$(timeout "$call_timeout" claude -p "$prompt" --model "$model" 2>/dev/null)"
   [ -z "$out" ] && out="(model call failed or timed out; metrics only)"
   headline="$(printf '%s\n' "$out" | grep -m1 -E '^HEADLINE:' | sed 's/^HEADLINE:[[:space:]]*//')"
