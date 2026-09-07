@@ -93,6 +93,13 @@ compact_fail() { printf '%s\n' '⎿  Error: Compaction failed · conversation co
 # near-full warning (seven false CEILING-STUCK firings, 2-6 Sep 2026).
 render_banner() { printf '%s\n' '  ⎿  Context Usage' '     ⛁ System prompt: 7.7k tokens (3.8%)' '     ⛁ Messages: 150.1k tokens (75.1%)' '     /context all to expand' '      ⚠ Context is 91% full' '        Autocompact will trigger soon, which discards older messages.' '❯ '; }
 render_and_limit() { render_banner; hard_limit; }
+# Source, diff and grep output that QUOTE the ceiling strings are not chrome. A
+# session viewing this very file put them on its pane; the watchdog answered with
+# /clear + rebrief on a healthy orchestrator (2026-09-07 08:16 CEST).
+source_view() { printf '%s\n' "    63→  if printf '%s' \"\$t\" | grep -qiE 'compaction failed|could not be reduced below'; then echo compact-failed; return; fi"; }
+grep_result() { printf '%s\n' "bin/lib/compaction-detect.sh:64:  if printf '%s' \"\$t\" | grep -qiE 'context limit reached'; then echo limit; return; fi"; }
+diff_view()   { printf '%s\n' "+  if printf '%s' \"\$t\" | grep -qiE 'context is [0-9]+% full|autocompact will trigger'; then"; }
+fixture_view() { printf '%s\n' "compact_fail() { printf '%s\\n' '⎿  Error: Compaction failed · conversation could not be reduced below the context limit'; }"; }
 
 echo "_ceiling_state (busy-agnostic ceiling guard):"
 eq "healthy/busy pane -> empty"            "$(healthy_busy | _ceiling_state)" ""
@@ -102,6 +109,11 @@ eq "context limit reached -> limit"        "$(hard_limit   | _ceiling_state)" "l
 eq "compaction failed -> compact-failed"   "$(compact_fail | _ceiling_state)" "compact-failed"
 eq "/context render carrying the banner -> empty (stale render, not chrome)" "$(render_banner | _ceiling_state)" ""
 eq "render present but hard limit shown -> limit" "$(render_and_limit | _ceiling_state)" "limit"
+eq "Read-tool view of the detector source -> empty" "$(source_view | _ceiling_state)" ""
+eq "grep output quoting 'context limit reached' -> empty" "$(grep_result | _ceiling_state)" ""
+eq "diff line quoting the warn regex -> empty" "$(diff_view | _ceiling_state)" ""
+eq "test fixture line quoting the failure chrome -> empty" "$(fixture_view | _ceiling_state)" ""
+eq "quoted source above real chrome -> compact-failed still seen" "$( { source_view; compact_fail; } | _ceiling_state)" "compact-failed"
 # worst-first priority: a pane showing BOTH limit and failed reads as compact-failed
 eq "limit+failed together -> compact-failed (worst first)" "$( { hard_limit; compact_fail; } | _ceiling_state)" "compact-failed"
 
