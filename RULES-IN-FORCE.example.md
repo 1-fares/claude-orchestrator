@@ -9,4 +9,5 @@
 8. Nothing is parked on the operator: a decision is the product owner's, the team's, or obsolete; an entry parked on the operator states in one sentence why neither can decide it.
 9. Open units live in the `state.md` unit table with owner and due date; the observer reports overdue ones; a compaction summary is not a record.
 10. Unchanged and binding: shared environments A1-A6, the outbound allow-list, no autonomous preprod or production deploy.
+11. The engine tree is live (daemons and crons run from it): no `git checkout <branch>`, `git stash -u|-a`, `git clean` there; read another branch with `git show <ref>:<path>` or a `git worktree add` elsewhere.
 Review date: <set one>. Full text: the standing directive file for this team.
