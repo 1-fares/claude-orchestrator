@@ -43,8 +43,8 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
-. "$repo/bin/lib/self-reload.sh"
-self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/self-reload.sh"
+. "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
 
 interval=${TMUX_WATCHDOG_INTERVAL_S:-15}
 snap_interval=${TMUX_WATCHDOG_SNAPSHOT_S:-60}
@@ -93,10 +93,14 @@ write_state() {
     > "$hf"
 }
 
-notify() {
-  [ -z "${NTFY_URL:-}" ] && return 0
-  curl -s -m 5 -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true
-}
+# 2026-09-07: the phone is reached only through bin/lib/notify.sh (classes, mute,
+# dedupe, digest, audit). The old one-argument form is kept; notify_legacy maps
+# 🔴 to action and everything else to info. Declare page/action explicitly for the
+# few sites that need a human now: see docs/OPERATOR-PAGING.md.
+# shellcheck disable=SC1091
+. "$repo/bin/lib/notify.sh"
+NOTIFY_SOURCE=tmux-watchdog
+notify() { notify_legacy "$@"; }
 
 snapshot() {
   # Capture every window of $TEAM_SESSION to $snap_dir/<window_name>.txt

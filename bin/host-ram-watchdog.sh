@@ -35,8 +35,8 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
-. "$repo/bin/lib/self-reload.sh"
-self_reload_init "$0" "$repo/bin/lib/host-ram.sh" "$repo/bin/lib/self-reload.sh"
+. "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+self_reload_init "$0" "$repo/bin/lib/host-ram.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
 WARN_PCT="$HRW_WARN_PCT"; FREEZE_PCT="$HRW_FREEZE_PCT"; RESUME_PCT="$HRW_RESUME_PCT"
 SWAP_HI_PCT="$HRW_SWAP_HI_PCT"; SWAP_AMP_RAM_PCT="$HRW_SWAP_AMP_RAM_PCT"
 INTERVAL="${HRW_INTERVAL:-30}"
@@ -69,7 +69,14 @@ _hrw_sleep() { sleep "$1" 203>&- & wait "$!" 2>/dev/null; }
 fi
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true; }
-notify() { [ -z "${NTFY_URL:-}" ] && return 0; curl -sS -m 5 -d "$1" "$NTFY_URL" >/dev/null 2>&1 || true; }
+# 2026-09-07: the phone is reached only through bin/lib/notify.sh (classes, mute,
+# dedupe, digest, audit). The old one-argument form is kept; notify_legacy maps
+# 🔴 to action and everything else to info. Declare page/action explicitly for the
+# few sites that need a human now: see docs/OPERATOR-PAGING.md.
+# shellcheck disable=SC1091
+. "$repo/bin/lib/notify.sh"
+NOTIFY_SOURCE=host-ram-watchdog
+notify() { notify_legacy "$@"; }
 
 # band_for <ram_used> <swap_used> <cur_band> -> FREEZE | WARN | "" (CLEAR). Delegates
 # the raw verdict to host_ram_band (lib, RAM-primary + swap-amplifier), then layers

@@ -26,58 +26,49 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$repo/bin/team-env.sh"
+# shellcheck disable=SC1091
+. "$repo/bin/lib/notify.sh"
+
+# Maintenance modes (cron and operators):
+#   --digest            notify_flush, then one silent digest push of the info lines (08:00 Mon-Fri)
+#   --flush             push actions queued out of hours (call at the start of working hours)
+#   --mute <until>      write $TEAM_DIR/health/maintenance-until (epoch or a `date -d` string);
+#                       actions and info are held, pages go out prefixed [maintenance]
+#   --unmute            remove it
+case "${1:-}" in
+  --digest) notify_digest; exit 0 ;;
+  --flush)  notify_flush;  exit 0 ;;
+  --mute)   [ -n "${2:-}" ] || { echo "usage: notify-operator.sh --mute <until>" >&2; exit 2; }
+            f="${NOTIFY_MUTE_FILE:-$TEAM_DIR/health/maintenance-until}"; mkdir -p "$(dirname "$f")"
+            printf '%s\n' "$2" > "$f"; echo "muted until $2 ($f)"; exit 0 ;;
+  --unmute) rm -f "${NOTIFY_MUTE_FILE:-$TEAM_DIR/health/maintenance-until}"; echo "unmuted"; exit 0 ;;
+esac
 
 title="${1:-}"
 message="${2:-}"
 priority="${3:-high}"
 
 if [ -z "$title" ] || [ -z "$message" ]; then
-  echo "usage: notify-operator.sh TITLE MESSAGE [PRIORITY]" >&2
+  echo "usage: notify-operator.sh TITLE MESSAGE [page|action|info]  |  --digest | --flush | --mute <until> | --unmute" >&2
   exit 2
 fi
-if [ -z "${NTFY_URL:-}" ]; then
-  echo "notify-operator.sh: NTFY_URL is unset (team-env.sh); cannot reach the operator" >&2
-  exit 3
-fi
 
-log_file="$TEAM_DIR/reports/operator-pings.log"
-mkdir -p "$TEAM_DIR/reports" 2>/dev/null || true
-
-# One POST attempt. Prints "<http_status>\t<message_id>" on stdout.
-_send() {
-  local out status body id
-  out="$(curl -sS -m 10 \
-           -H "Title: $title" \
-           -H "Priority: $priority" \
-           --data-raw "$message" \
-           -w $'\n%{http_code}' \
-           "$NTFY_URL" 2>/dev/null || printf '\n000')"
-  status="${out##*$'\n'}"      # last line is the HTTP code emitted by -w
-  body="${out%$'\n'*}"         # everything before it is the JSON response body
-  if command -v jq >/dev/null 2>&1; then
-    id="$(printf '%s' "$body" | jq -r '.id // empty' 2>/dev/null)"
-  else
-    id="$(printf '%s' "$body" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
-  fi
-  printf '%s\t%s' "$status" "${id:-}"
-}
-
-res="$(_send)"
-status="${res%%$'\t'*}"
-msg_id="${res#*$'\t'}"
-
-if [ "$status" != 200 ]; then
-  res="$(_send)"                 # retry once
-  status="${res%%$'\t'*}"
-  msg_id="${res#*$'\t'}"
-fi
-
-printf '%s | %s | %s | %s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$title" "$status" "${msg_id:-none}" >> "$log_file"
-
-if [ "$status" = 200 ]; then
-  echo "notify-operator.sh: delivered (HTTP 200, id ${msg_id:-unknown}); logged to $log_file"
-  exit 0
-fi
-echo "notify-operator.sh: FAILED (HTTP $status); logged to $log_file" >&2
-exit 1
+# 2026-09-07: the policy lives in bin/lib/notify.sh. The third argument is a CLASS
+# (page | action | info); the old ntfy priorities are accepted and mapped, and the
+# old default of "high" maps to action, which is what "high" meant in practice.
+# Exit 0 means the policy accepted the notice (SENT, QUEUED or DIGEST are all
+# acceptance); non-zero means it could not be delivered or the class was bad.
+# Only the literal word "page" pages. The old ntfy priorities map DOWN: urgent and
+# high were what every caller sent, including the hourly stale-watch alarms, so they
+# become action (one push per subject per 6 h, working hours, muted in maintenance).
+case "$priority" in
+  page)                        class=page ;;
+  action|urgent|max|high|5|4)  class=action ;;
+  *)                           class=info ;;
+esac
+log_file="${NOTIFY_LOG:-$TEAM_DIR/reports/operator-pings.log}"
+notify_operator "$class" "$title" "$message"; rc=$?
+last="$(tail -1 "$log_file" 2>/dev/null)"
+echo "notify-operator.sh: $class :: ${last#* | }"
+case "$last" in *"| SENT "*|*"| QUEUED "*|*"| DIGEST "*|*"| DEDUPE "*|*"| MUTED "*) exit 0 ;; esac
+exit "${rc:-1}"
