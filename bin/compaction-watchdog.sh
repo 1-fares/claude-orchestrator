@@ -341,9 +341,19 @@ print(sid,proj_dir)
   [ -n "$proj_dir" ] || return 1
   jsonl="${proj_dir}/${sid}.jsonl"
   [ -f "$jsonl" ] || return 1
-  pct="$(tac "$jsonl" | python3 -c "
-import sys, json
-for line in sys.stdin:
+  # pipefail is set globally; tac exits 141 (SIGPIPE) when python breaks the pipe
+  # after finding its match, which makes the pipeline return non-zero. Read in python
+  # directly to avoid the pipe entirely.
+  pct="$(python3 -c "
+import json, os, sys
+f = sys.argv[1]
+sz = os.path.getsize(f)
+# Read the last 256KB, enough to find the most recent assistant message
+chunk = min(sz, 262144)
+with open(f, 'rb') as fh:
+    fh.seek(sz - chunk)
+    tail = fh.read().decode('utf-8', errors='replace')
+for line in reversed(tail.splitlines()):
     try:
         d = json.loads(line.strip())
         if d.get('type') == 'assistant' and 'message' in d:
@@ -357,7 +367,7 @@ for line in sys.stdin:
                 break
     except:
         pass
-" 2>/dev/null)" || return 1
+" "$jsonl" 2>/dev/null)" || return 1
   [ -n "$pct" ] && [ "$pct" -ge 0 ] 2>/dev/null && printf '%s' "$pct"
 }
 
@@ -573,13 +583,30 @@ process_target() {
   # Ceiling-guard-only target (default-model worker): no /context probe.
   [ "$probe" = 1 ] || return
 
-  if [ "$fp" != "${last_fp[$role]:-}" ]; then last_fp[$role]="$fp"; fp_since[$role]=$nowt; return; fi
-  idle=$(( nowt - ${fp_since[$role]:-$nowt} ))
-  [ "$idle" -lt "$IDLE_SEC" ] && return
   local _busy=0
   is_busy "$txt" && _busy=1
+
+  if [ "$fp" != "${last_fp[$role]:-}" ]; then
+    last_fp[$role]="$fp"; fp_since[$role]=$nowt
+    if [ "$_busy" = 1 ]; then
+      # Pane changed AND busy: the /context probe can never fire while the session
+      # is working (the pane never stabilises for IDLE_SEC). Fall back to reading
+      # the context % from the transcript JSONL, which is updated every turn.
+      pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+      if [ -n "$pct" ]; then
+        log "[$role] jsonl-probe: ${pct}% (busy pane, read from transcript)"
+      else
+        log "[$role] skip: busy + jsonl fallback failed"
+        return
+      fi
+    else
+      return
+    fi
+  fi
+  idle=$(( nowt - ${fp_since[$role]:-$nowt} ))
+  [ "$idle" -lt "$IDLE_SEC" ] && return
   if [ "$_busy" = 1 ]; then
-    # Pane is busy — the /context probe cannot fire. Fall back to reading the
+    # Pane is busy: the /context probe cannot fire. Fall back to reading the
     # context % from the session's transcript JSONL, which is updated every turn
     # even while the session is working.
     pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
@@ -596,6 +623,16 @@ process_target() {
 
     pct="$(probe_pct "$t")"
     last_fp[$role]=""   # /context changed the pane; force a fresh baseline next pass
+    if [ -n "$pct" ]; then
+      log "[$role] pane-probe: ${pct}% (idle pane, read from /context)"
+    else
+      # /context parse failed (viewport overflow, background-agent banner, format
+      # change). Fall back to the transcript JSONL, the same path the busy branch uses.
+      pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+      if [ -n "$pct" ]; then
+        log "[$role] jsonl-probe: ${pct}% (idle pane, /context parse failed, read from transcript)"
+      fi
+    fi
   fi
   if [ -z "$pct" ]; then
     probe_fail[$role]=$(( ${probe_fail[$role]:-0} + 1 ))
