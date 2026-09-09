@@ -686,7 +686,16 @@ canary() {
   pct="$(probe_pct "$t")"
   last_fp[orchestrator]=""   # the canary's /context changed the pane; force a fresh baseline
   if [ -z "$pct" ]; then
-    log "CANARY-FAIL: probe parsed empty on a live pane at startup — CC /context format may have changed (parser blind). Raising alarm."
+    # /context failed. Before alarming, try the transcript: a busy pane that
+    # is_busy does not catch (tool output streaming, mid-render) makes /context
+    # unreadable while the jsonl transcript still reads. A successful jsonl read
+    # means the instrument is fine and the pane was uncooperative at startup.
+    pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+    if [ -n "$pct" ]; then
+      log "canary: /context probe failed but jsonl-probe read ${pct}%; instrument healthy, pane busy at startup"
+      return
+    fi
+    log "CANARY-FAIL: probe parsed empty on a live pane at startup and the jsonl fallback also failed. CC /context format may have changed (parser blind). Raising alarm."
     probe_blind_alarm "orchestrator" "$t" 0 1
   else
     log "canary: probe healthy at startup (read ${pct}%)"
