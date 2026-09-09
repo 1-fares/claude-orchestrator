@@ -69,25 +69,74 @@ mkdir -p "$TEAM_DIR"
 # Snapshot an existing ledger before the orchestrator session starts. A restart
 # against a populated TEAM_DIR must resume from state.md, not re-template it;
 # this backup is the recovery path if a session clobbers it anyway.
+resume_block=""
 if [ -f "$TEAM_DIR/state.md" ]; then
   cp -p "$TEAM_DIR/state.md" "$TEAM_DIR/state.md.bak-$(date +%Y%m%d-%H%M%S)"
+  # A populated ledger present at startup means this is a RESUME, not a cold
+  # start. The goal file is not rewritten between runs, so it may still describe
+  # the original cold start; warn the orchestrator to reconcile the two before
+  # acting. "Non-trivial" = more lines than the blank template, i.e. a prior run
+  # actually wrote units into it.
+  _state_lines="$(wc -l < "$TEAM_DIR/state.md" 2>/dev/null || echo 0)"
+  _tmpl_lines="$(wc -l < "$repo/templates/state.md" 2>/dev/null || echo 0)"
+  if [ "$_state_lines" -gt "$_tmpl_lines" ]; then
+    _state_mtime="$(date -r "$TEAM_DIR/state.md" '+%Y-%m-%d %H:%M' 2>/dev/null || echo unknown)"
+    resume_block="*** RESUME: this TEAM_DIR holds a live ledger ($TEAM_DIR/state.md,
+last modified $_state_mtime) from a prior run. The goal file below may describe
+the ORIGINAL cold start; the ledger is the live truth. Reconcile the ledger
+against the goal and flag any contradictions (units already done, dead owners,
+changed scope) BEFORE acting. This is NOT a fresh run. ***
+
+"
+  fi
 fi
+# Seed the ledger mechanically. cp -n never clobbers an existing state.md, so a
+# resume keeps its live ledger and a cold start gets the blank template. The LLM
+# never runs this copy: a near-loss came from the orchestrator copying the blank
+# template over a live state.md. The prompt below tells it to FILL the seeded
+# ledger, never to copy.
+cp -n "$repo/templates/state.md" "$TEAM_DIR/state.md"
 record_role_model orchestrator "$orch_model"
 # Pre-trust the clone so the orchestrator does not stop at the workspace-trust prompt.
 "$repo/bin/trust-workdir.sh" "$repo" >/dev/null 2>&1 || true
 
 pf="$TEAM_DIR/orchestrator.prompt"
-cat >"$pf" <<EOF
+# When resuming a live ledger, skip the READY/go handshake and proceed directly
+# to reconcile and dispatch. Without this split, a restart against a running team
+# parks the orchestrator on the READY handshake while workers are already active,
+# leaving inbound work unprocessed.
+if [ -n "$resume_block" ]; then
+  # RESUME path: live ledger exists, workers may already be running.
+  cat >"$pf" <<EOF
+${resume_block}You are the orchestrator of a Claude Code dev team RESUMING a live run. Do these in order:
+1. Join the team bus using the /is Claude Code skill (a slash command, not a
+   shell binary — do NOT use the Bash tool for this). Invoke it as a slash
+   command response: /is c orchestrator
+2. Read ./CLAUDE.md and ./roles/orchestrator.md
+3. $goal_line
+4. This is a RESUME, not a cold start. The ledger at $TEAM_DIR/state.md is
+   live — reconcile it against the goal, check which roles are on the bus
+   (/is list), and pick up where the prior session left off. Do NOT present
+   a READY summary and do NOT wait for "go". Proceed directly to dispatch
+   and coordination. If the team was already launched (bin/launch-team.sh
+   ran in a prior session), do NOT re-run it; reconcile and dispatch work
+   to the roles that are already connected. If no roles are on the bus,
+   launch them with bin/launch-team.sh.
+5. Keep your context for orchestration: delegate code, review, and merging
+   to the roles.
+EOF
+else
+  # COLD START path: fresh run, present READY and wait for "go".
+  cat >"$pf" <<EOF
 You are the orchestrator of a Claude Code dev team. Do these in order:
 1. Join the team bus using the /is Claude Code skill (a slash command, not a
    shell binary — do NOT use the Bash tool for this). Invoke it as a slash
    command response: /is c orchestrator
 2. Read ./CLAUDE.md and ./roles/orchestrator.md
 3. $goal_line
-4. Definition of ready: do your setup first (read the goal; copy
-   templates/state.md to $TEAM_DIR/state.md ONLY if no state.md exists there —
-   an existing one is a live ledger from a prior run, resume from it, never
-   overwrite it; break the work into units), THEN present a
+4. Definition of ready: do your setup first (read the goal; the ledger at
+   $TEAM_DIR/state.md is already seeded from the template for you — FILL it in,
+   never copy or overwrite it. Break the work into units), THEN present a
    single clean READY summary block exactly as specified in
    roles/orchestrator.md (goal, working tree, mode, acceptance, team, approach,
    verify) as your final message and nothing after it. Keep it short and
@@ -96,6 +145,7 @@ You are the orchestrator of a Claude Code dev team. Do these in order:
    working tree is outside this clone) and coordinate. Keep your context for
    orchestration: delegate code, review, and merging to the roles.
 EOF
+fi
 
 export ORCH_HOME="$repo" INTER_SESSION_PORT="$TEAM_PORT"
 [ -n "${TEAM_RUN_ID:-}" ] && export TEAM_RUN_ID
