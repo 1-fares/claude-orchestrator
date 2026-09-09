@@ -307,6 +307,60 @@ probe_pct() {
   tmux_o capture-pane -t "$t" -p -S -60 2>/dev/null | parse_context_pct
 }
 
+# probe_pct_from_jsonl <target>: read context % from the session's transcript JSONL
+# usage fields (input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+# from the last assistant message). Updated every turn, even while the session is
+# busy. This is the fallback when the /context probe cannot fire (pane busy).
+# Chain: tmux pane PID -> ~/.claude/sessions/<PID>.json -> sessionId ->
+# ~/.claude/projects/<project>/<sessionId>.jsonl -> last assistant usage.
+probe_pct_from_jsonl() {
+  local t="$1" pid sid jsonl pct proj_dir
+  pid="$(tmux_o display-message -t "$t" -p '#{pane_pid}' 2>/dev/null)" || return 1
+  [ -n "$pid" ] || return 1
+  local sess_file="$HOME/.claude/sessions/${pid}.json"
+  [ -f "$sess_file" ] || return 1
+  # Read both sessionId and cwd from the session file in one call; derive the
+  # project-specific transcript directory from cwd (the same scheme CC uses).
+  read -r sid proj_dir < <(python3 -c "
+import json,sys,os
+d=json.load(open(sys.argv[1]))
+sid=d.get('sessionId','')
+cwd=d.get('cwd','')
+if cwd:
+    u=os.path.expanduser('~')
+    slug=cwd.replace('/','-').lstrip('-')
+    if cwd.startswith(u):
+        slug='-home-'+os.environ.get('USER',os.path.basename(u))+cwd[len(u):].replace('/','-')
+    proj_dir=os.path.join(u,'.claude','projects',slug)
+else:
+    proj_dir=''
+print(sid,proj_dir)
+" "$sess_file" 2>/dev/null) || return 1
+  [ -n "$sid" ] || return 1
+  proj_dir="${COMPACT_PROJECT_DIR:-$proj_dir}"
+  [ -n "$proj_dir" ] || return 1
+  jsonl="${proj_dir}/${sid}.jsonl"
+  [ -f "$jsonl" ] || return 1
+  pct="$(tac "$jsonl" | python3 -c "
+import sys, json
+for line in sys.stdin:
+    try:
+        d = json.loads(line.strip())
+        if d.get('type') == 'assistant' and 'message' in d:
+            u = d['message'].get('usage', {})
+            inp = u.get('input_tokens', 0)
+            cc = u.get('cache_creation_input_tokens', 0)
+            cr = u.get('cache_read_input_tokens', 0)
+            total = inp + cc + cr
+            if total > 0:
+                print(total * 100 // 200000)
+                break
+    except:
+        pass
+" 2>/dev/null)" || return 1
+  [ -n "$pct" ] && [ "$pct" -ge 0 ] 2>/dev/null && printf '%s' "$pct"
+}
+
 # Cooperative: ask a session to compact itself at its own safe checkpoint.
 # Plain text, no apostrophes (shell-quoting safety over send-keys).
 do_nudge() {
@@ -405,16 +459,21 @@ probe_blind_alarm() {
     echo "  (a) a Claude Code version changed the /context format (see bin/lib/compaction-detect.sh); or"
     echo "  (b) '${role}' has a LARGE context whose /context total overflows the pane"
     echo "      viewport in fullscreen TUI mode, so the total line is unreachable via"
-    echo "      capture-pane (no alt-screen scrollback); a live worker has gone blind this way."
+    echo "      capture-pane (no alt-screen scrollback); a live worker went blind this way."
     echo "Action: the role should /compact at a safe checkpoint; if (a), update parse_context_pct."
     echo "Attach: TEAM_RUN_ID=${TEAM_RUN_ID:-?} bin/attach.sh"
   } > "$m.tmp.$$" 2>/dev/null \
     && mv -f "$m.tmp.$$" "$m" 2>/dev/null \
     || rm -f "$m.tmp.$$" 2>/dev/null || true
-  notify "🔴 [compaction-watchdog/${TEAM_RUN_ID:-legacy}] context probe blind ${n} cycles for '${role}'; early compaction OFF (CC format change OR large-context viewport overflow). See $m"
-  # Nudge the role's OWN pane to self-compact.
-  tmux_o send-keys -t "$t" C-u 2>/dev/null
-  submit_o "$t" "[compaction-watchdog] I cannot read your context percentage (either the /context format changed, or your context is large enough that the /context total scrolls off the pane), so I cannot compact you early. Please /compact at a safe checkpoint, and flag the probe parser if the format changed."
+  # Probe-blind is an instrument state, not an actionable event — nobody can act on
+  # it from a phone notification. Reclassified from action/page to a log line:
+  # paging for nothing anyone could act on erodes trust in the alert channel. The
+  # watchdog still drives /compact (safe direction) and notifies the orchestrator
+  # pane (for workers).
+  log "[$role] PROBE-BLIND-ALARM: context probe blind ${n} cycles; early compaction OFF (CC format change OR large-context viewport overflow). See $m"
+  # DRIVE /compact on the role's own pane. We cannot read its %, but compacting is
+  # the safe direction when blind.
+  do_compact "$t"
   # For a WORKER, also tell the orchestrator (it can prompt a compact or retire+respawn).
   if [ "$is_orch" != "1" ]; then
     local ot oet otxt; ot="$(orch_target)" || return 0
@@ -422,7 +481,10 @@ probe_blind_alarm() {
     if [ -z "$otxt" ] || is_busy "$otxt"; then return 0; fi
     case "$(input_class "$otxt" "$oet")" in real) return 0 ;; esac
     tmux_o send-keys -t "$ot" C-u 2>/dev/null
-    submit_o "$ot" "[compaction-watchdog] Worker '${role}' is probe-blind (${n} cycles): I cannot read its context % to compact it early (likely a large context overflowing /context in fullscreen TUI). It risks drifting to the auto-compact ceiling unmanaged — consider prompting it to /compact, or retire+respawn if it wedges."
+    tmux_o send-keys -t "$ot" -l "[compaction-watchdog] Worker '${role}' is probe-blind (${n} cycles): I cannot read its context % to compact it early (likely a large context overflowing /context in fullscreen TUI). I have driven a /compact on it; if it wedges, retire+respawn." 2>/dev/null
+    tmux_o send-keys -t "$ot" Enter 2>/dev/null
+    sleep 1
+    tmux_o send-keys -t "$ot" Enter 2>/dev/null
   fi
 }
 
@@ -514,13 +576,27 @@ process_target() {
   if [ "$fp" != "${last_fp[$role]:-}" ]; then last_fp[$role]="$fp"; fp_since[$role]=$nowt; return; fi
   idle=$(( nowt - ${fp_since[$role]:-$nowt} ))
   [ "$idle" -lt "$IDLE_SEC" ] && return
-  is_busy "$txt" && return
-  case "$(input_class "$txt" "$etxt")" in
-    real) log "[$role] skip: real unsubmitted text on input line"; return ;;
-  esac
+  local _busy=0
+  is_busy "$txt" && _busy=1
+  if [ "$_busy" = 1 ]; then
+    # Pane is busy — the /context probe cannot fire. Fall back to reading the
+    # context % from the session's transcript JSONL, which is updated every turn
+    # even while the session is working.
+    pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+    if [ -n "$pct" ]; then
+      log "[$role] jsonl-probe: ${pct}% (busy pane, read from transcript)"
+    else
+      log "[$role] skip: busy + jsonl fallback failed"
+      return
+    fi
+  else
+    case "$(input_class "$txt" "$etxt")" in
+      real) log "[$role] skip: real unsubmitted text on input line"; return ;;
+    esac
 
-  pct="$(probe_pct "$t")"
-  last_fp[$role]=""   # /context changed the pane; force a fresh baseline next pass
+    pct="$(probe_pct "$t")"
+    last_fp[$role]=""   # /context changed the pane; force a fresh baseline next pass
+  fi
   if [ -z "$pct" ]; then
     probe_fail[$role]=$(( ${probe_fail[$role]:-0} + 1 ))
     log "[$role] probe: could not read context % (${probe_fail[$role]} consecutive)"
