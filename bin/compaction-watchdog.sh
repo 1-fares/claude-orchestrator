@@ -621,16 +621,21 @@ process_target() {
       real) log "[$role] skip: real unsubmitted text on input line"; return ;;
     esac
 
-    pct="$(probe_pct "$t")"
-    last_fp[$role]=""   # /context changed the pane; force a fresh baseline next pass
+    # Transcript-first probe (2026-09-10). Read the context % from the session's
+    # transcript JSONL BEFORE falling back to /context. A /context probe injects a
+    # ~17.9k-character user message (+8k tokens) into the probed session every time
+    # it fires; on an idle pane with the backoff disabled near the nudge that is
+    # ~32k tokens an hour of monitoring overhead and drives compactions with no
+    # operator traffic. The transcript read is a file read, no tmux injection.
+    # /context stays as the fallback when the transcript cannot be read.
+    pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
     if [ -n "$pct" ]; then
-      log "[$role] pane-probe: ${pct}% (idle pane, read from /context)"
+      log "[$role] jsonl-probe: ${pct}% (idle pane, read from transcript)"
     else
-      # /context parse failed (viewport overflow, background-agent banner, format
-      # change). Fall back to the transcript JSONL, the same path the busy branch uses.
-      pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+      pct="$(probe_pct "$t")"
+      last_fp[$role]=""   # /context changed the pane; force a fresh baseline next pass
       if [ -n "$pct" ]; then
-        log "[$role] jsonl-probe: ${pct}% (idle pane, /context parse failed, read from transcript)"
+        log "[$role] pane-probe: ${pct}% (idle pane, /context fallback)"
       fi
     fi
   fi
