@@ -30,7 +30,25 @@
 # busy+frozen and get falsely flagged stuck. It stays in VOLATILE_RE (stripped
 # from the fingerprint); a real wedge is still caught by "esc to interrupt"
 # (shown for any in-flight tool call) plus a frozen token readout.
-BUSY_RE='esc to interrupt|Working…|Thinking|· ↓|tokens ·'
+#
+# 2026-09-11: `· ↓`, `tokens ·` and `Thinking` REMOVED. The first two matched the
+# agents panel ("◯ name  Reconnecting…  24m · ↓ 145.5k tokens") and any other
+# line that carries a token readout, and an idle orchestrator was paged as
+# "wedged" (three false stuck episodes, one priority-5 push, 2026-09-10). The
+# spinner line itself always carries "esc to interrupt" while a turn is in
+# flight (the fixtures in bin/tests/watchdog-detect-test.sh are taken from real
+# panes), so that is the marker. A token readout is a LIVENESS signal
+# (_token_readout), never a busy marker.
+BUSY_RE='esc to interrupt|Working…'
+
+# The agents panel (shown at the bottom of the pane when ← is toggled) carries
+# per-subagent lines like "◯ name  Reconnecting…  24m · ↓ 145.5k tokens" whose
+# token readout is frozen once the subagent finished or hung. An idle prompt
+# with a stale agents panel must not read as busy, and the panel's readout must
+# not be taken for the spinner's. AGENTS_PANEL_RE strips these lines before the
+# BUSY_RE check and before _token_readout. The main-agent line (● main) is also
+# stripped.
+AGENTS_PANEL_RE='^[[:space:]]*(●|◯)'
 
 # An interactive prompt is on screen AWAITING a human decision: a selection
 # menu (AskUserQuestion, plan/permission prompts) or a yes/no confirmation. The
@@ -75,7 +93,7 @@ VOLATILE_RE='esc to interrupt|Working|Thinking|for [0-9]+s|\([0-9]+m|\([0-9]+s|�
 _classify_text() {
   local visible busy idle hit
   visible="$(cat)"
-  busy="$(printf '%s' "$visible" | tail -25 | grep -ciE "$BUSY_RE")"
+  busy="$(printf '%s' "$visible" | tail -25 | grep -avE "$AGENTS_PANEL_RE" | grep -ciE "$BUSY_RE")"
   if [ "$busy" -gt 0 ]; then echo "active"; return; fi
   idle="$(printf '%s' "$visible" | tail -8 | grep -c '❯' || true)"
   # stalled-usage is gated on the '❯' like stalled-api: the real dialog always
@@ -90,7 +108,7 @@ _classify_text() {
 }
 
 # _is_busy_text: stdin = pane text -> exit 0 if a spinner / active turn is shown
-_is_busy_text() { tail -25 | grep -qiE "$BUSY_RE"; }
+_is_busy_text() { tail -25 | grep -avE "$AGENTS_PANEL_RE" | grep -qiE "$BUSY_RE"; }
 
 # _is_awaiting_input_text: stdin = pane text -> exit 0 iff an interactive prompt
 # is awaiting a human decision (selection menu / confirmation).
@@ -119,5 +137,60 @@ _fingerprint_text() {
 # keeps a long legitimate think from being mistaken for a wedge. (The elapsed
 # timer is NOT a liveness signal: it ticks even when wedged.)
 _token_readout() {
-  grep -oE '[↑↓] ?[0-9.]+[kKmM]? tokens' | tail -1
+  # The agents panel carries a per-subagent readout that is frozen once the
+  # subagent finished or hung; only the spinner's own readout is liveness.
+  grep -avE "$AGENTS_PANEL_RE" | grep -oE '[↑↓] ?[0-9.]+[kKmM]? tokens' | tail -1
+}
+
+# _transcript_turn_state_text: stdin = the tail of a Claude Code session
+# transcript (~/.claude/projects/<slug>/<sessionId>.jsonl) -> echoes
+#   closed   the last turn ENDED (last significant record is the turn-end
+#            marker `system/turn_duration`, or the stop-hook summary written
+#            with it); the session is idle at its prompt whatever the pane says
+#   open     a turn is in flight (an assistant/user/progress record, or a
+#            system record that is not a turn-end marker, came after the last
+#            turn end)
+#   unknown  no parseable record (no transcript, empty tail)
+# Records that say nothing about the turn are skipped: attachment, queue-
+# operation, last-prompt, mode, permission-mode, atis-latch, ai-title,
+# file-history-*, summary, and `system/local_command` (a slash command such as
+# the compaction watchdog's /context probe, which runs while idle).
+#
+# WHY: the pane is one signal and it lies -- a stale agents panel, a token
+# readout in prose, a rendering change -- and every lie has cost a nudge or a
+# page. The transcript is written by the session itself and its turn-end
+# marker is unambiguous. The stuck path consults it before any interrupt or
+# escalation: a `closed` reading VETOES the wedge. `unknown` and `open` fall
+# through to the pane-only logic, so a hung tool call (assistant tool_use
+# with no result, pane frozen) is still caught.
+_transcript_turn_state_text() {
+  python3 -c '
+import json, sys
+skip = {"attachment", "queue-operation", "last-prompt", "mode", "permission-mode",
+        "atis-latch", "ai-title", "file-history-snapshot", "file-history-delta",
+        "summary"}
+lines = sys.stdin.read().splitlines()
+for line in reversed(lines):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    t = d.get("type")
+    if t in skip:
+        continue
+    if t == "system":
+        st = d.get("subtype", "")
+        if st in ("turn_duration", "stop_hook_summary"):
+            print("closed"); sys.exit(0)
+        if st == "local_command":
+            continue
+        print("open"); sys.exit(0)
+    if t in ("assistant", "user", "progress"):
+        print("open"); sys.exit(0)
+    # any other record type: say nothing, keep looking
+print("unknown")
+' 2>/dev/null || echo unknown
 }
