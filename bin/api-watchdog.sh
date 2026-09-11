@@ -223,6 +223,61 @@ classify()        { tmux capture-pane -t "$1" -p 2>/dev/null | _classify_text; }
 pane_is_busy()    { tmux capture-pane -t "$1" -p 2>/dev/null | _is_busy_text; }
 pane_fingerprint(){ tmux capture-pane -t "$1" -p 2>/dev/null | _fingerprint_text; }
 
+# role_transcript <window-id>: resolve the Claude Code session transcript behind
+# a pane. Chain (same as compaction-watchdog's probe_pct_from_jsonl): pane pid
+# -> ~/.claude/sessions/<pid>.json -> sessionId + cwd -> ~/.claude/projects/
+# <slug>/<sessionId>.jsonl. Sets rt_jsonl (the transcript) and rt_subdir (the
+# session's subagent transcript dir, may not exist). Returns 1 when the chain
+# breaks (not a Claude Code pane, a test fixture, an older CLI).
+role_transcript() {
+  local wid="$1" pid sess_file sid proj_dir
+  rt_jsonl=""; rt_subdir=""
+  pid="$(tmux display-message -t "$wid" -p '#{pane_pid}' 2>/dev/null)" || return 1
+  [ -n "$pid" ] || return 1
+  sess_file="$HOME/.claude/sessions/${pid}.json"
+  [ -f "$sess_file" ] || return 1
+  read -r sid proj_dir < <(python3 -c '
+import json, os, sys
+d = json.load(open(sys.argv[1]))
+sid = d.get("sessionId", "")
+cwd = d.get("cwd", "")
+proj_dir = ""
+if cwd:
+    u = os.path.expanduser("~")
+    slug = cwd.replace("/", "-").lstrip("-")
+    if cwd.startswith(u):
+        slug = "-home-" + os.environ.get("USER", os.path.basename(u)) + cwd[len(u):].replace("/", "-")
+    proj_dir = os.path.join(u, ".claude", "projects", slug)
+print(sid, proj_dir)
+' "$sess_file" 2>/dev/null) || return 1
+  [ -n "$sid" ] && [ -n "$proj_dir" ] || return 1
+  proj_dir="${COMPACT_PROJECT_DIR:-$proj_dir}"
+  [ -f "$proj_dir/$sid.jsonl" ] || return 1
+  rt_jsonl="$proj_dir/$sid.jsonl"
+  rt_subdir="$proj_dir/$sid/subagents"
+  return 0
+}
+
+# transcript_turn_state <window-id>: open | closed | unknown (see
+# _transcript_turn_state_text in bin/lib/watchdog-detect.sh). Reads the last
+# 64 KiB of the transcript; a turn-end marker is a short record at the very end.
+transcript_turn_state() {
+  role_transcript "$1" || { echo unknown; return 0; }
+  tail -c 65536 "$rt_jsonl" 2>/dev/null | _transcript_turn_state_text
+}
+
+# subagents_progressing <window-id> <seconds>: exit 0 iff a subagent transcript
+# under the session was written within the last <seconds>. A parent turn blocks
+# while its Task subagents run and its own pane can sit frozen for as long as
+# the subagent's tool call takes; the subagent's transcript keeps moving. That
+# is work, not a wedge.
+subagents_progressing() {
+  local wid="$1" secs="$2"
+  [ -n "${rt_subdir:-}" ] || role_transcript "$wid" || return 1
+  [ -d "$rt_subdir" ] || return 1
+  [ -n "$(find "$rt_subdir" -maxdepth 1 -name '*.jsonl' -newermt "-${secs} seconds" -print -quit 2>/dev/null)" ]
+}
+
 # read_field <file> <field> <default>
 read_field() { jq -r --arg d "$3" --arg k "$2" '.[$k] // $d' "$1" 2>/dev/null || echo "$3"; }
 
@@ -513,6 +568,39 @@ scan_once() {
       [ "$fp" != "$prev_fp" ] && alive=1
       [ -n "$tok" ] && [ "$tok" != "$prev_tok" ] && alive=1
       if [ "$busy" = 1 ] && [ "$stuck_disabled" != 1 ]; then
+        # 2026-09-11: the pane is not the only witness. Before the stuck ladder
+        # can interrupt or escalate, ask the session's own transcript.
+        #   closed  -> the last turn ENDED: the role is idle at its prompt and the
+        #              "busy" reading is chrome (a stale agents panel, a token
+        #              readout in prose). VETO: no nudge, no page, ladder reset.
+        #              Three false stuck episodes and one priority-5 page on
+        #              2026-09-10 had exactly this shape.
+        #   open    -> a turn is in flight; a subagent transcript still being
+        #              written counts as liveness (the parent pane sits frozen
+        #              while its Task subagents work). Otherwise fall through to
+        #              the pane logic: a hung tool call is still caught.
+        #   unknown -> no transcript behind the pane (test fixture, other CLI):
+        #              pane-only, as before.
+        rt_jsonl=""; rt_subdir=""
+        tstate="$(transcript_turn_state "$wid")"
+        if [ "$tstate" = "closed" ]; then
+          frozen=$((nowts - fp_since)); [ "$fp_since" -eq 0 ] && frozen=0
+          if [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ] || [ "$prev" = "stuck-giveup-esc" ]; then
+            echo "$(iso "$nowts") [$name] RECOVERED-STUCK (transcript: turn ended; the session answered)" >> "$af"
+            status_hook recovered "$name" "turn ended, the session is idle"
+          elif [ "$frozen" -ge "$stuck_threshold" ]; then
+            echo "$(iso "$nowts") [$name] STUCK-VETO (pane read busy+frozen $((frozen / 60))m, transcript says the turn ended; idle, not wedged; no nudge)" >> "$af"
+          fi
+          # Ladder reset: an ended turn means any earlier nudge was answered, so
+          # this episode is over. The next real wedge starts at nudge 1/N again
+          # instead of inheriting a lifetime count and paging on first sight
+          # (the 2026-09-10 page was exactly that: nudge 3 of a max of 2).
+          persist "$hf" "active" 0 0 "$nowts" "$fp" "$nowts" "" 0 "$last_nudge"
+          continue
+        fi
+        if [ "$tstate" = "open" ] && subagents_progressing "$wid" "$stuck_threshold"; then
+          alive=1
+        fi
         if [ "$alive" = 1 ]; then
           # Real progress (or the model responding to our nudge): reset tracking.
           if [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ] || [ "$prev" = "stuck-giveup-esc" ]; then

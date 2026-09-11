@@ -219,6 +219,67 @@ eq "long think fingerprint is static (body unchanged)" "$(think_a | _fingerprint
 ne "but token readout advances => alive" "$(think_a | _token_readout)" "$(think_b | _token_readout)"
 eq "wedge token readout is frozen => not alive" "$(wedged_a | _token_readout)" "$(wedged_b | _token_readout)"
 
+# --- 2026-09-11: agents panel on an IDLE prompt ---------------------------------
+# The orchestrator sat idle at its prompt with the agents panel toggled on; a
+# finished subagent's line still carried "· ↓ 145.5k tokens". That line made the
+# pane read busy, the frozen readout made it read wedged, and the operator was
+# paged at priority 5. Neither the busy check nor the token readout may see the
+# panel.
+idle_panel() { cat <<'EOF'
+● Routine poller — 29 open, unchanged. No action needed.
+  [Thu 2026-09-10 23:03 Europe/Zurich]
+✻ Brewed for 2m 48s · done 11:03 PM · 1 monitor still running
+● main  idle
+◯ audit-script  Reconnecting bus monitor task  24m · ↓ 145.5k tokens
+────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on · 1 monitor · ← for agents
+EOF
+}
+echo "agents panel on an idle prompt:"
+idle_panel | _is_busy_text && bad "idle prompt with agents panel should NOT be busy" || ok "idle prompt with agents panel not busy"
+eq "idle_panel classifies active (not stuck)" "$(idle_panel | _classify_text)" "active"
+eq "token readout ignores the agents panel" "$(idle_panel | _token_readout)" ""
+eq "token readout still reads the spinner" "$(wedged_a | _token_readout)" "↓ 34.4k tokens"
+
+# --- 2026-09-11: transcript turn state ------------------------------------------
+# The second witness the stuck path consults before any interrupt or page. Records
+# are the shapes Claude Code 2.1.x writes to ~/.claude/projects/<slug>/<sid>.jsonl.
+echo "transcript turn state:"
+t_closed() { cat <<'EOF'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}],"stop_reason":"end_turn"},"timestamp":"2026-09-10T21:03:10.100Z"}
+{"type":"system","subtype":"stop_hook_summary","timestamp":"2026-09-10T21:03:10.537Z"}
+{"type":"system","subtype":"turn_duration","durationMs":168000,"timestamp":"2026-09-10T21:03:10.548Z"}
+{"type":"attachment","timestamp":"2026-09-10T21:05:00.000Z"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-10T21:06:00.000Z"}
+{"type":"system","subtype":"local_command","content":"/context","timestamp":"2026-09-10T21:08:00.000Z"}
+EOF
+}
+t_open_tool() { cat <<'EOF'
+{"type":"system","subtype":"turn_duration","durationMs":1000,"timestamp":"2026-09-10T19:40:00.000Z"}
+{"type":"user","message":{"role":"user","content":"check the entry"},"timestamp":"2026-09-10T19:42:00.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"sleep 900"}}],"stop_reason":"tool_use"},"timestamp":"2026-09-10T19:42:36.000Z"}
+{"type":"attachment","timestamp":"2026-09-10T19:50:00.000Z"}
+EOF
+}
+t_open_user() { cat <<'EOF'
+{"type":"system","subtype":"turn_duration","durationMs":1000,"timestamp":"2026-09-10T19:40:00.000Z"}
+{"type":"user","message":{"role":"user","content":"[watchdog] your last action produced no output"},"timestamp":"2026-09-10T20:01:45.000Z"}
+EOF
+}
+t_open_compact() { cat <<'EOF'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":{}}]},"timestamp":"2026-09-10T20:53:00.000Z"}
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-09-10T20:53:20.000Z"}
+EOF
+}
+eq "turn ended + idle chrome records = closed"      "$(t_closed       | _transcript_turn_state_text)" "closed"
+eq "tool_use with no result = open"                 "$(t_open_tool    | _transcript_turn_state_text)" "open"
+eq "a user message after the turn end = open"       "$(t_open_user    | _transcript_turn_state_text)" "open"
+eq "compact boundary mid-turn = open"               "$(t_open_compact | _transcript_turn_state_text)" "open"
+eq "empty transcript = unknown"                     "$(printf ''      | _transcript_turn_state_text)" "unknown"
+eq "garbage = unknown"                              "$(printf 'not json\n{\"type\":\"mode\"}\n' | _transcript_turn_state_text)" "unknown"
+
 echo
 if [ "$fail" = 0 ]; then echo "PASS: all watchdog-detect assertions"; exit 0
 else echo "FAIL: see above"; exit 1; fi
