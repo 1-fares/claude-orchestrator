@@ -45,7 +45,7 @@ private_re='(/home/[a-z_][a-z0-9_-]+|/Users/[A-Za-z][A-Za-z0-9_-]+|[A-Za-z0-9._%
 # (.invalid/.test/.example/.localhost are IANA-reserved, unrouteable by design;
 #  ntfy.sh/orch-example and /home/user are this repo's own documented
 #  placeholders; <angle-bracket> placeholders mark doc examples.)
-allow_re='(^token = token_file$|^token": bus_token$|<[a-z][a-z-]*>|@example\.(com|org|net)$|@[A-Za-z0-9.-]+\.(invalid|test|example|localhost)$|^noreply@|^127\.0\.0\.1$|^0\.0\.0\.0$|^/home/user$|^docs\.ntfy\.sh|ntfy\.sh/orch-example$|cubic-bezier$|load_secret\(?$)'
+allow_re='(^token = token_file$|@thread\.(tacv|v)$|@unq\.gbl$|^token": bus_token$|<[a-z][a-z-]*>|@example\.(com|org|net)$|@[A-Za-z0-9.-]+\.(invalid|test|example|localhost)$|^noreply@|^127\.0\.0\.1$|^0\.0\.0\.0$|^/home/user$|^docs\.ntfy\.sh|ntfy\.sh/orch-example$|cubic-bezier$|load_secret\(?$)'
 
 # Added lines only (skip the +++ file header), tagged with the file they land
 # in. Fast path: one grep prunes non-candidate lines; only candidates pay the
