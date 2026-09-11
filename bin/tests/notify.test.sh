@@ -88,4 +88,26 @@ export NOTIFY_SINK="$TD/sink"
 NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator bogus "x" "y"; rc=$?
 [ "$rc" = 2 ] && grep -q "BAD-CLASS bogus" "$TD/log" && ok "bad class refused" || bad "bad class accepted"
 
+# 9. NOTIFY_ACTION_SOURCES: with an allowlist set, an action from any other sender lands
+#    in the digest with a DEMOTED log line; listed senders push as before; pages are not
+#    affected; unset, "" and "*" allow every sender.
+reset; export NOTIFY_ACTION_SOURCES="env-health chat-unanswered"
+export NOTIFY_SOURCE=backup-staleness
+NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator action "state backup stale" "19h"
+[ "$(posts)" = 0 ] && grep -q "DEMOTED action->info \[backup-staleness\] state backup stale" "$TD/log" \
+  && grep -q "state backup stale :: 19h" "$TD/st/digest" && ok "unlisted sender's action demoted to the digest" \
+  || bad "unlisted sender's action not demoted (posts=$(posts))"
+export NOTIFY_SOURCE=env-health
+NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator action "dev down (HTTP 503)" "no run explains it"
+[ "$(posts)" = 1 ] && [[ "$(last)" == "4|[testrun] dev down (HTTP 503)|"* ]] && ok "listed sender's action pushed at 4" || bad "listed sender not pushed: $(last)"
+export NOTIFY_SOURCE=api-watchdog
+NOTIFY_NOW=$(at "2026-09-07 22:30") notify_operator page "ORCHESTRATOR wedged" "8m"
+[ "$(posts)" = 2 ] && [[ "$(last)" == "5|"* ]] && ok "page unaffected by the allowlist" || bad "page affected: $(last)"
+NOTIFY_ACTION_SOURCES="*" NOTIFY_SOURCE=anything NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator action "any" "b"
+[ "$(posts)" = 3 ] && ok "'*' allows every sender" || bad "'*' did not allow (posts=$(posts))"
+unset NOTIFY_ACTION_SOURCES
+NOTIFY_SOURCE=anything NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator action "other" "b"
+[ "$(posts)" = 4 ] && ok "unset allowlist allows every sender (default)" || bad "unset allowlist blocked (posts=$(posts))"
+unset NOTIFY_SOURCE
+
 [ "$fail" = 0 ] && echo "notify.test: PASS" || { echo "notify.test: FAIL"; exit 1; }

@@ -39,6 +39,12 @@
 #                            or a `date -d` string; an operator writes it before planned work
 #   NOTIFY_HOURS=0700-1900   NOTIFY_DAYS=1-5   NOTIFY_TZ=Europe/Zurich
 #   NOTIFY_ACTION_COOLDOWN_SEC=21600   NOTIFY_PAGE_REPEAT_SEC=1800
+#   NOTIFY_ACTION_SOURCES    space-separated NOTIFY_SOURCE names whose `action` is pushed
+#                            audibly; every other sender's action is demoted to info and
+#                            logged as DEMOTED. Unset, "" or "*" = every sender (default).
+#                            A deployment that found its operator paged for deploy
+#                            results, backup age and audit findings sets this to the two
+#                            or three senders that really need a human the same day.
 #   NOTIFY_SOURCE            daemon name; subject prefix for notify_legacy
 #   NOTIFY_NOW               epoch override for tests
 # Log line: <utc> | <DECISION> <class> [<prio>] <subject> :: <body>
@@ -83,6 +89,15 @@ _nt_push() {
   fi
 }
 
+# _nt_action_allowed: exit 0 iff the calling sender (NOTIFY_SOURCE) may push an
+# audible action. Unset, "" or "*" NOTIFY_ACTION_SOURCES = every sender.
+_nt_action_allowed() {
+  local allow="${NOTIFY_ACTION_SOURCES-}" s
+  [ -z "$allow" ] || [ "$allow" = "*" ] && return 0
+  for s in $allow; do [ "$s" = "${NOTIFY_SOURCE:-}" ] && return 0; done
+  return 1
+}
+
 notify_operator() {
   local class="${1:-}" subject="${2:-}" body="${3:-}" tags="${4:-}"
   local now key st last title run
@@ -90,6 +105,13 @@ notify_operator() {
   now="$(_nt_now)"; run="${TEAM_RUN_ID:-team}"; title="[$run] $subject"
   mkdir -p "$(_nt_dir)" 2>/dev/null || true
   key="$(_nt_key "$subject")"
+  if [ "$class" = action ] && ! _nt_action_allowed; then
+    # Deny by default when an allowlist is set: the sender is not on it, so this
+    # lands in the digest. The log line keeps the original intent visible.
+    printf '%s %s :: %s\n' "$(_nt_ts)" "$subject" "$body" >> "$(_nt_dir)/digest"
+    _nt_log "DEMOTED action->info [${NOTIFY_SOURCE:-unknown}] $subject :: $body"
+    return 0
+  fi
   case "$class" in
     page)
       st="$(_nt_dir)/page.$key"; last="$(_nt_read "$st")"
