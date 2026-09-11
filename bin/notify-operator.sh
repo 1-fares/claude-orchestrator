@@ -69,6 +69,18 @@ esac
 log_file="${NOTIFY_LOG:-$TEAM_DIR/reports/operator-pings.log}"
 notify_operator "$class" "$title" "$message"; rc=$?
 last="$(tail -1 "$log_file" 2>/dev/null)"
-echo "notify-operator.sh: $class :: ${last#* | }"
-case "$last" in *"| SENT "*|*"| QUEUED "*|*"| DIGEST "*|*"| DEDUPE "*|*"| MUTED "*) exit 0 ;; esac
-exit "${rc:-1}"
+# 2026-09-11: say in words whether the phone got it, and FAIL (exit 3) when it did not.
+# The orchestrator reported "Fares notified" after a DEMOTED decision it had not read;
+# a false delivery claim is worse than no push. DEDUPE and MUTED stay exit 0: the
+# policy accepted the notice and an earlier or later push covers it.
+decision="${last#* | }"; decision="${decision%% *}"
+case "$decision" in
+  SENT)     echo "notify-operator.sh: $class :: DELIVERED to the phone :: ${last#* | }"; exit 0 ;;
+  RESOLVED) echo "notify-operator.sh: $class :: DELIVERED (resolved) :: ${last#* | }"; exit 0 ;;
+  QUEUED)   echo "notify-operator.sh: $class :: ACCEPTED, NOT YET DELIVERED: queued for the 08:03 flush (outside the push window) :: ${last#* | }"; exit 0 ;;
+  DIGEST)   echo "notify-operator.sh: info :: in the daily 08:07 digest, no push :: ${last#* | }"; exit 0 ;;
+  DEDUPE)   echo "notify-operator.sh: $class :: NOT PUSHED AGAIN: an earlier push for this subject is still within its cooldown :: ${last#* | }"; exit 0 ;;
+  MUTED)    echo "notify-operator.sh: $class :: NOT PUSHED: maintenance mute is active :: ${last#* | }"; exit 0 ;;
+  DEMOTED)  echo "notify-operator.sh: $class :: NOT DELIVERED TO THE PHONE. Demoted to the digest: sender [${NOTIFY_SOURCE:-unknown}] is not on the audible action list (NOTIFY_ACTION_SOURCES). Do not report the operator as notified. An item that needs the operator goes into the operator decisions file; the operator side relays it." >&2; exit 3 ;;
+  *)        echo "notify-operator.sh: $class :: NOT DELIVERED: $last" >&2; exit "${rc:-1}" ;;
+esac

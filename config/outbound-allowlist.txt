@@ -1,0 +1,13 @@
+# config/outbound-allowlist.txt: the ONLY places the team may send to.
+# Enforced by bin/hooks/gate-outbound-reply.sh check 0b on every connector send tool:
+# a chat_id, channel_id or mail address not matched here blocks the send. A missing
+# or empty file blocks everything: the list is the permission, and it is the
+# operator's decision. One entry per line: an exact chat/channel id, or a mail glob
+# (*@domain). Text after # is ignored. Write the date and the operator's words in
+# the comment when adding a line. A deployment may keep its list elsewhere and point
+# OUTBOUND_ALLOWLIST at it.
+#
+# 19:<id>@thread.v2            # a group chat
+# 19:<id>@thread.tacv2         # a team channel
+# 48:notes                     # the operator's own notes chat
+# *@example.com                # mail to one organisation
