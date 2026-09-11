@@ -584,18 +584,23 @@ scan_once() {
         rt_jsonl=""; rt_subdir=""
         tstate="$(transcript_turn_state "$wid")"
         if [ "$tstate" = "closed" ]; then
-          frozen=$((nowts - fp_since)); [ "$fp_since" -eq 0 ] && frozen=0
+          # Keep the frozen clock running across the veto so the misread leaves a
+          # trail: one STUCK-VETO line per threshold window while it lasts.
+          if [ "$fp_since" -eq 0 ] || [ "$fp" != "$prev_fp" ]; then fp_since=$nowts; fi
+          frozen=$((nowts - fp_since))
           if [ "$prev" = "stuck" ] || [ "$prev" = "stuck-giveup" ] || [ "$prev" = "stuck-giveup-esc" ]; then
             echo "$(iso "$nowts") [$name] RECOVERED-STUCK (transcript: turn ended; the session answered)" >> "$af"
             status_hook recovered "$name" "turn ended, the session is idle"
+            fp_since=$nowts
           elif [ "$frozen" -ge "$stuck_threshold" ]; then
             echo "$(iso "$nowts") [$name] STUCK-VETO (pane read busy+frozen $((frozen / 60))m, transcript says the turn ended; idle, not wedged; no nudge)" >> "$af"
+            fp_since=$nowts
           fi
           # Ladder reset: an ended turn means any earlier nudge was answered, so
           # this episode is over. The next real wedge starts at nudge 1/N again
           # instead of inheriting a lifetime count and paging on first sight
           # (the 2026-09-10 page was exactly that: nudge 3 of a max of 2).
-          persist "$hf" "active" 0 0 "$nowts" "$fp" "$nowts" "" 0 "$last_nudge"
+          persist "$hf" "active" 0 0 "$nowts" "$fp" "$fp_since" "" 0 "$last_nudge"
           continue
         fi
         if [ "$tstate" = "open" ] && subagents_progressing "$wid" "$stuck_threshold"; then
