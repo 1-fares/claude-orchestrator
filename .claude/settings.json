@@ -8,7 +8,7 @@
       "Bash(git filter-branch*)",
       "Bash(git filter-repo*)",
       "Bash(git push * --delete*)",
-      "Bash(git push * :*)",
+      "Bash(git push * :**)",
       "Bash(rm -rf /*)",
       "Bash(rm -rf ~*)",
       "Bash(rm -rf --no-preserve-root*)"
