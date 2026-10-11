@@ -139,3 +139,35 @@ The same discipline applies to agreement: "the vendor knows and agreed" is not a
 record; "<engineer>, message <id>, 12:57: finish manually" is. The
 authority model's quoted-OK rule (docs/authority-model.md) is this discipline
 applied to consent.
+
+## 7. Guard-exit reading
+
+Before asserting what a periodically-run script does, find the guard it exits
+at, not the branch that reads best. Enumerate the early returns in order and
+say which one fires on the current state. A script whose first guard is an
+idempotence marker does nothing else, however much logic follows it, and the
+later branches are dead code for as long as the marker exists.
+
+The discriminating measurement is whether the log grows. A guard that exits
+before logging leaves no line, so a silent log across two or three scheduled
+runs is the positive evidence that execution stops there; it is not an absence
+of evidence. Check the log's mtime against the schedule, not its contents.
+
+Measured, 2026-09-27: a watchdog's brake thresholds had been raised to an
+unreachable value under an operator directive scoped to "until the next
+reset", and a `*/10` cron was supposed to restore them after one low reading.
+Reading the restore script's refusal branches gave the wrong answer, reported
+to the operator as "the brakes come back automatically". Execution never
+reached them: the script's first line is `[ -f "$MARKER" ] && exit 0`, and the
+marker had been written thirteen days earlier by the one run that did restore.
+The log had not grown by a byte across two consecutive runs. Re-checked
+2026-10-11, fourteen days after the directive's own expiry: the thresholds
+were still unreachable, the daemon still ran with the brakes off, and the
+account hit its limit twice in one night with no throttling step logged. A
+one-shot restore guarded by a durable marker is a one-shot, so a temporary
+change made through it is permanent until a human undoes it.
+
+Corollary for writing them: an idempotence marker must carry the state it was
+idempotent ABOUT (the target values, the directive, the expiry), and the guard
+must log the fact that it fired. A marker that only records "done" cannot tell
+the next reader that it is now suppressing the thing it once did.

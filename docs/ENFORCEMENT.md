@@ -32,10 +32,38 @@ Three layers, in order of strength:
 | Whole-file reads over 200 lines in the engine tree | Gate | `bin/hooks/gate-read-size.sh` | none (UNENFORCED test) | read refused |
 | Rules with only a reminder (routing to the stronger model, observer cadence, units in the state table) | Rule + Check | `bin/hooks/standing-rules.sh` deviations; observer audits | none | **UNENFORCED**; owner: orchestrator |
 
+## A check reads a machine-written field, never model prose
+
+A check that greps a literal English phrase out of something the model wrote scores the
+wording, not the behaviour. The model then writes to satisfy the grep, which is the
+opposite of a control: the check passes on a wrong decision phrased correctly and fails on
+a right decision phrased differently, and the only way to keep it green is to make the
+model repeat a fixed string it cannot see the checker for.
+
+So: a check reads a field with one allowed shape, written by code, at a known place. A
+status column set by a ledger-writing helper, an exit status, a state file, a JSON key, a
+commit trailer. If the behaviour genuinely lives in prose, the gate goes at the point of
+action instead (a PreToolUse hook that refuses) and the prose is left alone.
+
+Measured, 2026-10-11: a relay check decided whether an alarm had been passed on to the
+people who own it by searching the orchestrator's log line for `not relayed:`. The
+orchestrator declined a recurring alarm correctly and wrote "Not relayed again: nothing new
+for <the owning team> or the vendor". Running the check against the log before and after showed the
+difference: with that line alone the result was `status=breach unrelayed=1`; the
+orchestrator then rewrote its own entry in the checker's exact words and the result became
+`DECLINED`. Thirteen further checks in the same deployment required a literal phrase in
+model-written text, including five verbs for an outcome and a heading format down to the
+date spelling. None of them measured anything a differently-worded correct answer would
+have failed to do.
+
+Corollary: when a check must look at prose because nothing else records the fact, that is a
+missing field, not a parsing problem. Add the field.
+
 ## How to add a behaviour
 
 1. Write the gate or check first, with a test that replays the incident (the incident IS the
-   fixture: the exact message, the exact pane, the exact log line).
+   fixture: the exact message, the exact pane, the exact log line). Point it at a
+   machine-written field, per the section above.
 2. Wire it where the action happens: a PreToolUse hook on the tool, a git hook, a refusal in
    the script that would do the harm. Hooks are listed in the deployment's
    `.claude/settings.json` (project) and `~/.claude/settings.json` (user); edit both. Claude
