@@ -25,7 +25,8 @@
 #
 # API (TEAM_DIR must be set):
 #   notify_operator <class> <subject> <body> [tags]
-#   notify_resolved <subject> [body]   clears state; pushes priority 3 "resolved" if a page was sent
+#   notify_resolved <subject> [body]   clears state and drops the subject's queued lines; pushes
+#                                      priority 3 "resolved" if a page was sent
 #   notify_flush                       pushes queued actions once working hours begin
 #   notify_digest                      notify_flush, then one silent digest of the info lines
 #   notify_legacy <text>               compatibility shim (see above)
@@ -33,8 +34,12 @@
 # Env:
 #   NTFY_URL                 topic; unset = log only (every decision still lands in the log)
 #   NOTIFY_SINK              file; "prio|title|body" appended instead of pushing (tests)
-#   NOTIFY_LOG               default $TEAM_DIR/reports/operator-pings.log
-#   NOTIFY_STATE_DIR         default $TEAM_DIR/health/notify (dedupe stamps, queue, digest)
+#   NOTIFY_LOG               default $TEAM_DIR/reports/operator-pings.log; with NOTIFY_SINK set
+#                            and NOTIFY_LOG unset, ${NOTIFY_SINK}.log, so a test or a hand run
+#                            never writes where the operator and the digest read
+#   NOTIFY_STATE_DIR         default $TEAM_DIR/health/notify (dedupe stamps, queue, digest); with
+#                            NOTIFY_SINK set and NOTIFY_STATE_DIR unset, ${NOTIFY_SINK}.state, so a
+#                            fixture never lands in the digest the daily cron pushes
 #   NOTIFY_MUTE_FILE         default $TEAM_DIR/health/maintenance-until; first line is an epoch
 #                            or a `date -d` string; an operator writes it before planned work
 #   NOTIFY_HOURS=0700-1900   NOTIFY_DAYS=1-5   NOTIFY_TZ=Europe/Zurich
@@ -48,15 +53,33 @@
 #   NOTIFY_SOURCE            daemon name; subject prefix for notify_legacy
 #   NOTIFY_NOW               epoch override for tests
 # Log line: <utc> | <DECISION> <class> [<prio>] <subject> :: <body>
-#   DECISION: SENT LOG-ONLY DEDUPE MUTED QUEUED DIGEST FLUSHED RESOLVED CLEARED BAD-CLASS
+#   DECISION: SENT LOG-ONLY DEDUPE MUTED QUEUED DIGEST FLUSHED RESOLVED CLEARED UNQUEUED BAD-CLASS
 
 _nt_now()  { printf '%s' "${NOTIFY_NOW:-$(date +%s)}"; }
 _nt_ts()   { date -u -d "@$(_nt_now)" +%Y-%m-%dT%H:%M:%SZ; }
-_nt_dir()  { printf '%s' "${NOTIFY_STATE_DIR:-${TEAM_DIR:-.}/health/notify}"; }
+# A sinked caller is a test or a hand run: its state and log stay beside the sink, never under the
+# live TEAM_DIR. Without this a sinked run that inherits a live TEAM_DIR writes fixture lines into
+# the operator's log and stamps the real dedupe files. /dev/null gets throwaway locations of its own.
+_nt_sinked() { [ -n "${NOTIFY_SINK:-}" ]; }
+_nt_dir() {
+  if [ -n "${NOTIFY_STATE_DIR:-}" ]; then printf '%s' "$NOTIFY_STATE_DIR"
+  elif _nt_sinked; then
+    case "$NOTIFY_SINK" in
+      /dev/null) printf '%s' "${TMPDIR:-/tmp}/notify-devnull-state-$(id -u)" ;;
+      *) printf '%s' "${NOTIFY_SINK}.state" ;;
+    esac
+  else printf '%s' "${TEAM_DIR:-.}/health/notify"; fi
+}
 _nt_key()  { printf '%s' "$1" | tr -c 'A-Za-z0-9_.:-' '_' | cut -c1-120; }
 _nt_read() { cat "$1" 2>/dev/null || echo 0; }
+# Queue length after a mutation. Every queue mutation logs "[queue now N]" so a change nobody
+# logged can be named afterwards.
+_nt_qlen() { local q="$(_nt_dir)/queue"; if [ -f "$q" ]; then wc -l < "$q" | tr -d ' '; else echo 0; fi; }
 _nt_log() {
-  local f="${NOTIFY_LOG:-${TEAM_DIR:-.}/reports/operator-pings.log}"
+  local f
+  if [ -n "${NOTIFY_LOG:-}" ]; then f="$NOTIFY_LOG"
+  elif _nt_sinked; then case "$NOTIFY_SINK" in /dev/null) f=/dev/null ;; *) f="${NOTIFY_SINK}.log" ;; esac
+  else f="${TEAM_DIR:-.}/reports/operator-pings.log"; fi
   mkdir -p "$(dirname "$f")" 2>/dev/null || true
   printf '%s | %s\n' "$(_nt_ts)" "$*" >> "$f" 2>/dev/null || true
 }
@@ -117,18 +140,36 @@ notify_operator() {
       st="$(_nt_dir)/page.$key"; last="$(_nt_read "$st")"
       if [ $((now - last)) -lt "${NOTIFY_PAGE_REPEAT_SEC:-1800}" ]; then _nt_log "DEDUPE page $subject :: $body"; return 0; fi
       notify_muted && title="[maintenance] $title"
-      printf '%s' "$now" > "$st"
-      if _nt_push 5 "$title" "$body" "${tags:-rotating_light}"; then _nt_log "SENT page 5 $subject :: $body"; else _nt_log "LOG-ONLY page $subject :: $body"; fi ;;
+      # THE STAMP GOES AFTER THE PUSH. It used to go before, so a push that never arrived
+      # still opened the repeat window and silenced every retry inside it. A page is the
+      # loudest class there is; latching it on a failure is the worst place for this to live.
+      if _nt_push 5 "$title" "$body" "${tags:-rotating_light}"; then
+        printf '%s' "$now" > "$st"
+        _nt_log "SENT page 5 $subject :: $body"
+      else
+        _nt_log "LOG-ONLY page $subject :: $body (NOT delivered; repeat window not started, the next attempt retries)"
+      fi ;;
     action)
       if notify_muted; then _nt_log "MUTED action $subject :: $body"; return 0; fi
       st="$(_nt_dir)/action.$key"; last="$(_nt_read "$st")"
       if [ $((now - last)) -lt "${NOTIFY_ACTION_COOLDOWN_SEC:-21600}" ]; then _nt_log "DEDUPE action $subject :: $body"; return 0; fi
-      printf '%s' "$now" > "$st"
       if ! _nt_in_hours; then
+        # QUEUED STILL STAMPS, on purpose: the message is RETAINED and notify_flush delivers
+        # it, so suppressing repeats while it waits is right. Otherwise an overnight outage
+        # fills the queue with one line per check.
+        printf '%s' "$now" > "$st"
         printf '%s\t%s\t%s\n' "$(_nt_ts)" "$subject" "$body" >> "$(_nt_dir)/queue"
-        _nt_log "QUEUED action $subject :: $body"; return 0
+        _nt_log "QUEUED action $subject :: $body [queue now $(_nt_qlen)]"; return 0
       fi
-      if _nt_push 4 "$title" "$body" "${tags:-warning}"; then _nt_log "SENT action 4 $subject :: $body"; else _nt_log "LOG-ONLY action $subject :: $body"; fi ;;
+      # Same reason as the page branch: a failed push must not open the cooldown. Measured
+      # on a real outage: the first push failed, the stamp was already written, and the five
+      # retries over the next hour all logged DEDUPE while the service stayed down.
+      if _nt_push 4 "$title" "$body" "${tags:-warning}"; then
+        printf '%s' "$now" > "$st"
+        _nt_log "SENT action 4 $subject :: $body"
+      else
+        _nt_log "LOG-ONLY action $subject :: $body (NOT delivered; cooldown not started, the next attempt retries)"
+      fi ;;
     info)
       printf '%s %s :: %s\n' "$(_nt_ts)" "$subject" "$body" >> "$(_nt_dir)/digest"
       _nt_log "DIGEST info $subject :: $body" ;;
@@ -146,6 +187,22 @@ notify_resolved() {
   else
     rm -f "$(_nt_dir)/action.$key"; _nt_log "CLEARED $subject :: $body"
   fi
+  _nt_unqueue "$subject"
+}
+
+# A queued out-of-hours action whose condition has resolved must not reach the morning flush.
+# Queue lines are "ts<TAB>subject<TAB>body"; keep every line whose subject differs. The subject
+# goes through ENVIRON, not awk -v, which would expand backslash escapes and miss the match.
+# Rewritten in place rather than through a temp file: the queue holds a handful of lines and
+# notify_flush already truncates it the same way.
+_nt_unqueue() {
+  local subject="$1" q n kept
+  q="$(_nt_dir)/queue"
+  n=0; [ -s "$q" ] && n=$(S="$subject" awk -F'\t' '$2==ENVIRON["S"]' "$q" | wc -l)
+  if [ "$n" -eq 0 ]; then _nt_log "UNQUEUE-NOMATCH 0 queued action(s) $subject [queue now $(_nt_qlen)]"; return 0; fi
+  kept="$(S="$subject" awk -F'\t' '$2!=ENVIRON["S"]' "$q")"
+  if [ -n "$kept" ]; then printf '%s\n' "$kept" > "$q"; else : > "$q"; fi
+  _nt_log "UNQUEUED $n queued action(s) $subject [queue now $(_nt_qlen)]"
 }
 
 notify_flush() {
