@@ -110,4 +110,51 @@ NOTIFY_SOURCE=anything NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator actio
 [ "$(posts)" = 4 ] && ok "unset allowlist allows every sender (default)" || bad "unset allowlist blocked (posts=$(posts))"
 unset NOTIFY_SOURCE
 
+# 10. a FAILED push must not open the dedupe window. With no sink and no topic _nt_push
+#     returns non-zero; the stamp is written only on success, so the next attempt retries
+#     instead of logging DEDUPE. Measured on a real outage: the first action push failed,
+#     the stamp was already written, and five retries over the next hour all deduped while
+#     the service stayed down. The page branch had the same order and is the worse case.
+reset; unset NOTIFY_SINK; unset NTFY_URL
+NOTIFY_NOW=$(at "2026-09-07 03:00") notify_operator page "production down" "502"
+[ ! -f "$TD/st/page.production_down" ] && ok "failed page leaves no repeat stamp" || bad "failed page stamped the repeat window"
+grep -q "LOG-ONLY page production down .*repeat window not started" "$TD/log" && ok "failed page says the window is open" || bad "failed page log line wrong"
+NOTIFY_NOW=$(at "2026-09-07 03:05") notify_operator page "production down" "502"
+[ "$(grep -c 'LOG-ONLY page production down' "$TD/log")" = 2 ] && ok "page retried 5 min after a failed push" || bad "page deduped after a failed push"
+NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator action "rotate the db password" "only you hold the SSM write"
+[ ! -f "$TD/st/action.rotate_the_db_password" ] && ok "failed action leaves no cooldown stamp" || bad "failed action stamped the cooldown"
+NOTIFY_NOW=$(at "2026-09-07 10:05") notify_operator action "rotate the db password" "again"
+[ "$(grep -c 'LOG-ONLY action rotate the db password' "$TD/log")" = 2 ] && ok "action retried 5 min after a failed push" || bad "action deduped after a failed push"
+export NOTIFY_SINK="$TD/sink"
+NOTIFY_NOW=$(at "2026-09-07 10:10") notify_operator action "rotate the db password" "again"
+[ "$(posts)" = 1 ] && [ -f "$TD/st/action.rotate_the_db_password" ] && ok "successful push stamps the cooldown" || bad "successful push did not stamp"
+
+# 11. a queued out-of-hours action that resolves before the flush is dropped from the queue.
+#     Without this the operator is told at 07:00 about a condition that cleared overnight.
+reset
+NOTIFY_NOW=$(at "2026-09-05 22:10") notify_operator action "subscription exhausted" "all roles stalled"
+NOTIFY_NOW=$(at "2026-09-05 22:11") notify_operator action "cert expires" "in 9 days"
+[ "$(wc -l < "$TD/st/queue")" = 2 ] && ok "two actions queued overnight" || bad "queue wrong before resolve"
+NOTIFY_NOW=$(at "2026-09-05 23:40") notify_resolved "subscription exhausted" "reset at 23:40"
+[ "$(wc -l < "$TD/st/queue")" = 1 ] && ok "resolved subject dropped from the queue" || bad "resolved subject still queued"
+grep -q "UNQUEUED 1 queued action(s) subscription exhausted \[queue now 1\]" "$TD/log" && ok "unqueue logged with the new length" || bad "unqueue not logged"
+NOTIFY_NOW=$(at "2026-09-07 07:00") notify_flush
+[ "$(posts)" = 1 ] && [[ "$(last)" == "4|[testrun] 1 action(s) queued out of hours|cert expires:in 9 days" ]] && ok "flush carries only the unresolved action" || bad "flush wrong: $(last)"
+NOTIFY_NOW=$(at "2026-09-07 07:05") notify_resolved "never queued"
+grep -q "UNQUEUE-NOMATCH 0 queued action(s) never queued" "$TD/log" && ok "resolving an unqueued subject is logged, not an error" || bad "unqueue-nomatch not logged"
+
+# 12. a sinked caller keeps its log and state beside the sink, never under the live TEAM_DIR.
+#     A hand run or a test that inherits a live TEAM_DIR used to write fixture lines into the
+#     operator's log and stamp the real dedupe files.
+reset; unset NOTIFY_LOG; unset NOTIFY_STATE_DIR
+export NOTIFY_SINK="$TD/fixture"
+NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator info "fixture only" "must not reach the live tree"
+[ -f "$TD/fixture.log" ] && grep -q "DIGEST info fixture only" "$TD/fixture.log" && ok "sinked log sits beside the sink" || bad "sinked log not beside the sink"
+[ -f "$TD/fixture.state/digest" ] && ok "sinked state sits beside the sink" || bad "sinked state not beside the sink"
+[ ! -e "$TD/reports/operator-pings.log" ] && ok "live operator log untouched by a sinked caller" || bad "sinked caller wrote the live log"
+[ ! -e "$TD/health/notify" ] && ok "live state dir untouched by a sinked caller" || bad "sinked caller wrote the live state dir"
+NOTIFY_SINK=/dev/null NOTIFY_NOW=$(at "2026-09-07 10:01") notify_operator info "devnull" "throwaway"; rc=$?
+[ "$rc" = 0 ] && ok "/dev/null sink does not crash" || bad "/dev/null sink failed (rc=$rc)"
+export NOTIFY_LOG="$TD/log" NOTIFY_STATE_DIR="$TD/st" NOTIFY_SINK="$TD/sink"
+
 [ "$fail" = 0 ] && echo "notify.test: PASS" || { echo "notify.test: FAIL"; exit 1; }
