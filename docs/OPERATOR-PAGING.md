@@ -72,7 +72,10 @@ page: tmux session gone while roles are active (tmux-watchdog); orchestrator wed
 the reconciler's own retire+respawn (api-watchdog, the `-esc` step); an outbound message
 addressed outside the allow-list (new guard); production unreachable or 5xx on two
 consecutive probes (new probe); a quarantine or error file from the delivery monitors (which
-today only write to their logs).
+today only write to their logs); a MULTI-DAY usage wall, where the role's own refusal
+record names a reset further out than USAGE_WALL_PAGE_SEC (api-watchdog). The last one is
+a page and not an action because it does not clear on its own: the team is stopped for
+days until the operator switches account. An ordinary session limit stays info, as before.
 
 action: a role blocked on an interactive prompt after the escalation ladder (api-watchdog);
 all roles rate-limited and a /login needed (account-rotation); host RAM or disk in FREEZE
