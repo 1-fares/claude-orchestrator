@@ -23,7 +23,11 @@
 #      also names a clock time (HH:MM) by which the answer arrives.
 #   3. ONE MESSAGE PER REPLY. A second send to the same chat or channel within
 #      GATE_SEND_MIN_GAP_SEC (default 60) is blocked: merge it into one message.
-#      State: $TEAM_DIR/health/outbound-last-send.<key>.
+#      State: $TEAM_DIR/health/outbound-last-send.<key>. The refusal tells the sender to
+#      edit the earlier message only for wording. A correction or an answer goes as a new
+#      message: an edit raises no notification, so a reader who has already read the
+#      message keeps the old version (measured over a week of corrections: six of fourteen
+#      went as edits, and a wrong claim corrected by an edit stood 9 h 53 min).
 # Env: GATE_OUTBOUND_REPLY_DISABLED=1 skips everything (tests of other gates only).
 . "$(dirname "$0")/hooks-common.sh"
 input="$(cat)"   # read stdin before any early exit, or the caller gets a broken pipe
@@ -172,7 +176,7 @@ case "$(get name)" in
       f="$state_dir/outbound-last-send.$key"; now=$(date +%s)
       last=$(cat "$f" 2>/dev/null || echo 0); case "$last" in ''|*[!0-9]*) last=0;; esac
       if [ $((now - last)) -lt "$min_gap" ]; then
-        block "RULE 14 (gate): you sent a message to this chat $((now - last)) seconds ago. One reply per request, as one message: merge this into it (edit, or send one consolidated message after ${min_gap}s)."
+        block "RULE 14 (gate): you sent a message to this chat $((now - last)) seconds ago. One reply per request, as one message. If this only fixes wording the reader does not have to act on, edit the earlier message. If it IS the answer, or changes what they must do, wait for the ${min_gap}s gap and send it as a NEW message (an edit raises no notification, so whoever already read the old one never sees the change), then mark the old one Superseded."
       fi
     fi ;;
 esac
