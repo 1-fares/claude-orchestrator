@@ -53,8 +53,15 @@ def strip_comments(text):
     return "".join(out)
 
 
+def join_continuations(text):
+    """Remove backslash-newline, as bash does while it reads a token. Without this a removal
+    wrapped over two lines (the backslash ending the first) split into two segments: the first
+    carried no path and the second did not open with a remover, so its path was never judged."""
+    return re.sub(r"\\\n[ \t]*", "", text)
+
+
 def segments(text):
-    lex = shlex.shlex(strip_comments(text), posix=True, punctuation_chars=";&|()\n")
+    lex = shlex.shlex(strip_comments(join_continuations(text)), posix=True, punctuation_chars=";&|()\n")
     lex.whitespace = " \t\r"; lex.whitespace_split = True
     lex.commenters = ""   # comments are already gone; a bare `#` in a path is data
     segs, cur = [], []
