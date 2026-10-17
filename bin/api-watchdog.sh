@@ -65,6 +65,10 @@
 #      hours and giving up would strand the team exactly when it becomes
 #      recoverable. The operator is pushed ONCE on entry (usage exhaustion is
 #      operator-actionable: add funds or wait) and the recovery is logged.
+#      A MULTI-DAY wall is the exception. When the role's refusal record names a
+#      rateLimitType and a resetsAt further out than USAGE_WALL_PAGE_SEC, the
+#      cadence drops to USAGE_WALL_PROBE_SEC and the operator is PAGED, because
+#      that wall does not clear until they act (see usage_wall_reset).
 #
 # Pure shell + curl + jq + tmux. Never makes a Claude API call, so cannot
 # itself be rate-limited.
@@ -124,6 +128,20 @@ await_operator_sec="${AWAIT_OPERATOR_SEC:-300}"
 # is cheap and idempotent (Escape + "try again" while the dialog is up just
 # re-opens it), and the outage ends on the account's schedule, not ours.
 usage_retry_sec="${USAGE_RETRY_SEC:-300}"
+
+# The flat cadence above was written for the FIVE-HOUR session limit, which
+# clears on its own inside a shift. A seven-day limit does not: it clears when
+# the account resets, days later, or when the operator switches account.
+# Retrying that every 300s only files refused calls. Measured on a live
+# deployment 2026-10-17: six roles made 67 retries in 76 minutes, all refused;
+# run to its reset the same cadence would have made about 3,700. So when the
+# role's own refusal record names a reset further out than USAGE_WALL_PAGE_SEC,
+# the cadence drops to USAGE_WALL_PROBE_SEC -- slow enough to cost nothing,
+# frequent enough to notice an operator /login -- and the operator is PAGED
+# rather than filed, because at that point only they can clear it. A wall with
+# no record, or one resetting soon, keeps the old behaviour exactly.
+usage_wall_probe_sec="${USAGE_WALL_PROBE_SEC:-1800}"
+usage_wall_page_sec="${USAGE_WALL_PAGE_SEC:-7200}"
 # API-STALL episode window: a "try again" makes the pane busy for a scan or
 # two, the busy path resets the health-file counters, and without a memory the
 # retry count restarted at 0 on every re-entry — a role stalling on the SAME
@@ -234,7 +252,7 @@ role_transcript() {
   rt_jsonl=""; rt_subdir=""
   pid="$(tmux display-message -t "$wid" -p '#{pane_pid}' 2>/dev/null)" || return 1
   [ -n "$pid" ] || return 1
-  sess_file="$HOME/.claude/sessions/${pid}.json"
+  sess_file="${WATCHDOG_SESSIONS_DIR:-$HOME/.claude/sessions}/${pid}.json"
   [ -f "$sess_file" ] || return 1
   read -r sid proj_dir < <(python3 -c '
 import json, os, sys
@@ -256,6 +274,33 @@ print(sid, proj_dir)
   rt_jsonl="$proj_dir/$sid.jsonl"
   rt_subdir="$proj_dir/$sid/subagents"
   return 0
+}
+
+# usage_wall_reset <window-id>: echo "<rateLimitType> <resetsAt-epoch>" from the
+# newest rejected quota record in the role's transcript, or nothing. Claude Code
+# writes a refused call with a top-level quotaLimits object
+# {status: rejected, rateLimitType: seven_day, resetsAt: <epoch>}; resetsAt is
+# the only end time we are told, so it is the one we pace against.
+usage_wall_reset() {
+  role_transcript "$1" || return 1
+  tail -c 262144 "$rt_jsonl" 2>/dev/null | python3 -c '
+import json, sys
+kind = reset = None
+for line in sys.stdin:
+    if "quotaLimits" not in line:
+        continue
+    try:
+        q = json.loads(line).get("quotaLimits")
+    except Exception:
+        continue
+    if not isinstance(q, dict) or q.get("status") != "rejected":
+        continue
+    k, r = q.get("rateLimitType"), q.get("resetsAt")
+    if k and isinstance(r, (int, float)) and not isinstance(r, bool):
+        kind, reset = k, int(r)
+if kind:
+    print(kind, reset)
+' 2>/dev/null
 }
 
 # transcript_turn_state <window-id>: open | closed | unknown (see
@@ -410,6 +455,7 @@ scan_once() {
         rm -f "$_urf" 2>/dev/null || true
       elif [ "$prev" = "stalled-usage" ]; then
         echo "$nowts" > "$_urf" 2>/dev/null || true
+        rm -f "$health_dir/$name.usage-wall" 2>/dev/null || true
       elif [ -f "$_urf" ]; then
         _urt=$(cat "$_urf" 2>/dev/null || echo 0); case "$_urt" in ''|*[!0-9]*) _urt=0;; esac
         if [ $((nowts - _urt)) -ge "${USAGE_RECOVERED_CONFIRM_SEC:-600}" ]; then
@@ -435,10 +481,28 @@ scan_once() {
           _upf="$health_dir/$name.usage-pushed"
           _uplast=$(cat "$_upf" 2>/dev/null || echo 0)
           case "$_uplast" in ''|*[!0-9]*) _uplast=0;; esac  # truncated/garbled marker => treat as never
+          _wallf="$health_dir/$name.usage-wall"
+          rm -f "$_wallf" 2>/dev/null || true
+          _wall="$(usage_wall_reset "$wid" 2>/dev/null)" || _wall=""
+          _wkind="${_wall%% *}"; _wreset="${_wall##* }"
+          [ -n "$_wall" ] || { _wkind=""; _wreset=0; }
+          case "$_wreset" in ''|*[!0-9]*) _wreset=0 ;; esac
+          _multiday=0
+          if [ "$_wreset" -gt 0 ] && [ $((_wreset - nowts)) -ge "$usage_wall_page_sec" ]; then
+            _multiday=1
+            printf '%s %s\n' "$_wkind" "$_wreset" > "$_wallf" 2>/dev/null || true
+            _whrs=$(( (_wreset - nowts + 1800) / 3600 ))
+            echo "$(iso "$nowts") [$name] USAGE-WALL ($_wkind; resets $(iso "$_wreset"), ~${_whrs}h; probing every ${usage_wall_probe_sec}s)" >> "$af"
+          fi
           if [ $((nowts - _uplast)) -ge "${USAGE_PUSH_DEDUPE_SEC:-3600}" ]; then
-            notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the usage limit; auto-retrying every ${usage_retry_sec}s until usage returns"
+            if [ "$_multiday" = 1 ]; then
+              notify_operator page "usage wall: $_wkind" "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the $_wkind limit; it does not clear until $(iso "$_wreset") (~${_whrs}h). The team is stopped until you switch account with /login. Probing every $((usage_wall_probe_sec / 60))m in case you do."
+              status_hook usage-wall "$name" "hit the $_wkind limit; no reset before $(iso "$_wreset"), operator /login needed"
+            else
+              notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the usage limit; auto-retrying every ${usage_retry_sec}s until usage returns"
+              status_hook usage-wall "$name" "usage limit reached; paused until it resets (auto-retry every ${usage_retry_sec}s)"
+            fi
             echo "$nowts" > "$_upf"
-            status_hook usage-wall "$name" "usage limit reached; paused until it resets (auto-retry every ${usage_retry_sec}s)"
           fi
         fi
         # Pace nudges via a marker file rather than last_retry: the health
@@ -448,7 +512,16 @@ scan_once() {
         _unf="$health_dir/$name.usage-nudged"
         _unlast=$(cat "$_unf" 2>/dev/null || echo 0)
         case "$_unlast" in ''|*[!0-9]*) _unlast=0;; esac  # truncated/garbled marker => treat as never
-        if [ $((nowts - _unlast)) -ge "$usage_retry_sec" ]; then
+        # A multi-day wall is paced on its own reset, not the flat cadence; the
+        # marker expires by wall clock, and on recovery (below).
+        _cadence="$usage_retry_sec"
+        _wallf="$health_dir/$name.usage-wall"
+        if [ -f "$_wallf" ]; then
+          read -r _wkind _wreset < "$_wallf" 2>/dev/null || { _wkind=""; _wreset=0; }
+          case "${_wreset:-0}" in ''|*[!0-9]*) _wreset=0 ;; esac
+          if [ "$_wreset" -gt "$nowts" ]; then _cadence="$usage_wall_probe_sec"; else rm -f "$_wallf" 2>/dev/null || true; fi
+        fi
+        if [ $((nowts - _unlast)) -ge "$_cadence" ]; then
           # A modal swallows typed keys, so dismiss it before nudging.
           if printf '%s' "$visible" | _has_modal_dialog_text; then
             tmux send-keys -t "$wid" Escape 2>/dev/null || true
@@ -457,7 +530,7 @@ scan_once() {
           tmux_submit "$wid" "try again — the usage limit may have reset; resume your current unit where you left off"
           retries=$((retries + 1)); last_retry=$nowts
           echo "$nowts" > "$_unf"
-          echo "$(iso "$nowts") [$name] usage-retry $retries (cadence ${usage_retry_sec}s)" >> "$af"
+          echo "$(iso "$nowts") [$name] usage-retry $retries (cadence ${_cadence}s)" >> "$af"
         fi
         persist "$hf" "stalled-usage" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
         continue
