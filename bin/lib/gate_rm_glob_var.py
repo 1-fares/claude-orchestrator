@@ -28,9 +28,35 @@ except Exception:
     sys.exit(0)
 hits = []
 
+def strip_comments(text):
+    """Drop shell comments the way bash does: `#` starts one only at the start of a word and
+    outside quotes. shlex would cut at ANY unquoted `#`, so `rm -rf /tmp/a#*` lost its glob and
+    read as a literal path, while bash removes everything the glob matches."""
+    out, i, n = [], 0, len(text)
+    q = None   # the open quote, or None
+    while i < n:
+        c = text[i]
+        if q:
+            out.append(c)
+            if c == "\\" and q == '"' and i + 1 < n:
+                out.append(text[i + 1]); i += 2; continue
+            if c == q: q = None
+            i += 1; continue
+        if c == "\\" and i + 1 < n:
+            out.append(c); out.append(text[i + 1]); i += 2; continue
+        if c in "'\"":
+            q = c; out.append(c); i += 1; continue
+        if c == "#" and (not out or out[-1] in " \t\n;&|("):
+            while i < n and text[i] != "\n": i += 1
+            continue
+        out.append(c); i += 1
+    return "".join(out)
+
+
 def segments(text):
-    lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()\n")
+    lex = shlex.shlex(strip_comments(text), posix=True, punctuation_chars=";&|()\n")
     lex.whitespace = " \t\r"; lex.whitespace_split = True
+    lex.commenters = ""   # comments are already gone; a bare `#` in a path is data
     segs, cur = [], []
     for t in lex:
         if t and set(t) <= set(";&|()\n"):
