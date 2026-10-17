@@ -13,7 +13,7 @@ start and after every compaction, and what a tool gate refuses. This mechanism, 
    only deviations (skipped thinking-model delegations with none real, overdue unit-table
    rows, pushes to the phone today, an active maintenance mute, an oversized CLAUDE.md) and
    is silent when clean.
-3. **Gates that refuse.** `gate-outbound-reply.sh` (PreToolUse on the connector send tools) refuses an unmeasured credential, the wrong tool for an id, a recipient outside `config/outbound-allowlist.txt`, a deflecting or hollow reply, and a second message to the same chat inside 60 s (the last successful send is recorded by `record-outbound-send.sh`, PostToolUse on the same tools); see `docs/ENFORCEMENT.md`. `gate-read-size.sh` (PreToolUse Read) refuses a whole-file read
+3. **Gates that refuse.** `gate-outbound-reply.sh` (PreToolUse on the connector send tools) refuses an unmeasured credential, the wrong tool for an id, a recipient outside `config/outbound-allowlist.txt`, a deflecting or hollow reply, and a second message to the same chat inside 60 s (the last successful send is recorded by `record-outbound-send.sh`, PostToolUse on the same tools); see `docs/ENFORCEMENT.md`. `gate-rm-glob-var.sh` (PreToolUse Bash) refuses `rm`, `unlink`, `xargs rm` or `find -delete` with a wildcard or a variable in the path, so a cleanup removes only paths written out in full; `gate-read-size.sh` (PreToolUse Read) refuses a whole-file read
    over 200 lines in the engine tree; `gate-outbound-draft.sh` (PreToolUse on the outbound
    message tools) refuses a body over 600 characters without a CLASS-4 draft logged in the
    last 30 minutes; `fable-call-log.sh` (PreToolUse and PostToolUse on Agent) refuses a
@@ -31,6 +31,7 @@ Settings example (project `.claude/settings.json`):
   "PreToolUse": [
     {"matcher": "Read", "hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/bin/hooks/gate-read-size.sh"}]},
     {"matcher": "Agent", "hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/bin/hooks/fable-call-log.sh"}]},
+    {"matcher": "Bash", "hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/bin/hooks/gate-rm-glob-var.sh"}]},
     {"matcher": "mcp__<connector>__(chat_send|channel_send|mail_send)", "hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/bin/hooks/gate-outbound-draft.sh"}]}
     {"matcher": "mcp__<connector>__(chat_send|chat_reply|channel_send|channel_reply|mail_send|mail_reply)", "hooks": [{"type": "command", "command": "$HOME/<engine>/bin/hooks/gate-outbound-reply.sh"}]},
   ],

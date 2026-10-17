@@ -30,6 +30,7 @@ Three layers, in order of strength:
 | Daemons run the code on disk | Gate | `bin/lib/self-reload.sh` | `bin/tests/daemons-self-reload.test.sh` | re-exec |
 | No private data in a push | Gate | `bin/privacy-scan.sh` (pre-push) | in-hook | push refused |
 | Whole-file reads over 200 lines in the engine tree | Gate | `bin/hooks/gate-read-size.sh` | none (UNENFORCED test) | read refused |
+| No `rm`, `unlink`, `xargs rm` or `find -delete` with a wildcard or a variable in the path | Gate | `bin/hooks/gate-rm-glob-var.sh` (PreToolUse Bash), rule in `bin/lib/gate_rm_glob_var.py`: the path must be literal, through wrappers, `bash -c`, `eval`, `$(...)`, a heredoc a shell reads, and inline interpreter code. Known gaps: a script written then run, `eval` of an indirection the guard cannot resolve, code read from a file | `bin/tests/gate-rm-glob-var.test.sh` (36 rows, all red without the guard) | command refused, the message names the move-aside alternative |
 | Rules with only a reminder (routing to the stronger model, observer cadence, units in the state table) | Rule + Check | `bin/hooks/standing-rules.sh` deviations; observer audits | none | **UNENFORCED**; owner: orchestrator |
 
 ## A check reads a machine-written field, never model prose
@@ -77,4 +78,5 @@ missing field, not a parsing problem. Add the field.
 - PreToolUse on the connector send tools: `gate-outbound-draft.sh`, then `gate-outbound-reply.sh`.
 - PostToolUse on the same tools: `record-outbound-send.sh`.
 - PreToolUse `Read`: `gate-read-size.sh`. PreToolUse/PostToolUse `Agent`: `fable-call-log.sh`.
+- PreToolUse `Bash`: `gate-rm-glob-var.sh`. Wire it at user level too, or a sub-agent's shell is ungated.
 - SessionStart, UserPromptSubmit: `standing-rules.sh`.
