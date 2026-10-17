@@ -79,15 +79,33 @@ def scan(text, depth=0):
         # Unparseable (e.g. $'...' ANSI-C quoting) but bash may still run it: refuse any removal in it.
         if RAW_RM.search(text): hits.append("a command this guard cannot parse that contains rm, unlink or -delete")
         return
-    stdin_shell = any(sg and sg[0].rsplit("/", 1)[-1] in SHELLS and not any(not t.startswith("-") for t in sg[1:])
-                      for sg in segs[1:])
-    if stdin_shell:
+    def unwrap(sg):
+        # Leading keywords, VAR=value assignments and wrappers (`sudo bash`, `timeout 5 bash`)
+        # are not the command: strip them before asking what the command IS.
+        s2 = list(sg)
+        while s2 and s2[0] in KEYWORDS: s2 = s2[1:]
+        while s2 and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", s2[0]): s2 = s2[1:]
+        while s2 and s2[0].rsplit("/", 1)[-1] in WRAP:
+            j = next((k for k, t in enumerate(s2[1:], 1) if not t.startswith("-") and "=" not in t
+                      and not re.match(r"^[0-9.]+[smhd]?$", t)), None)
+            s2 = s2[j:] if j else []
+        return s2
+
+    def reader_of(sg, names):
+        # The segment is a bare reader (`| bash`, `| sudo bash`, `| python3`) when, after the
+        # wrappers, its command is one of `names` and it is given no non-option argument.
+        s2 = unwrap(sg)
+        if not s2: return ""
+        b = s2[0].rsplit("/", 1)[-1]
+        ok = b in names or (names is INTERP and re.match(r"^python3?\.[0-9]+$", b))
+        return b if ok and not any(not t.startswith("-") for t in s2[1:]) else ""
+
+    if any(reader_of(sg, SHELLS) for sg in segs[1:]):
         # `... | bash`: the shell runs whatever earlier segments print; removal text fed to it is refused.
-        fed = " ".join(t for sg in segs if not (sg and sg[0].rsplit("/", 1)[-1] in SHELLS) for t in sg)
+        fed = " ".join(t for sg in segs if not reader_of(sg, SHELLS) for t in sg)
         if RAW_RM.search(fed): hits.append("removal text piped into a shell")
     for i, sg in enumerate(segs):
-        b0 = sg[0].rsplit("/", 1)[-1] if sg else ""
-        if i and (b0 in INTERP or re.match(r"^python3?\.[0-9]+$", b0)) and not any(not t.startswith("-") for t in sg[1:]):
+        if i and reader_of(sg, INTERP):
             # `... | python3`: the interpreter runs what earlier segments print.
             interp_bodies.append([" ".join(t for x in segs[:i] for t in x)])
     for s in segs:

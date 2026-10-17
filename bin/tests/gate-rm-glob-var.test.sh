@@ -45,6 +45,12 @@ allow "python3 -c \"import glob; print(glob.glob('/tmp/tmp.*'))\""
 allow "echo \$'a\\tb'"
 allow "echo 'hello' | bash"
 
+echo "2d. a wrapper in front of the reader does not hide it"
+block "echo 'rm -rf /tmp/tmp.*' | sudo bash"
+block "echo 'rm -rf /tmp/tmp.*' | timeout 5 bash"
+block "echo \"import os,glob; [os.remove(p) for p in glob.glob('/tmp/x*')]\" | sudo python3"
+allow "cat /tmp/notes | sudo bash"
+
 echo "2c. interpreters: heredoc, here-string, pipe, and a directory listing"
 block "python3 - <<'EOF'
 import glob, os
