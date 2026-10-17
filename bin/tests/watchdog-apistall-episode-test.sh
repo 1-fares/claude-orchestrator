@@ -48,11 +48,15 @@ err_pane() {
     "bash -c 'stty -echo 2>/dev/null; printf \"● transcribing the memorandum…\n  ⎿ API Error: 400 Output blocked by content filtering policy\n────\n❯ \n\"; sleep 600'"
   sleep 1
 }
-# The busy blip between retries: the "try again" turn in flight.
+# The busy blip between retries: the "try again" turn in flight. The spinner line is
+# the real shape: it opens with the spinner glyph, not the message bullet. A bullet
+# line is an assistant message or an agents-panel row, and AGENTS_PANEL_RE strips
+# those before the busy check (2026-09-11), so a fixture that draws the spinner with
+# a bullet reads as not-busy and the episode marker is cleared as a recovery.
 busy_pane() {
   $TM kill-window -t "$TEAM_SESSION:apirole" 2>/dev/null || true
   $TM new-window -t "$TEAM_SESSION" -n apirole \
-    "bash -c 'i=0; while true; do printf \"● retrying step %d… esc to interrupt\n\" \$i; i=\$((i+1)); sleep 1; done'"
+    "bash -c 'i=0; while true; do printf \"✻ retrying step %d… (%ds · esc to interrupt)\n\" \$i \$i; i=\$((i+1)); sleep 1; done'"
   sleep 1
 }
 
