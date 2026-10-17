@@ -126,4 +126,33 @@ echo "12. no allow-list file at all -> everything blocked (the list is the permi
 OUTBOUND_ALLOWLIST="$TD/missing.txt" call mcp__ms365__teams_chat_send "$chat" "<p>hello</p>"; rc=$?
 [ "$rc" = 2 ] && [[ "$out" == *"missing"* ]] && ok "missing allow-list blocks" || bad "missing allow-list did not block (rc=$rc): $out"
 
+echo '13. allow-list path resolution: OUTBOUND_ALLOWLIST, else DEPLOY_DIR/ in the repo, else config/'
+# No deployment name is baked into the hook. With OUTBOUND_ALLOWLIST unset the gate
+# looks in $DEPLOY_DIR (default local/) inside the repo, then falls back to config/.
+RH="$TD/repo"; mkdir -p "$RH/mydeploy" "$RH/config" "$RH/local"
+cat > "$RH/mydeploy/outbound-allowlist.txt" <<'EOF3'
+19:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@thread.v2
+EOF3
+: > "$RH/config/outbound-allowlist.txt"            # config/ lists nobody
+: > "$RH/local/outbound-allowlist.txt"             # the default deployment dir lists nobody
+dcall() { # dcall <DEPLOY_DIR or empty> <chat_id> -> rc, stderr in $out
+  rm -f "$TD"/health/outbound-last-send.*
+  local d=() ; [ -n "$1" ] && d=(DEPLOY_DIR="$1")
+  out="$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"mcp__ms365__teams_chat_send","tool_input":{"chat_id":sys.argv[1],"body_html":"<p>ordinary message</p>"}}))' "$2" \
+        | env -u OUTBOUND_ALLOWLIST ORCH_HOME="$RH" "${d[@]}" bash "$GATE" 2>&1 >/dev/null)"
+  return $?
+}
+dcall mydeploy "$chat"; rc=$?
+[ "$rc" = 0 ] && ok "DEPLOY_DIR allow-list is read" || bad "DEPLOY_DIR allow-list not read (rc=$rc): $out"
+dcall mydeploy "19:cccccccccccccccccccccccccccccccc@thread.v2"; rc=$?
+[ "$rc" = 2 ] && ok "a chat absent from the DEPLOY_DIR list is blocked" || bad "unlisted chat passed under DEPLOY_DIR (rc=$rc): $out"
+dcall "" "$chat"; rc=$?
+[ "$rc" = 2 ] && ok "DEPLOY_DIR unset falls back to local/, which lists nobody" || bad "default local/ not used (rc=$rc): $out"
+rm -rf "$RH/local"
+cat > "$RH/config/outbound-allowlist.txt" <<'EOF4'
+19:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@thread.v2
+EOF4
+dcall "" "$chat"; rc=$?
+[ "$rc" = 0 ] && ok "no deployment dir falls back to config/" || bad "config/ fallback not used (rc=$rc): $out"
+
 [ "$fail" = 0 ] && echo "gate-outbound-reply.test: PASS" || { echo "gate-outbound-reply.test: FAIL"; exit 1; }

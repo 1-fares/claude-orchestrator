@@ -12,7 +12,7 @@
 # Three checks on the outgoing body (HTML tags stripped):
 #   1. CREDENTIAL FRESHNESS. Every environment-gate value and every shared-login
 #      password in the body (patterns GATE_URL_RE and GATE_LOGIN_RE from
-#      numeriq/gate-outbound.conf or config/gate-outbound.conf; no patterns = no
+#      $DEPLOY_DIR/gate-outbound.conf (default local/) or config/gate-outbound.conf; no patterns = no
 #      check) must appear in $TEAM_DIR/health/env-logins.json, written by the
 #      deployment's login probe, with verified_at inside GATE_CRED_MAX_AGE_SEC
 #      (default 900). Anything else is a quote from a document, and blocked.
@@ -32,7 +32,7 @@ input="$(cat)"   # read stdin before any early exit, or the caller gets a broken
 # body are an environment-gate value and which are a shared-login password.
 # The environment wins over the conf (tests set their own patterns).
 _env_url="${GATE_URL_RE-}"; _env_login="${GATE_LOGIN_RE-}"
-for _c in "$_repo/numeriq/gate-outbound.conf" "$_repo/config/gate-outbound.conf"; do
+for _c in "$_repo/${DEPLOY_DIR:-local}/gate-outbound.conf" "$_repo/config/gate-outbound.conf"; do
   if [ -r "$_c" ]; then . "$_c"; break; fi
 done
 [ -n "$_env_url" ] && GATE_URL_RE="$_env_url"; [ -n "$_env_login" ] && GATE_LOGIN_RE="$_env_login"
@@ -87,10 +87,10 @@ esac
 # --- 0b. recipient allow-list (rule 10: the operator's recipient list) -------------
 # Every chat_id, channel_id and mail address of the call must match a line of the
 # allow-list file (exact id, or *@domain for mail). A missing file blocks everything:
-# the list is the permission. Path: $OUTBOUND_ALLOWLIST, else numeriq/ (this fork),
+# the list is the permission. Path: $OUTBOUND_ALLOWLIST, else the deployment directory ($DEPLOY_DIR, default local/),
 # else config/ (the engine default).
 allow="${OUTBOUND_ALLOWLIST:-}"
-[ -n "$allow" ] || { [ -r "$_repo/numeriq/outbound-allowlist.txt" ] && allow="$_repo/numeriq/outbound-allowlist.txt" || allow="$_repo/config/outbound-allowlist.txt"; }
+[ -n "$allow" ] || { [ -r "$_repo/${DEPLOY_DIR:-local}/outbound-allowlist.txt" ] && allow="$_repo/${DEPLOY_DIR:-local}/outbound-allowlist.txt" || allow="$_repo/config/outbound-allowlist.txt"; }
 targets="$(printf '%s' "$input" | python3 -c '
 import sys, json, re
 d = json.load(sys.stdin); t = d.get("tool_input", {}) or {}
