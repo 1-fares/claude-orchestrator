@@ -1,5 +1,5 @@
 # shared by the standing-rules hooks; sourced, not executed
-_repo="${ORCH_HOME:-$HOME/projects/deployment-fork}"
+_repo="${ORCH_HOME:-$HOME/projects/claude-orchestrator}"
 _td="${TEAM_DIR:-$(ls -d "$_repo"/.team-r* 2>/dev/null | head -1)}"
 _today="$(date -u +%Y-%m-%d)"
 _fable_log="$_td/reports/fable-calls.log"
