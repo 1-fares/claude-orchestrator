@@ -27,6 +27,7 @@ cat > "$stub_dir/claude" <<'EOF'
 #!/usr/bin/env bash
 cat > /dev/null   # drain stdin
 echo "call $*" >> "${FAKE_CLAUDE_LOG:-/dev/null}"
+[ -n "${FAKE_CLAUDE_STDERR:-}" ] && cat "$FAKE_CLAUDE_STDERR" >&2
 cat "${FAKE_CLAUDE_OUTPUT:?}"
 EOF
 chmod +x "$stub_dir/claude"
@@ -134,6 +135,12 @@ check "busy roster: no report written" "$([ ! -f "$TEAM_DIR/dreams/latest-report
 check "busy roster: history untouched" "$(grep -q 'body a' "$TEAM_DIR/observer/history.md"; echo $?)"
 echo idle > "$FAKE_ACT_DIR/worker1"
 
+# Every real `claude` start prints a known deny-rule note on stderr, and run_model appends stderr to
+# dreams/dreamer.log. The fake prints a real error line AND the note on every call; checked after section 3.
+printf '%s\n%s\n' 'API Error: 529 overloaded_error (dreamer stderr fixture)' \
+  'Permission deny rule (.claude/settings.json): Bash(git push * :**) has a :* that is not at the end, so it is matched as a * wildcard (the : is literal), not as the trailing :* prefix syntax. It already matches as a * wildcard; moving :* to the end would make it a literal prefix and change which commands match.' > "$stub_dir/stderr"
+export FAKE_CLAUDE_STDERR="$stub_dir/stderr"
+
 # ============ 2. report-only run =========================================
 dreamer --report-only
 check "report-only: report exists" "$([ -f "$TEAM_DIR/dreams/latest-report.md" ]; echo $?)"
@@ -155,6 +162,12 @@ check "apply: state.md collapsed" "$(grep -q 'claim A terminal' "$TEAM_DIR/state
 check "apply: state.md fresh section kept" "$(grep -q 'fresh unit' "$TEAM_DIR/state.md"; echo $?)"
 check "apply: originals in state-archive.md" "$(grep -q 'long derivation text' "$TEAM_DIR/state-archive.md"; echo $?)"
 check "apply: dream marker in state.md" "$(grep -q '^_last dream: ' "$TEAM_DIR/state.md"; echo $?)"
+
+# stderr checks. The first is the positive precondition: "no note in the log" also passes on an empty log.
+check "stderr: model calls were made"               "$([ -s "$FAKE_CLAUDE_LOG" ]; echo $?)"
+check "stderr: real error line kept in dreamer.log" "$(grep -qF 'dreamer stderr fixture' "$TEAM_DIR/dreams/dreamer.log"; echo $?)"
+check "stderr: known deny-rule note dropped"        "$(! grep -qF 'Permission deny rule (.claude/settings.json): Bash(git push * :**)' "$TEAM_DIR/dreams/dreamer.log"; echo $?)"
+unset FAKE_CLAUDE_STDERR
 
 # ============ 4. idempotent rerun ========================================
 # Model now (correctly) has nothing; also verify no duplicate digest days if

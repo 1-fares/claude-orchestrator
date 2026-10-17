@@ -156,7 +156,11 @@ run_model() {
   calls_used=$((calls_used+1))
   local -a cmd=( "$claude_bin" -p --model "$model" )
   [ -n "$effort" ] && cmd+=( --effort "$effort" )
-  timeout "$call_timeout" "${cmd[@]}" < "$prompt_file" > "$out_file" 2>>"$dreams/dreamer.log"
+  local errf="$dreams/.run_model.err"   # one fixed file, overwritten per call (calls are sequential)
+  timeout "$call_timeout" "${cmd[@]}" < "$prompt_file" > "$out_file" 2>"$errf"
+  # Every claude start prints a known deny-rule note on stderr; appended raw it fills dreamer.log and hides real errors.
+  # Drop exactly that note; if the filter itself fails, append everything rather than lose a line.
+  "$repo/bin/lib/strip-known-cc-notes.sh" < "$errf" >> "$dreams/dreamer.log" 2>/dev/null || cat "$errf" >> "$dreams/dreamer.log"
   [ -s "$out_file" ]
 }
 
