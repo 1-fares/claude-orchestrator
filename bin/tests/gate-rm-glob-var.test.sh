@@ -59,6 +59,16 @@ allow 'echo hi #; rm -rf /tmp/*'
 allow 'rm -rf /tmp/x # cleanup'
 allow 'rm -f "/tmp/a#b"'
 
+echo "2f. a command wrapped over two lines is one command"
+block 'rm -rf \
+  /tmp/*'
+block 'rm -rf \
+  "$D"'
+allow 'rm -rf \
+  /tmp/literal-dir'
+allow 'echo hi \
+  there'
+
 echo "2c. interpreters: heredoc, here-string, pipe, and a directory listing"
 block "python3 - <<'EOF'
 import glob, os
