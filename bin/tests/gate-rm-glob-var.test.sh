@@ -51,6 +51,14 @@ block "echo 'rm -rf /tmp/tmp.*' | timeout 5 bash"
 block "echo \"import os,glob; [os.remove(p) for p in glob.glob('/tmp/x*')]\" | sudo python3"
 allow "cat /tmp/notes | sudo bash"
 
+echo "2e. a hash in a path is data; a hash that opens a word is a comment (as bash reads it)"
+block 'rm -rf /tmp/a#*'
+block 'rm -rf /tmp/build#tmp/*'
+block "echo '#' ; rm -rf /tmp/z*"
+allow 'echo hi #; rm -rf /tmp/*'
+allow 'rm -rf /tmp/x # cleanup'
+allow 'rm -f "/tmp/a#b"'
+
 echo "2c. interpreters: heredoc, here-string, pipe, and a directory listing"
 block "python3 - <<'EOF'
 import glob, os
