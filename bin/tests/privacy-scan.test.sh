@@ -33,9 +33,13 @@ DENY="$SCRATCH/deny"
 NO_DENY="$SCRATCH/deny-absent"
 fail=0
 
-# A one-line unified diff adding $1 to a file.
+# A one-line unified diff adding $1 to a file ($2, default some/file.sh).
+# The --- / +++ PAIR IS DELIBERATE: a bare +++ is not a header any more, since
+# an added line can forge one, so a fixture without the pair would not test
+# what `git show` actually produces.
 diff_adding() {
-  printf '+++ b/some/file.sh\n+%s\n' "$1"
+  local f="${2:-some/file.sh}"
+  printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n+%s\n' "$f" "$f" "$f" "$f" "$1"
 }
 
 # block <name> <line> [deny_file]: the scanner must refuse it (exit 1).
@@ -191,6 +195,78 @@ if [ "$rc" -eq 2 ]; then
   echo "  ok       CONTROL: an unknown argument is a usage error, not a silent pass"
 else
   echo "  FAIL     unknown argument gave exit $rc, expected 2 -- $out"
+  fail=$((fail + 1))
+fi
+
+# --- the fixture-file exemption must stay one file wide ---------------------
+echo "fixture exemption"
+out="$(diff_adding 'TARGET=i-0123456789abcdef0' 'bin/tests/privacy-scan.test.sh' | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ]; then
+  echo "  ok       CONTROL: a fixture in this very file is exempt, so the gate is testable"
+else
+  echo "  FAIL     the fixture file is not exempt, the table cannot be committed -- $out"
+  fail=$((fail + 1))
+fi
+
+out="$(diff_adding 'TARGET=i-0123456789abcdef0' 'bin/tests/other.test.sh' | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ]; then
+  echo "  ok       PLANTED POSITIVE: the exemption does not extend to another test file"
+else
+  echo "  FAIL     the exemption leaked to another path (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+
+out="$(diff_adding 'TARGET=i-0123456789abcdef0' 'bin/tests/privacy-scan.test.sh.bak' | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ]; then
+  echo "  ok       PLANTED POSITIVE: a path that merely starts with the fixture name is not exempt"
+else
+  echo "  FAIL     a prefix of the fixture path was exempted (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+
+# --- the value test: coverage must not shrink -------------------------------
+# The discriminator exists so a keyword followed by ordinary English is not
+# refused. These pin the line between that and a credential, after the first
+# version of it gave back two shapes the previous scanner caught.
+echo "value discriminator"
+block "long value, no digit, trailing prose"  'secret: abcdefghijklmnop and then prose'
+block "13-char value with prose after it"     'password: hunterrsecret see the docs'
+block "value running to end of line"          'token: abcdefghij'
+block "value containing a digit"              'api_key = k93jf0wk20fj20fj'
+block "hyphenated value to end of line"       'token: decisions-status-line'
+pass  "keyword then an ordinary word"         'a secret: something ordinary in prose'
+
+# --- the forged file header -------------------------------------------------
+# A '+++ b/<path>' line can arrive as added CONTENT. Paired with the fixture
+# exemption that turned misattribution into a bypass: an AKIA key passed by
+# naming the exempt path (measured 2026-10-19).
+echo "forged file header"
+out="$(printf 'diff --git a/secrets.sh b/secrets.sh\n--- a/secrets.sh\n+++ b/secrets.sh\n+++ b/bin/tests/privacy-scan.test.sh\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n' | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ]; then
+  echo "  ok       PLANTED POSITIVE: a forged +++ line cannot borrow the exemption"
+else
+  echo "  FAIL     the gate was bypassed by a forged file header (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+
+out="$(printf 'diff --git a/f.sh b/f.sh\n--- a/f.sh\n+++ b/f.sh\n+TARGET=i-0123456789abcdef0\n' | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q '^  f.sh:'; then
+  echo "  ok       CONTROL: a real --- / +++ pair still attributes to its file"
+else
+  echo "  FAIL     a real header pair stopped attributing (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+
+# --- the deny file must fail closed, not open -------------------------------
+echo "deny file failure modes"
+printf 'acmecorp\n' > "$SCRATCH/deny-unreadable"
+chmod 000 "$SCRATCH/deny-unreadable"
+out="$(printf '+++ b/f.sh\n+source "$repo/acmecorp/x.conf"\n' | PRIVACY_DENY_FILE="$SCRATCH/deny-unreadable" bash "$SCAN" 2>&1)"; rc=$?
+chmod 644 "$SCRATCH/deny-unreadable"
+if [ "$rc" -eq 2 ]; then
+  echo "  ok       PLANTED POSITIVE: an unreadable deny file stops the scan, it does not disable it"
+else
+  echo "  FAIL     an unreadable deny file passed silently (exit $rc) -- $out"
   fail=$((fail + 1))
 fi
 

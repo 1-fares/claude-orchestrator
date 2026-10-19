@@ -95,7 +95,7 @@ esac
 #   provider key/token values  AKIA/ASIA, gh[pousr]_, github_pat_, xox[baprs]-
 #   private key blocks         -----BEGIN ... PRIVATE KEY-----
 #   chat ids                   19:<id>@thread.tacv2 / @thread.v2
-private_re='(/home/[a-z_][a-z0-9_-]+|/Users/[A-Za-z][A-Za-z0-9_-]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z0-9.-]*ntfy\.sh/[A-Za-z0-9_#/<>-]+|(api[_-]?key|secret|password|bearer|token)["'"'"'[:space:]]*[:=][[:space:]"'"'"']*([A-Za-z0-9_/+-]*[0-9][A-Za-z0-9_/+-]*|[A-Za-z0-9_/+-]{8,}[[:punct:]]?$)|[a-f0-9]{48,}|([0-9]{1,3}\.){3}[0-9]{1,3}|\b(i|sg|sgr|vpc|subnet|ami|vol|snap)-[0-9a-f]{8,17}\b|arn:aws[a-z-]*:[^: ]*:[^: ]*:[0-9]{12}:|\b(AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bxox[baprs]-[A-Za-z0-9-]{10,}|BEGIN [A-Z ]*PRIVATE KEY|19:[A-Za-z0-9_<>-]{8,}@thread\.(tacv2|v2))'
+private_re='(/home/[a-z_][a-z0-9_-]+|/Users/[A-Za-z][A-Za-z0-9_-]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z0-9.-]*ntfy\.sh/[A-Za-z0-9_#/<>-]+|(api[_-]?key|secret|password|bearer|token)["'"'"'[:space:]]*[:=][[:space:]"'"'"']*([A-Za-z0-9_/+-]*[0-9][A-Za-z0-9_/+-]*|[A-Za-z0-9_/+-]{8,}[[:punct:]]?$|[A-Za-z0-9_/+-]{12,})|[a-f0-9]{48,}|([0-9]{1,3}\.){3}[0-9]{1,3}|\b(i|sg|sgr|vpc|subnet|ami|vol|snap)-[0-9a-f]{8,17}\b|arn:aws[a-z-]*:[^: ]*:[^: ]*:[0-9]{12}:|\b(AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bxox[baprs]-[A-Za-z0-9-]{10,}|BEGIN [A-Z ]*PRIVATE KEY|19:[A-Za-z0-9_<>-]{8,}@thread\.(tacv2|v2))'
 
 # What a MATCHED TOKEN may look like and still pass. Judged against the token
 # only. Entries that could shield a longer real value are end-anchored, so a
@@ -110,6 +110,21 @@ private_re='(/home/[a-z_][a-z0-9_-]+|/Users/[A-Za-z][A-Za-z0-9_-]+|[A-Za-z0-9._%
 # (the a/b/c fixtures in bin/tests) or an <angle-bracket> marker. A real id is
 # mixed-case base64-ish and matches neither.
 #
+# THE VALUE TEST, AND THE REGRESSION IT CAUSED ON THE WAY IN (2026-10-19).
+# The alternative used to match any 8+ character value, which refused ordinary
+# English: the deployment fork measured two blocked lines on 2026-08-05, one a
+# sentence where a keyword was followed by an ordinary nine-letter word, the
+# other a code comment where a keyword was followed by a hyphenated phrase. A
+# gate that punishes people documenting auth teaches bypass. Its rule, ported
+# here, is that the value must CONTAIN A DIGIT or RUN TO END OF LINE.
+# Measured against this repo afterwards, that rule gave back a shape the old
+# one caught: a keyword, a long value with no digit in it, and more words after
+# it on the same line satisfies neither branch, so it passed. A secret is a
+# secret wherever it sits on the line, so a third branch blocks any value of 12
+# or more characters. A nine-letter English word still passes; a credential
+# that short is not worth bending a gate for. The literals are in
+# bin/tests/privacy-scan.test.sh, which is the one file allowed to carry them.
+#
 # TWO FALSE POSITIVES FIXED 2026-10-19, both found by writing the test table
 # rather than by use. (a) The email alternative forbade dots inside the domain
 # body, so an @users.noreply.github.com address matched as "@users.noreply" and
@@ -123,9 +138,22 @@ allow_re='(^token = token_file[[:punct:]]?$|^token": bus_token[[:punct:]]?$|<[a-
 
 # Operator deny list: literal private names that no pattern can guess. Read
 # from a gitignored file so the public tree never has to carry them.
+# FAIL CLOSED ON A DENY FILE THAT EXISTS BUT CANNOT BE READ. Silently running
+# with the generic patterns alone is the worst outcome: the operator believes
+# the deployment's names are guarded, one chmod or one typo in
+# PRIVACY_DENY_FILE removes that guard, and every push still reports clean.
+# An ABSENT file stays silent, because "no deployment configured" is a real and
+# common state that cannot be told apart from a missing one.
 deny_re=""
-if [ -r "$DENY_FILE" ]; then
-  deny_re="$(grep -vE '^[[:space:]]*(#|$)' "$DENY_FILE" 2>/dev/null | paste -sd'|' -)"
+if [ -e "$DENY_FILE" ]; then
+  if [ ! -r "$DENY_FILE" ]; then
+    echo "privacy-scan: deny file exists but is not readable: $DENY_FILE" >&2
+    echo "privacy-scan: refusing to scan with the deny list silently disabled." >&2
+    exit 2
+  fi
+  if ! deny_re="$(grep -vE '^[[:space:]]*(#|$)' "$DENY_FILE" | paste -sd'|' -)"; then
+    : # grep exits 1 when every line is a comment or blank; that is legitimate
+  fi
 fi
 
 # Candidate lines, tagged with the file they land in.
@@ -142,12 +170,21 @@ else
   # the deployment's company and no push ever objected. Message lines are now
   # candidates, tagged so a hit says where it is. '+' lines keep being read
   # unconditionally, so a bare diff with no `diff --git` header still works.
+  # A '+++ ' LINE IS ONLY A HEADER WHEN IT FOLLOWS A '--- ' LINE. Without that
+  # pairing, an ADDED LINE whose content begins with "++ b/<path>" arrives as
+  # "+++ b/<path>" and is indistinguishable from a real file header, so every
+  # later line in the commit is attributed to a path the committer chose. With
+  # the fixture-file exemption below that stopped being mere misattribution and
+  # became a bypass: naming the exempt path skipped the rest of the diff.
+  # Measured 2026-10-19: an AKIA key passed the gate that way.
   raw="$(awk '
-    /^commit [0-9a-f]{7,}/ { indiff=0; next }
-    /^diff --git /         { indiff=1 }
-    /^\+\+\+ /             { file=$2; sub(/^b\//,"",file); next }
-    /^\+/                  { print file ":" substr($0,2); next }
-    (!indiff) && /^    /   { print "(commit message):" substr($0,5) }
+    /^commit [0-9a-f]{7,}/ { indiff=0; prevminus=0; next }
+    /^diff --git /         { indiff=1; prevminus=0; next }
+    /^--- /                { prevminus=1; next }
+    /^\+\+\+ / && prevminus { file=$2; sub(/^b\//,"",file); prevminus=0; next }
+    /^\+/                  { prevminus=0; print file ":" substr($0,2); next }
+    (!indiff) && /^    /   { prevminus=0; print "(commit message):" substr($0,5); next }
+                           { prevminus=0 }
   ')"
 fi
 
