@@ -207,17 +207,32 @@ else
       else if (c == "\\") { next }
       old_rem = 0; new_rem = 0    # malformed hunk: re-read this line as a header
     }
-    /^commit [0-9a-f]{7,}/ { file = ""; old_rem = 0; new_rem = 0; prevminus = 0; next }
-    /^diff --git /         { file = ""; prevminus = 0; next }
+    /^commit [0-9a-f]{7,}/ { file = ""; old_rem = 0; new_rem = 0; prevminus = 0; seen_hunk = 0; next }
+    /^diff /               { file = ""; prevminus = 0; seen_hunk = 0; next }
     /^--- /                { prevminus = 1; next }
     # BOTH conditions guard a header: outside a hunk (above) AND paired with a
     # minus-minus-minus line. git always emits the pair, so requiring it costs
     # nothing, and it means a lone plus-plus-plus line cannot retarget the scan
     # even in a hand-made diff carrying no @@ header. No apostrophes in here:
     # the awk program sits inside a single-quoted shell string.
-    /^\+\+\+ / && prevminus { file = $2; sub(/^b\//, "", file); prevminus = 0; next }
-    /^@@ /                 {
+    # THE PATH IS THE WHOLE REST OF THE LINE, not field 2: a path containing a
+    # space truncated at the first one, and a file named like the exempt
+    # fixture plus a space and a word inherited the exemption (measured
+    # 2026-10-19). A trailing tab and timestamp, which plain diff emits, is cut.
+    # SEEN_HUNK: a file header cannot follow a hunk header inside one file
+    # section. That invariant is what covers a COMBINED diff from a merge,
+    # whose @@@ header the line counter does not read, so without it a merge
+    # diff could still forge a header out of content.
+    /^\+\+\+ / && prevminus && !seen_hunk {
+      file = substr($0, 5)
+      sub(/\t.*$/, "", file)
+      sub(/^b\//, "", file)
       prevminus = 0
+      next
+    }
+    /^@@/                  {
+      prevminus = 0
+      seen_hunk = 1
       h = $0; sub(/ @@.*$/, "", h)
       old_rem = 1; new_rem = 1
       if (match(h, /-[0-9]+,[0-9]+/))  { t = substr(h, RSTART, RLENGTH); split(t, pr, ","); old_rem = pr[2] + 0 }

@@ -257,6 +257,45 @@ else
   fail=$((fail + 1))
 fi
 
+# --- parser differentials: shape must never outrank position ----------------
+# Each of these forged a file header out of content and borrowed the fixture
+# exemption. All measured on 2026-10-19, each against the fix that preceded it.
+echo "parser differentials"
+probe() { # probe <name> <expected_exit> <diff text>
+  local name="$1" want="$2" text="$3" out rc
+  out="$(printf '%b' "$text" | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
+  if [ "$rc" -eq "$want" ]; then
+    echo "  ok       $name"
+  else
+    echo "  FAIL     $name: exit $rc, expected $want -- $out"
+    fail=$((fail + 1))
+  fi
+}
+
+probe "a deletion and an addition forging a pair inside a hunk" 1 \
+  'diff --git a/s.sh b/s.sh\n--- a/s.sh\n+++ b/s.sh\n@@ -1,3 +1,3 @@\n--- a/x\n+++ b/bin/tests/privacy-scan.test.sh\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+
+probe "a lone +++ line with no hunk header at all" 1 \
+  'diff --git a/s.sh b/s.sh\n--- a/s.sh\n+++ b/s.sh\n+++ b/bin/tests/privacy-scan.test.sh\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+
+probe "a combined merge diff, whose @@@ counts are not read" 1 \
+  'diff --combined s.sh\n--- a/s.sh\n+++ b/s.sh\n@@@ -1,2 -1,2 +1,3 @@@\n--- a/x\n+++ b/bin/tests/privacy-scan.test.sh\n++AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+
+probe "a path whose first space truncated it to the exempt name" 1 \
+  'diff --git a/x b/x\n--- a/bin/tests/privacy-scan.test.sh extra\n+++ b/bin/tests/privacy-scan.test.sh extra\n@@ -1 +1 @@\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+
+probe "a path matching the exempt name only as a regex" 1 \
+  'diff --git a/x b/x\n--- a/bin/tests/privacy-scanXtestXsh\n+++ b/bin/tests/privacy-scanXtestXsh\n@@ -1 +1 @@\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+
+probe "CONTROL: the genuine fixture file is still exempt" 0 \
+  'diff --git a/bin/tests/privacy-scan.test.sh b/bin/tests/privacy-scan.test.sh\n--- a/bin/tests/privacy-scan.test.sh\n+++ b/bin/tests/privacy-scan.test.sh\n@@ -1 +1 @@\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+
+probe "CONTROL: a plain hunk still attributes and still blocks" 1 \
+  'diff --git a/f.sh b/f.sh\n--- a/f.sh\n+++ b/f.sh\n@@ -1 +1 @@\n+TARGET=i-0123456789abcdef0\n'
+
+probe "CONTROL: a deleted line is not scanned, only added ones" 0 \
+  'diff --git a/f.sh b/f.sh\n--- a/f.sh\n+++ b/f.sh\n@@ -1,2 +1,1 @@\n-AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n+clean\n'
+
 # --- the deny file must fail closed, not open -------------------------------
 echo "deny file failure modes"
 printf 'acmecorp\n' > "$SCRATCH/deny-unreadable"
