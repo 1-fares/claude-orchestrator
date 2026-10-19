@@ -157,46 +157,78 @@ if [ -e "$DENY_FILE" ]; then
 fi
 
 # Candidate lines, tagged with the file they land in.
-#   diff mode: added lines only (skip the +++ header).
+#   diff mode: added lines, plus commit-message lines. bin/hooks/pre-push feeds
+#   `git show <commit>`, whose message is indented four spaces and whose diff
+#   follows; only '+' lines were read until 2026-10-19, which is why three
+#   commit messages naming the deployment's company reached the public history
+#   with every push reporting clean.
 #   tree mode: every line of every tracked file, so already-committed data is
-#   visible. Binary and image files are skipped by -I on grep.
+#   visible at all. Binary files are skipped by -I.
+#
+# POSITION DECIDES WHAT A LINE IS, which is how git writes a diff and the only
+# rule that cannot be forged from content. Inside a hunk every line is content,
+# whatever it looks like: a deleted line reading "-- a/x" is rendered "--- a/x"
+# and an added line reading "++ b/y" is rendered "+++ b/y", so a commit can
+# forge a header PAIR out of ordinary content. Measured 2026-10-19: under the
+# earlier "+++ counts only after ---" rule, one deletion and one addition in a
+# hunk re-attributed the rest of the diff to the exempt fixture path and an
+# AKIA key passed. The hunk header's line counts are tracked now and headers
+# are read only between hunks. A '+' line outside any hunk is still scanned, so
+# a diff carrying no @@ headers is not silently skipped.
+#
+# THE EXEMPT PATH IS COMPARED AS A STRING, not matched as a pattern. It was a
+# grep regex whose dots matched any character, so a file named
+# bin/tests/privacy-scanXtestXsh inherited the exemption (measured the same
+# day). awk compares it with == inside the parse.
+fixture_file='bin/tests/privacy-scan.test.sh'
+
 if [ "$mode" = tree ]; then
-  raw="$(cd "$repo" && git grep -nI '' -- . 2>/dev/null | sed 's/:[0-9]*:/:/')"
+  if ! (cd "$repo" && git rev-parse --git-dir >/dev/null 2>&1); then
+    echo "privacy-scan: --tree needs a git repository at $repo" >&2
+    exit 2
+  fi
+  raw="$(cd "$repo" && git grep -nI '' -- . 2>/dev/null | awk -v fixture="$fixture_file" '
+    {
+      i = index($0, ":"); if (i == 0) next
+      f = substr($0, 1, i - 1)
+      rest = substr($0, i + 1)
+      j = index(rest, ":"); if (j == 0) next
+      if (f != fixture) print f ":" substr(rest, j + 1)
+    }')"
 else
-  # COMMIT MESSAGES ARE INPUT TOO (2026-10-19). bin/hooks/pre-push feeds
-  # `git show <commit>`, whose output carries the message indented by four
-  # spaces and then the diff. Only '+' lines were ever read, so a message was
-  # never scanned: three commit messages in this repo's public history name
-  # the deployment's company and no push ever objected. Message lines are now
-  # candidates, tagged so a hit says where it is. '+' lines keep being read
-  # unconditionally, so a bare diff with no `diff --git` header still works.
-  # A '+++ ' LINE IS ONLY A HEADER WHEN IT FOLLOWS A '--- ' LINE. Without that
-  # pairing, an ADDED LINE whose content begins with "++ b/<path>" arrives as
-  # "+++ b/<path>" and is indistinguishable from a real file header, so every
-  # later line in the commit is attributed to a path the committer chose. With
-  # the fixture-file exemption below that stopped being mere misattribution and
-  # became a bypass: naming the exempt path skipped the rest of the diff.
-  # Measured 2026-10-19: an AKIA key passed the gate that way.
-  raw="$(awk '
-    /^commit [0-9a-f]{7,}/ { indiff=0; prevminus=0; next }
-    /^diff --git /         { indiff=1; prevminus=0; next }
-    /^--- /                { prevminus=1; next }
-    /^\+\+\+ / && prevminus { file=$2; sub(/^b\//,"",file); prevminus=0; next }
-    /^\+/                  { prevminus=0; print file ":" substr($0,2); next }
-    (!indiff) && /^    /   { prevminus=0; print "(commit message):" substr($0,5); next }
-                           { prevminus=0 }
+  raw="$(awk -v fixture="$fixture_file" '
+    function emit(line) { if (file != fixture) print file ":" line }
+    BEGIN { old_rem = 0; new_rem = 0; file = "" }
+    (old_rem > 0 || new_rem > 0) {
+      c = substr($0, 1, 1)
+      if (c == "+")       { new_rem--; emit(substr($0, 2)); next }
+      else if (c == "-")  { old_rem--; next }
+      else if (c == " ")  { old_rem--; new_rem--; next }
+      else if (c == "\\") { next }
+      old_rem = 0; new_rem = 0    # malformed hunk: re-read this line as a header
+    }
+    /^commit [0-9a-f]{7,}/ { file = ""; old_rem = 0; new_rem = 0; prevminus = 0; next }
+    /^diff --git /         { file = ""; prevminus = 0; next }
+    /^--- /                { prevminus = 1; next }
+    # BOTH conditions guard a header: outside a hunk (above) AND paired with a
+    # minus-minus-minus line. git always emits the pair, so requiring it costs
+    # nothing, and it means a lone plus-plus-plus line cannot retarget the scan
+    # even in a hand-made diff carrying no @@ header. No apostrophes in here:
+    # the awk program sits inside a single-quoted shell string.
+    /^\+\+\+ / && prevminus { file = $2; sub(/^b\//, "", file); prevminus = 0; next }
+    /^@@ /                 {
+      prevminus = 0
+      h = $0; sub(/ @@.*$/, "", h)
+      old_rem = 1; new_rem = 1
+      if (match(h, /-[0-9]+,[0-9]+/))  { t = substr(h, RSTART, RLENGTH); split(t, pr, ","); old_rem = pr[2] + 0 }
+      if (match(h, /\+[0-9]+,[0-9]+/)) { t = substr(h, RSTART, RLENGTH); split(t, pr, ","); new_rem = pr[2] + 0 }
+      next
+    }
+    /^    /                { prevminus = 0; print "(commit message):" substr($0, 5); next }
+    /^\+/                  { prevminus = 0; emit(substr($0, 2)); next }
+                           { prevminus = 0 }
   ')"
 fi
-
-# THE FIXTURE FILE IS EXEMPT, BY PATH. bin/tests/privacy-scan.test.sh exists to
-# carry strings that look exactly like the data this gate blocks, so without an
-# exemption the gate cannot be tested at all: it refused its own test table on
-# first run (2026-10-19). The exemption is by path and nothing else, it is one
-# file, and that file's own header requires every fixture in it to be invented.
-# A real value copied into it would be published and this gate would not say so,
-# which is the price of being able to test the gate at all.
-fixture_file='bin/tests/privacy-scan.test.sh'
-raw="$(printf '%s\n' "$raw" | grep -v "^${fixture_file}:" || true)"
 
 candidates="$(printf '%s\n' "$raw" | grep -iE "$private_re" || true)"
 deny_hits=""

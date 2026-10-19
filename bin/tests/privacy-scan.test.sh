@@ -152,7 +152,7 @@ fi
 
 # An UNCHANGED context line is not being added, so it is not this gate's
 # business, and a four-space-indented context line must not read as a message.
-out="$(printf 'diff --git a/f.sh b/f.sh\n--- a/f.sh\n+++ b/f.sh\n     api_key = "k93jf0wk20fj20fj"\n+echo hello\n' | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
+out="$(printf 'diff --git a/f.sh b/f.sh\n--- a/f.sh\n+++ b/f.sh\n@@ -1,2 +1,2 @@\n     api_key = "k93jf0wk20fj20fj"\n+echo hello\n' | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
 if [ "$rc" -eq 0 ]; then
   echo "  ok       CONTROL: an indented context line is not read as a commit message"
 else
