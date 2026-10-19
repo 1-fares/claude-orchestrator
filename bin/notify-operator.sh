@@ -70,7 +70,7 @@ log_file="${NOTIFY_LOG:-$TEAM_DIR/reports/operator-pings.log}"
 notify_operator "$class" "$title" "$message"; rc=$?
 last="$(tail -1 "$log_file" 2>/dev/null)"
 # 2026-09-11: say in words whether the phone got it, and FAIL (exit 3) when it did not.
-# The orchestrator reported "Fares notified" after a DEMOTED decision it had not read;
+# The orchestrator reported "operator notified" after a DEMOTED decision it had not read;
 # a false delivery claim is worse than no push. DEDUPE and MUTED stay exit 0: the
 # policy accepted the notice and an earlier or later push covers it.
 decision="${last#* | }"; decision="${decision%% *}"
