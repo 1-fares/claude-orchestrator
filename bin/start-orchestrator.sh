@@ -156,7 +156,7 @@ if [ "$mode" = foreground ]; then
   echo
   cd "$repo"
   # M1 (curated-role sanity): record the orchestrator's own active entry BEFORE
-  # exec'ing claude, so the post-spawn sanity gates and the dashboard's roster
+  # exec'ing claude, so the post-spawn sanity gates and the roster
   # view see the orchestrator like any other role. exec replaces the shell so
   # the current pid ($$) becomes claude's pid. tmux_window column is '-' for
   # the foreground variant (no team-tmux pane).
@@ -190,7 +190,7 @@ else
   tmux new-session -d -s "$TEAM_SESSION" -n orchestrator "bash -lc $(printf %q "$launch")"
 fi
 # M1 (curated-role sanity): record the orchestrator's pane in $TEAM_DIR/active
-# so the post-spawn sanity gates and the dashboard's roster view see it the
+# so the post-spawn sanity gates and the roster view see it the
 # same way as any worker role. setsid swallowed -P -F output above, so we
 # query tmux directly once the session is up.
 o_info="$("$TEAM_TMUX_BIN" -L "$TEAM_TMUX" display-message \

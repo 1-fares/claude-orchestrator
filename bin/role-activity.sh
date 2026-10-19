@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # role-activity.sh: classify a role pane's runtime activity from its tmux pane.
 # Output: one of `working`, `delegating:<N>`, `delegating`, `idle`. The
-# dashboard server (bin/dashboard/server/server.py, u24-server-half) calls this
+# bin/dreamer.sh calls this
 # per role per tick to fill the per-role `activity` field in /state.json.
 #
 # Distinguishes three behaviours the existing api-watchdog conflates:

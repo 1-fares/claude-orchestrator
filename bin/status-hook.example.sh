@@ -9,7 +9,7 @@
 # quickly (it runs under STATUS_HOOK_TIMEOUT_SEC) and must never prompt.
 #
 # This example does two things any project can keep: append a line to a status
-# file that a dashboard or another watcher can read, and, if STATUS_HOOK_WEBHOOK
+# file that a watcher can read, and, if STATUS_HOOK_WEBHOOK
 # is set, POST a one-line JSON notice to it (a chat webhook, a status page).
 # A real project replaces the POST with its own outbound (a Teams or Slack
 # connector, an incident tool) and decides the audience per event.

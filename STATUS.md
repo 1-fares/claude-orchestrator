@@ -100,11 +100,11 @@ records its model under `$TEAM_DIR/models/<role>`; the observer and compaction
 watchdog read those records. `llm-judge.sh` pins headless judging to `sonnet`.
 Rationale: [docs/model-policy.md](./docs/model-policy.md).
 
-**Operator surfaces.** The `communicator` role (two-way operator liaison, TUI +
-dashboard chat panel), the read-only visual dashboard (`bin/dashboard.sh`,
-force-graph + stats + chat, loopback-only), the B4 remote-control escape-hatch
-helpers (`inbox.sh`, `approve.sh`, `team-status.sh --mobile`, the signed
-notify-hook).
+**Operator surfaces.** The `communicator` role (two-way operator liaison, TUI)
+and the B4 remote-control escape-hatch helpers (`inbox.sh`, `approve.sh`,
+`team-status.sh --mobile`, the signed notify-hook). B11, the read-only visual
+dashboard, was built in May 2026 and removed on 2026-10-19: unmaintained,
+unread, about 4 MB of sprite art, and a public HTTP surface to keep closed.
 
 **Non-code substrate.** A reference role library (`researcher`, `writer`,
 `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`, `doc-integrator`, plus

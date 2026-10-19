@@ -173,19 +173,6 @@ for _d in compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
   fi
 done
 
-# 3c. Dashboard server (if launch-team.sh started one for this clone's team).
-db_pidf="$TEAM_DIR/dashboard.pid"
-if [ -f "$db_pidf" ]; then
-  db_pid="$(cat "$db_pidf" 2>/dev/null || true)"
-  if [ -n "$db_pid" ] && kill -0 "$db_pid" 2>/dev/null \
-     && ps -p "$db_pid" -o args= 2>/dev/null | grep -q '[d]ashboard/server/server.py'; then
-    tag "kill dashboard (pid $db_pid)"
-    [ "$DRY" = 0 ] && { kill -TERM "$db_pid" 2>/dev/null || true; sleep 1; kill -KILL "$db_pid" 2>/dev/null || true; rm -f "$db_pidf" "$TEAM_DIR/dashboard.url"; }
-  else
-    [ "$DRY" = 0 ] && rm -f "$db_pidf" "$TEAM_DIR/dashboard.url"
-  fi
-fi
-
 # 4. Stale /is bus pidfiles (dead pids only; never kill a live bus server).
 for pf in "$HOME/.claude/data/inter-session/"server.*.pid; do
   [ -e "$pf" ] || continue

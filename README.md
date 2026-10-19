@@ -96,8 +96,8 @@ INSIDE TMUX
   prefix n / p   next / prev window        prefix d     detach (SAFE)
 
 MONITOR (from any terminal)
-  bin/team-status.sh               one-glance dashboard
-  bin/team-watch.sh                live dashboard
+  bin/team-status.sh               one-glance status view
+  bin/team-watch.sh                live status view
   bin/team-logs.sh [<role>]        per-role message history (durable)
 
 CONTROL
@@ -146,7 +146,7 @@ demand, in the count the goal needs. Each role has a prompt in
 | Role | Bus name | Owns |
 | :-- | :-- | :-- |
 | **Orchestrator** | `orchestrator` | The goal, the ledger, team composition, work assignment, the final call. Delegates code, review, and merging. |
-| **Communicator** | `communicator` | Two-way liaison with the operator (TUI + the dashboard chat panel). Curated, not auto-generated. |
+| **Communicator** | `communicator` | Two-way liaison with the operator (TUI). Curated, not auto-generated. |
 | **Analyst** | `analyst` | Turning a vague goal into testable requirements and acceptance criteria. |
 | **Architect** | `architect` | System and interface design, technology choices, breaking work into units. |
 | **Implementer** | `implementer<N>` | Writing code for one assigned unit, small and surgical, in its own worktree. |
@@ -351,33 +351,16 @@ conversation state under `$TEAM_DIR/comm/`. It does not author code or own the
 goal; it carries traffic, handles narrow tactical questions itself, and routes
 the rest to the orchestrator. Spec: [`roles/user-communicator.md`](./roles/user-communicator.md).
 
-Two front-ends are wired up:
+The front-end is `bin/communicator.sh`, which opens a Claude Code session in
+the `communicator` role in a new tmux window (or `--foreground` to run in the
+current terminal). Idempotent: a second invocation reattaches.
 
-- **TUI**: `bin/communicator.sh` opens a Claude Code session in the
-  `communicator` role in a new tmux window (or `--foreground` to run in the
-  current terminal). Idempotent: a second invocation reattaches.
-- **GUI**: a chat panel on the visual dashboard (below).
-
-### Visual dashboard (second screen)
-
-`bin/launch-team.sh` auto-starts [`bin/dashboard.sh`](./bin/dashboard.sh), a
-read-only HTTP viewer designed for a second screen during a run. It serves a
-force-directed graph of live roles plus a stats panel from data files under
-`$TEAM_DIR` (roster, ledger, watchdog health, bus log). The launcher prints the
-URL on start (`open http://127.0.0.1:<port>/`) and writes it to
-`$TEAM_DIR/dashboard.url`. Loopback-only, no buttons; cleaned up by
-`stop-team.sh`, `panic.sh`, `reset.sh`, and `cleanup.sh`.
-
-Standalone (no live team needed; degrades gracefully):
-
-```bash
-bin/dashboard.sh                       # auto-pick port; $TEAM_DIR or newest .team-*
-bin/dashboard.sh --port 8765           # fixed port
-bin/dashboard.sh --team-dir .team-r123 # point at a specific run
-```
-
-Disable auto-start with `DASHBOARD_DISABLED=1`. Fix the port at launch with
-`DASHBOARD_PORT=N`.
+A browser front-end (the B11 visual dashboard: a read-only HTTP viewer with a
+force-directed role graph, themed sprite art and a chat panel) was removed on
+2026-10-19. It had not been maintained since May 2026, nothing in the engine
+read from it, and it carried about 4 MB of image assets plus an HTTP surface
+that had to be kept closed. `bin/team-status.sh` and `bin/team-watch.sh` cover
+the observability it provided; see the git history for the removed code.
 
 ### Remote control from a phone
 
@@ -391,7 +374,7 @@ scrollback or arbitrary shell commands on the host.
 Escape hatch for when `/remote-control` is not enough (a tester's scrollback, a
 manual cleanup, switching between parallel runs):
 
-- `bin/team-status.sh --mobile`: ~40-column compact dashboard.
+- `bin/team-status.sh --mobile`: ~40-column compact status view.
 - `bin/inbox.sh`: every parallel run on this clone with attach + approve
   commands.
 - `bin/approve.sh [<text>]`: send `<text>` (default `go`) to a specific run's
@@ -773,11 +756,10 @@ claude-orchestrator/
 │   │                         # self-reload.sh, compaction-detect.sh, status-hook.sh
 │   ├── gates/                # non-code gate library
 │   ├── hooks/                # standing-rules hook and the refusing tool gates
-│   ├── dashboard/            # second-screen HTTP server + static assets
 │   ├── tests/                # pure shell tests, one per mechanism
 │   ├── start-orchestrator.sh launch-team.sh stop-team.sh reset.sh panic.sh
 │   ├── add-role.sh retire-role.sh   # dynamic team scaling
-│   ├── communicator.sh dashboard.sh # operator surfaces
+│   ├── communicator.sh       # operator surface
 │   ├── api-watchdog.sh tmux-watchdog.sh compaction-watchdog.sh watchdog.sh
 │   ├── permission-mode-watchdog.sh host-ram-watchdog.sh disk-tmp-watchdog.sh
 │   ├── observer.sh observer-github-groundtruth.sh dreamer.sh night-janitor.sh

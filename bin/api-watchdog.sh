@@ -596,7 +596,7 @@ scan_once() {
       # until a human answers and nothing in the run proceeds. There is NO
       # automated recovery (only a human can answer), so once it has waited past
       # await_operator_sec we escalate ONCE: write a marker file an external
-      # watcher (laptop observer, dashboard) can see, and push the operator.
+      # watcher (the laptop observer) can see, and push the operator.
       # Re-armed by the RECOVERED-AWAIT cleanup above when the prompt clears.
       if [ "$state" = "awaiting-input" ] && [ "$await_disabled" != 1 ]; then
         if [ "$prev" != "awaiting-input" ] && [ "$prev" != "awaiting-input-esc" ]; then

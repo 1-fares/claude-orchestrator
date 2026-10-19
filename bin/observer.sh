@@ -4,7 +4,7 @@
 # Unlike the api-watchdog and tmux-watchdog (mechanical: they recover stalls and
 # crashes), the observer REASONS about efficiency. On a slow cadence it gathers
 # host load, per-role idle/health, the unit pipeline, and bus throughput, asks a
-# model for a grow/shrink/server recommendation, writes it where the dashboard
+# model for a grow/shrink/server recommendation, writes it where the operator
 # and orchestrator can read it, and nudges the orchestrator when the advice
 # changes. It RECOMMENDS, never acts: scaling stays the orchestrator's call.
 #

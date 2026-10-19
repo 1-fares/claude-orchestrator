@@ -55,7 +55,7 @@ model_for() {
     reviewer*|peer-reviewer*|tester*|fact-checker*|architect*|analyst*)
       echo "${TEAM_MODEL_TOP:-fable}" ;;
     devops*|copy-editor*|paralegal*|doc-integrator*) echo "sonnet" ;;
-    dashboard*|relay*|poller*) echo "haiku" ;;
+    relay*|poller*) echo "haiku" ;;
     *) echo "${TEAM_MODEL_DEFAULT:-opus}" ;;
   esac
 }
@@ -415,8 +415,7 @@ start_observer() {
 # compaction-watchdog, tmux-watchdog, host-ram-watchdog, disk-tmp-watchdog, observer,
 # chrome-supervisor, intake-poller), shared by launch-team.sh (cold start), start-orchestrator.sh
 # (recovery path) and add-role.sh (mid-run grow), so no path leaves a different
-# set running. The dashboard is deliberately not here: observability only, with
-# its own operator prompt in launch-team.sh.
+# set running.
 # Start the permission-mode watchdog for this team, once. Idempotent the same way
 # as the tmux watchdog. Set PERMISSION_MODE_WATCHDOG_DISABLED=1 to skip.
 #
@@ -525,93 +524,4 @@ start_intake_poller() {
   nohup python3 "$poller" --peer orchestrator >"$TEAM_DIR/intake-poller.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "intake-poller started (pid $!, poller: $poller, log: $TEAM_DIR/intake-poller.log)"
-}
-
-# Ask the operator whether to bring up the visual dashboard. Sits in front of
-# start_dashboard, never replaces its guard. Precedence (highest first):
-#
-#   1) DASHBOARD_DISABLED=1 in env  ->  skip without asking. The env wins so
-#      scripted callers (CI, automated launches, the watchdog respawning) keep
-#      their existing opt-out path.
-#   2) Otherwise prompt "Show the visual dashboard? [Y/n]" with a 5 s timeout.
-#      On a TTY the prompt is visible. On non-TTY stdin (redirect from
-#      /dev/null, here-doc, process substitution) the visible prompt is
-#      suppressed, but `read -t 5` still runs so a piped Y / n answer is
-#      honoured by the smoke harness. EOF or timeout falls back to the Y
-#      default and the dashboard starts.
-#   3) Answer N / n exports DASHBOARD_DISABLED=1 for the rest of the launch so
-#      every later code path that checks the env sees the same opt-out signal.
-#      Answer Y / empty leaves the env alone and start_dashboard runs.
-prompt_dashboard_choice() {
-  if [ "${DASHBOARD_DISABLED:-0}" = "1" ]; then
-    echo "dashboard: skipped (DASHBOARD_DISABLED=1)"
-    return 0
-  fi
-  if [ -t 0 ]; then
-    printf 'Show the visual dashboard? [Y/n] '
-  fi
-  local ans=""
-  if ! read -r -t 5 ans; then
-    # read failed: 5 s timeout on a quiet TTY, or EOF from /dev/null. Either
-    # way, no answer -> Y default. Newline closes the prompt line on TTY.
-    [ -t 0 ] && echo
-    if [ -t 0 ]; then
-      echo "dashboard: accepted (timeout, default Y)"
-    else
-      echo "dashboard: prompt skipped (non-tty, default Y)"
-    fi
-    return 0
-  fi
-  case "$ans" in
-    [Nn]|[Nn][Oo])
-      export DASHBOARD_DISABLED=1
-      echo "dashboard: declined; DASHBOARD_DISABLED=1 for this launch"
-      ;;
-    "")
-      echo "dashboard: accepted (default Y)"
-      ;;
-    *)
-      echo "dashboard: accepted ($ans)"
-      ;;
-  esac
-}
-
-# Start the B11 visual dashboard for this team, once. Same shape as the api
-# watchdog: idempotent (skip if recorded pid is alive), opt-out via
-# DASHBOARD_DISABLED=1, port override via DASHBOARD_PORT. Read-only HTTP server
-# bound to 127.0.0.1 — second-screen view of a live run. Cleaned up by
-# stop-team.sh / panic.sh / cleanup.sh.
-start_dashboard() {
-  [ "${DASHBOARD_DISABLED:-0}" = "1" ] && return 0
-  [ -x "$repo/bin/dashboard.sh" ] || return 0
-  mkdir -p "$TEAM_DIR"
-  local pidf="$TEAM_DIR/dashboard.pid" oldpid
-  if [ -f "$pidf" ]; then
-    oldpid="$(cat "$pidf" 2>/dev/null || true)"
-    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
-       && ps -p "$oldpid" -o args= 2>/dev/null | grep -q '[d]ashboard/server/server.py'; then
-      echo "dashboard already running (pid $oldpid)"
-      return 0
-    fi
-  fi
-  # 9>&- for the same flock reason as start_api_watchdog. The dashboard inherits
-  # TEAM_DIR from the environment, so it observes THIS run.
-  nohup "$repo/bin/dashboard.sh" --port "${DASHBOARD_PORT:-0}" \
-        >"$TEAM_DIR/dashboard.log" 2>&1 9>&- &
-  local dpid=$!
-  echo "$dpid" > "$pidf"
-  # Wait briefly for the server to bind and write its URL on the first log line.
-  local i url=""
-  for i in 1 2 3 4 5 6 7 8 9 10; do
-    if ! kill -0 "$dpid" 2>/dev/null; then break; fi
-    url="$(grep -oE 'http://127\.0\.0\.1:[0-9]+/' "$TEAM_DIR/dashboard.log" 2>/dev/null | head -1)"
-    [ -n "$url" ] && break
-    sleep 0.2
-  done
-  if [ -n "$url" ]; then
-    echo "$url" > "$TEAM_DIR/dashboard.url"
-    echo "dashboard started (pid $dpid) — open ${url}  (log: $TEAM_DIR/dashboard.log)"
-  else
-    echo "dashboard started (pid $dpid, log: $TEAM_DIR/dashboard.log; URL not captured yet)"
-  fi
 }

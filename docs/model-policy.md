@@ -33,7 +33,7 @@ the third is the run design (batching, briefs, gates) that already exists.
 | top | `fable` | `orchestrator`, `communicator`, `reviewer*`, `peer-reviewer*`, `tester*`, `fact-checker*`, `architect*`, `analyst*` | Judgment quality bounds the whole run: a wrong decomposition, a missed bug, a bad acceptance call costs more rework tokens downstream than the tier premium costs upfront. |
 | mid | `opus` | `implementer*`, `backend*`, `frontend*`, `writer*`, `editor*`, `researcher*`, `integrator`, legal roles, designers, and any unmatched role | Produces the work product. Strong enough to one-shot most units; errors are caught by the top-tier verification roles. |
 | cheap | `sonnet` | `devops*`, `copy-editor*`, `paralegal*`, `doc-integrator*` | Rule-following, mechanical work with no quality loss on a smaller model. |
-| relay | `haiku` | `dashboard*`, `relay*`, `poller*` | Read-only display or message relay. |
+| relay | `haiku` | `relay*`, `poller*` | Read-only display or message relay. |
 
 The asymmetry is deliberate: generation (mid tier) is cheaper to redo than a
 bad judgment is to unwind. Adversarial verification on the top tier catches

@@ -15,7 +15,7 @@
 #               "talk to the communicator from this shell" flow).
 #
 # Env:
-#   COMMUNICATOR_DISABLED=1   skip-spawn no-op (mirrors DASHBOARD_DISABLED).
+#   COMMUNICATOR_DISABLED=1   skip-spawn no-op.
 #   CLAUDE_BIN=<path>         override the claude binary (default: claude on PATH).
 #                             The verify harness sets this to a stub.
 #

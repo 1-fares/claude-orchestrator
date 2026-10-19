@@ -3,7 +3,7 @@
 #
 # Background. May 2026: a running team lost its entire tmux server in one
 # second (systemd cleanup of every tmux-spawn-*.scope), taking all role
-# processes with it. The bus, dashboard, and api-watchdog kept running
+# processes with it. The bus and api-watchdog kept running
 # (they were started detached via nohup), so from outside everything
 # "looked fine" until someone tried to capture a pane. This watchdog
 # closes that gap: it polls the team session, and if the session is
@@ -288,7 +288,7 @@ while true; do
       if [ "$prev_state" != "crashed" ]; then
         since=$nowts
         echo "$(iso "$nowts") CRASH: tmux session $TEAM_SESSION is GONE but active/ has live entries ($(wc -l < "$TEAM_DIR/active") roles); team is down" >> "$af"
-        notify_operator page "TEAM CRASH: tmux session died" "[orchestrator/${TEAM_RUN_ID:-legacy}] TEAM CRASH: tmux session $TEAM_SESSION died. Roles lost. Bus + dashboard may still be running. Recover with: TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/start-orchestrator.sh goals/<goal>.md"
+        notify_operator page "TEAM CRASH: tmux session died" "[orchestrator/${TEAM_RUN_ID:-legacy}] TEAM CRASH: tmux session $TEAM_SESSION died. Roles lost. Bus may still be running. Recover with: TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/start-orchestrator.sh goals/<goal>.md"
         # Drop a marker file so the operator-watching session notices.
         {
           echo "# tmux session crashed"

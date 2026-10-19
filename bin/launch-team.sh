@@ -151,17 +151,8 @@ echo "Watch:  bin/team-status.sh    Attach:  tmux -L $TEAM_TMUX attach -t $sessi
 # *_DISABLED=1 opt-out.
 ensure_team_daemons
 
-# Start the B11 visual dashboard (second-screen view of the live run). Loopback-
-# only, read-only, opt-out with DASHBOARD_DISABLED=1, port override with
-# DASHBOARD_PORT. Idempotent like the watchdog. Torn down by stop-team.sh /
-# panic.sh / cleanup.sh. The interactive prompt above lets the operator opt
-# out at launch time; on N it exports DASHBOARD_DISABLED=1 so start_dashboard's
-# own guard short-circuits without launching the server.
-prompt_dashboard_choice
-start_dashboard
-
 # Bring up the user-communicator role (u28 wiring): the team's two-way liaison
-# to the operator. Same shape as the dashboard: a soft default-Y prompt with
+# to the operator. A soft default-Y prompt with
 # COMMUNICATOR_DISABLED=1 env override, idempotent (skips when the bus already
 # has a 'communicator' peer or when the tmux 'communicator' window exists).
 prompt_communicator_choice() {

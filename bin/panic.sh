@@ -62,7 +62,7 @@ fi
 # intake poller, AND every resource watchdog (compaction / host-ram / disk-tmp).
 # The tmux pane-tree sweep above does NOT reach them, so panic must reap them by
 # pidfile or they leak past a panic. History: 2026-06-01 panic killed only the
-# api-watchdog + dashboard and orphaned the rest; 2026-07-20 the reap list was
+# api-watchdog and orphaned the rest; 2026-07-20 the reap list was
 # MISSING the host-ram/disk-tmp resource watchdogs, so their OLD instances
 # survived every restart and ran alongside the fresh set -- two compaction-style
 # watchdogs doubling /compact + /context keystrokes into panes.
@@ -91,18 +91,6 @@ for _d in compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
           tmux-watchdog permission-mode-watchdog chrome-supervisor observer intake-poller; do
   _reap_daemon "$_d"
 done
-
-# Dashboard server (if launch-team.sh started one).
-db_pidf="$TEAM_DIR/dashboard.pid"
-if [ -f "$db_pidf" ]; then
-  db_pid="$(cat "$db_pidf" 2>/dev/null || true)"
-  if [ -n "$db_pid" ] && kill -0 "$db_pid" 2>/dev/null \
-     && ps -p "$db_pid" -o args= 2>/dev/null | grep -q '[d]ashboard/server/server.py'; then
-    kill -KILL "$db_pid" 2>/dev/null || true
-    echo "panic: killed dashboard (pid $db_pid)"; killed=1
-  fi
-  rm -f "$db_pidf" "$TEAM_DIR/dashboard.url"
-fi
 
 # This team's /is bus server (scoped to TEAM_PORT).
 srv_pidf="$HOME/.claude/data/inter-session/server.$TEAM_PORT.pid"

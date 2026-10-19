@@ -208,7 +208,7 @@ file is the portable version of the same discipline.
   isolated from your default tmux server and its plugins (e.g.
   resurrect/continuum). Use `bin/attach.sh` / `bin/team-status.sh`, not a plain
   `tmux attach`.
-- `bin/team-status.sh` / `bin/team-watch.sh`: dashboard. `bin/team-broadcast.sh`:
+- `bin/team-status.sh` / `bin/team-watch.sh`: status view. `bin/team-broadcast.sh`:
   inject to all roles from outside (honors `pause:`/`resume:`/`priority:`).
   `bin/team-logs.sh`: per-role history from the bus.
 - `bin/verify-unit.sh`, `bin/check-scope.sh`: the gates. `bin/team-env.sh`:
@@ -308,10 +308,9 @@ file is the portable version of the same discipline.
   the team's two-way operator liaison (spec at `roles/user-communicator.md`).
   One bus identity per run, multiple front-ends share state under
   `$TEAM_DIR/comm/`. Idempotent: a second invocation reattaches the existing
-  tmux window. `bin/dashboard.sh`: read-only HTTP viewer (force-graph + stats +
-  operator chat panel for the communicator) on `127.0.0.1`. Auto-started by
-  `launch-team.sh`; URL in `$TEAM_DIR/dashboard.url`. Disable with
-  `DASHBOARD_DISABLED=1`.
+  tmux window. There is no browser front-end: the B11 visual dashboard was
+  removed on 2026-10-19 (unmaintained since May 2026, about 4 MB of image
+  assets, and an HTTP surface with no reader).
 - **Non-code substrate.** `roles/` ships generic non-code roles, structural
   pipeline references that codify lane discipline (`researcher`, `writer`,
   `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`, `doc-integrator`),

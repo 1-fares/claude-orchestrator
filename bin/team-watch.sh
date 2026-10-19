@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# team-watch.sh: live dashboard. Re-runs team-status.sh on an interval, ideally
+# team-watch.sh: live status view. Re-runs team-status.sh on an interval, ideally
 # in its own tmux pane so you watch the team without tab-hopping.
 #
 # Usage: bin/team-watch.sh [interval-seconds]   (default 5)

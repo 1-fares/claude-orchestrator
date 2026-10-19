@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# team-status.sh: one-glance dashboard for the team. Reads .team/active (roles
+# team-status.sh: one-glance status view for the team. Reads .team/active (roles
 # the launcher spawned) for liveness, tmux for window + idle time, and the /is
 # messages.log for each role's last message. No bus auth needed, so it runs from
 # anywhere (the orchestrator can also run /is list for the live bus roster).

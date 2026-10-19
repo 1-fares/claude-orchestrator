@@ -7,8 +7,9 @@ tool before reinventing.
 
 Open: B2 (autonomous mode), B3 (portability), B4 (remote-control phone test),
 B10 (fold in Agent Teams features), B12 (SDK credit pool), B13 (continuous
-learning loop). Built and removed from this list: B9 (dynamic scaling), B11
-(visual dashboard), and the B3 attribution/licence/CJK work; see STATUS.md.
+learning loop). Built and removed from this list: B9 (dynamic scaling) and the
+B3 attribution/licence/CJK work; see STATUS.md. B11 (visual dashboard) was
+built in May 2026 and deleted on 2026-10-19; it is not coming back.
 
 ---
 
