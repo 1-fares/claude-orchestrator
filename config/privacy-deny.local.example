@@ -1,0 +1,17 @@
+# Deny list for bin/privacy-scan.sh. Copy to config/privacy-deny.local, which
+# is gitignored, and list the literal names that must never reach this public
+# repository: the company, the product, the deployment directory, the hosts.
+#
+# One POSIX extended regular expression per line, matched case-insensitively
+# against both added diff lines and, with --tree, every tracked line. Blank
+# lines and lines starting with '#' are ignored. An absent file is not an
+# error, so the gate still runs with its generic patterns alone.
+#
+# No pattern can guess an organisation's name, which is why this file exists
+# and why it stays out of the tree: writing the name into a public file to
+# keep the name out of public files is the same leak by another route.
+#
+# Examples, with invented names:
+# acmecorp
+# acme-payroll
+# (ap|dev|preprod)\.acme\.example

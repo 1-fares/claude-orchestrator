@@ -43,3 +43,7 @@ RESUME-HERE.md
 
 # per-clone availability hook (see bin/status-hook.example.sh)
 bin/status-hook.sh
+
+# Operator deny list for bin/privacy-scan.sh: the literal private names of the
+# deployment this engine is run for. Never committed; that is the whole point.
+config/privacy-deny.local
