@@ -15,6 +15,8 @@ set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
+# shellcheck source=bin/lib/pid-identity.sh
+. "$repo/bin/lib/pid-identity.sh" || exit 1
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 
 # Collect a pid and all its descendants.
@@ -51,9 +53,11 @@ fi
 wd_pidf="$TEAM_DIR/api-watchdog.pid"
 if [ -f "$wd_pidf" ]; then
   wd_pid="$(cat "$wd_pidf" 2>/dev/null || true)"
-  if [ -n "$wd_pid" ] && kill -0 "$wd_pid" 2>/dev/null; then
+  if [ -n "$wd_pid" ] && proc_pid_is_run_daemon "$wd_pid" "bin/api-watchdog.sh"; then
     kill -KILL "$wd_pid" 2>/dev/null || true
     echo "panic: killed api-watchdog (pid $wd_pid)"; killed=1
+  elif [ -n "$wd_pid" ] && [ -d "/proc/$wd_pid" ]; then
+    echo "panic: stale api-watchdog pidfile: pid $wd_pid is not this run's api-watchdog; not signalled, pidfile removed"
   fi
   rm -f "$wd_pidf"
 fi
@@ -73,17 +77,30 @@ fi
 # INTERVAL -- long enough to block the resume's relaunch. So reap the CHILD too:
 # `kill -TERM` lets the daemon's own TERM/EXIT trap reap its sleep, and
 # `pkill -P` frees the lock at once for the pre-trap (older-code) instances.
+# Script globs per daemon; the intake poller is project-configured (team-spawn start_intake_poller).
+_daemon_globs() {
+  case "$1" in
+    intake-poller) printf '%s\n' "${INTAKE_POLLER:-scripts/poller.py}" "scripts/poller.py" ;;
+    *) printf '%s\n' "bin/$1.sh" ;;
+  esac
+}
 _reap_daemon() {
-  local name="$1" pidf="$TEAM_DIR/$1.pid" pid
+  local name="$1" pidf="$TEAM_DIR/$1.pid" pid globs=()
   [ -f "$pidf" ] || return 0
+  mapfile -t globs < <(_daemon_globs "$name")
   pid="$(cat "$pidf" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  if [ -n "$pid" ] && proc_pid_is_run_daemon "$pid" "${globs[@]}"; then
     kill -TERM "$pid" 2>/dev/null || true          # trap-aware exit (new code self-reaps its sleep)
     pkill -TERM -P "$pid" 2>/dev/null || true       # reap the sleep child -> frees the flock fd now
     sleep 0.3
-    pkill -KILL -P "$pid" 2>/dev/null || true       # force any survivor sleep
-    kill -KILL "$pid" 2>/dev/null || true           # force the parent if it ignored TERM
+    # Re-verify before escalating: a daemon that exited on TERM leaves a pid that can be reused.
+    if proc_pid_is_run_daemon "$pid" "${globs[@]}"; then
+      pkill -KILL -P "$pid" 2>/dev/null || true     # force any survivor sleep
+      kill -KILL "$pid" 2>/dev/null || true         # force the parent if it ignored TERM
+    fi
     echo "panic: killed $name (pid $pid) + reaped its sleep child"; killed=1
+  elif [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+    echo "panic: stale $name pidfile: pid $pid is not this run's $name; not signalled, pidfile removed"
   fi
   rm -f "$pidf"
 }

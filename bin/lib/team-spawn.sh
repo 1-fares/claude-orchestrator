@@ -12,6 +12,11 @@
 # Optional, propagated into the spawned session if set in the caller's env:
 #   INTER_SESSION_PORT, INTER_SESSION_IDLE_MINUTES, TEAM_RUN_ID
 
+if ! declare -F proc_pid_is_run_daemon >/dev/null 2>&1; then
+  # shellcheck source=bin/lib/pid-identity.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pid-identity.sh"
+fi
+
 # Resolve a goal argument to an absolute path the spawned session can read: try
 # it as given (cwd-relative or absolute), then under $repo. Echoes the abs path,
 # or returns 1 if not found.
@@ -288,13 +293,18 @@ _reap_prior_daemon() {
   local name="$1" pidf="$TEAM_DIR/$1.pid" pid
   [ -f "$pidf" ] || return 0
   pid="$(cat "$pidf" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  if [ -n "$pid" ] && proc_pid_is_run_daemon "$pid" "bin/$name.sh"; then
     kill -TERM "$pid" 2>/dev/null || true
     pkill -TERM -P "$pid" 2>/dev/null || true
     sleep 0.3
-    pkill -KILL -P "$pid" 2>/dev/null || true
-    kill -KILL "$pid" 2>/dev/null || true
+    # Re-verify: if it exited on TERM the pid may already belong to something else.
+    if proc_pid_is_run_daemon "$pid" "bin/$name.sh"; then
+      pkill -KILL -P "$pid" 2>/dev/null || true
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
     echo "reaped prior $name (pid $pid) before respawn"
+  elif [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+    echo "stale $name pidfile: pid $pid is not this run's $name; not signalled, pidfile removed"
   fi
   rm -f "$pidf"
 }
