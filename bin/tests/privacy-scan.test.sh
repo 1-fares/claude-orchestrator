@@ -235,6 +235,10 @@ block "value running to end of line"          'token: abcdefghij'
 block "value containing a digit"              'api_key = k93jf0wk20fj20fj'
 block "hyphenated value to end of line"       'token: decisions-status-line'
 pass  "keyword then an ordinary word"         'a secret: something ordinary in prose'
+pass  "keyword, hyphenated phrase, more prose" '# prose token: decisions-status-line and orphan'
+pass  "keyword, 9-letter word, more prose"     'the bearer: whosoever carries the message onward'
+block "hyphen first, then a 12+ run, prose"    'secret: abc-defghijklmnopqrs and more words'
+block "keyword, password to end of line"       'password: correcthorsebattery'
 
 # --- the forged file header -------------------------------------------------
 # A '+++ b/<path>' line can arrive as added CONTENT. Paired with the fixture

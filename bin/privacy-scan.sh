@@ -95,7 +95,7 @@ esac
 #   provider key/token values  AKIA/ASIA, gh[pousr]_, github_pat_, xox[baprs]-
 #   private key blocks         -----BEGIN ... PRIVATE KEY-----
 #   chat ids                   19:<id>@thread.tacv2 / @thread.v2
-private_re='(/home/[a-z_][a-z0-9_-]+|/Users/[A-Za-z][A-Za-z0-9_-]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z0-9.-]*ntfy\.sh/[A-Za-z0-9_#/<>-]+|(api[_-]?key|secret|password|bearer|token)["'"'"'[:space:]]*[:=][[:space:]"'"'"']*([A-Za-z0-9_/+-]*[0-9][A-Za-z0-9_/+-]*|[A-Za-z0-9_/+-]{8,}[[:punct:]]?$|[A-Za-z0-9_/+-]{12,})|[a-f0-9]{48,}|([0-9]{1,3}\.){3}[0-9]{1,3}|\b(i|sg|sgr|vpc|subnet|ami|vol|snap)-[0-9a-f]{8,17}\b|arn:aws[a-z-]*:[^: ]*:[^: ]*:[0-9]{12}:|\b(AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bxox[baprs]-[A-Za-z0-9-]{10,}|BEGIN [A-Z ]*PRIVATE KEY|19:[A-Za-z0-9_<>-]{8,}@thread\.(tacv2|v2))'
+private_re='(/home/[a-z_][a-z0-9_-]+|/Users/[A-Za-z][A-Za-z0-9_-]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z0-9.-]*ntfy\.sh/[A-Za-z0-9_#/<>-]+|(api[_-]?key|secret|password|bearer|token)["'"'"'[:space:]]*[:=][[:space:]"'"'"']*([A-Za-z0-9_/+-]*[0-9][A-Za-z0-9_/+-]*|[A-Za-z0-9_/+-]{8,}[[:punct:]]?$|[A-Za-z0-9_/+-]*[A-Za-z0-9_/+]{12,}[A-Za-z0-9_/+-]*)|[a-f0-9]{48,}|([0-9]{1,3}\.){3}[0-9]{1,3}|\b(i|sg|sgr|vpc|subnet|ami|vol|snap)-[0-9a-f]{8,17}\b|arn:aws[a-z-]*:[^: ]*:[^: ]*:[0-9]{12}:|\b(AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bxox[baprs]-[A-Za-z0-9-]{10,}|BEGIN [A-Z ]*PRIVATE KEY|19:[A-Za-z0-9_<>-]{8,}@thread\.(tacv2|v2))'
 
 # What a MATCHED TOKEN may look like and still pass. Judged against the token
 # only. Entries that could shield a longer real value are end-anchored, so a
@@ -120,9 +120,13 @@ private_re='(/home/[a-z_][a-z0-9_-]+|/Users/[A-Za-z][A-Za-z0-9_-]+|[A-Za-z0-9._%
 # Measured against this repo afterwards, that rule gave back a shape the old
 # one caught: a keyword, a long value with no digit in it, and more words after
 # it on the same line satisfies neither branch, so it passed. A secret is a
-# secret wherever it sits on the line, so a third branch blocks any value of 12
-# or more characters. A nine-letter English word still passes; a credential
-# that short is not worth bending a gate for. The literals are in
+# secret wherever it sits on the line, so a third branch blocks a value that
+# carries a RUN of 12 or more characters with no hyphen in it. A nine-letter
+# English word still passes; a credential that short is not worth bending a
+# gate for. WHY THE RUN EXCLUDES THE HYPHEN: a plain 12-character floor
+# re-blocked the second line the fork's rule was made for, a keyword followed
+# by a hyphenated phrase and then more prose. Each word in such a phrase is
+# short; a credential carries a long unbroken run. The literals are in
 # bin/tests/privacy-scan.test.sh, which is the one file allowed to carry them.
 #
 # TWO FALSE POSITIVES FIXED 2026-10-19, both found by writing the test table
