@@ -30,6 +30,46 @@ command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 # contain "claude", passed `tail -f ~/.claude/...` or another run's role after a pid wrap, and the
 # kill below is a PROCESS-GROUP kill.
 is_claude() { proc_pid_is_run_daemon "$1" claude; }
+role_is_zombie() { /usr/bin/grep -q '^State:[[:space:]]*Z' "/proc/$1/status" 2>/dev/null; }
+# A role whose claude already exited (on pass 1's TERM, or before this run of stop-team) can leave
+# members in its process group that ignored TERM: a tool child, a stuck shell. Pass 2 used to skip
+# the whole group once the leader was gone, so they ran on after teardown.
+# A process-group id is not reused while any member is alive, so members with pgid == the recorded
+# pid ARE that role's group -- unless the number was reused after the group emptied, by a process
+# that then exited leaving its own members. So the group is SIGKILLed only if EVERY live member
+# (zombies are dead and skipped) carries this run's TEAM_RUN_ID or TEAM_DIR; otherwise it is left
+# and one line says so.
+kill_exited_role_group() {   # <pgid> <role>
+  local g="$1" role="$2" m st members="" foreign="" mine
+  # Never the caller's own group: stop-team run from inside a dead role's group would SIGKILL itself
+  # (measured: it was spared only because its own short-lived ps/awk members had
+  # exited before their environ was read and so counted as foreign -- a race, not a check).
+  # ...nor the group of any ANCESTOR: a caller inside the dead role's group that setsid's stop-team
+  # gives stop-team a new group, but killing the old one takes the caller.
+  local a="$$" ag mine=""
+  while [ -n "$a" ] && [ "$a" -gt 1 ] 2>/dev/null; do
+    ag="$(ps -o pgid= -p "$a" 2>/dev/null | tr -d ' ')"
+    [ -n "$ag" ] && mine="$mine $ag"
+    a="$(ps -o ppid= -p "$a" 2>/dev/null | tr -d ' ')"
+  done
+  case " $mine " in *" $g "*)
+    echo "skip group of exited $role (pgid $g): it is the process group of this stop-team or one of its ancestors; group left"
+    return 0 ;;
+  esac
+  while read -r m st; do
+    case "$st" in Z*) continue ;; esac
+    [ -d "/proc/$m" ] || continue      # exited since the listing: not a member any more
+    members="$members $m"
+    proc_pid_has_run_env "$m" || foreign="$foreign $m"
+  done < <(ps -eo pid=,pgid=,stat= 2>/dev/null | awk -v g="$g" '$2==g {print $1, $3}')
+  [ -n "$members" ] || return 0
+  if [ -n "$foreign" ]; then
+    echo "skip group of exited $role (pgid $g): member(s)$foreign not this run's; group left"
+    return 0
+  fi
+  kill -KILL "-$g" 2>/dev/null || true
+  echo "KILL group of exited $role (pgid $g, members$members)"
+}
 
 killed=0
 
@@ -65,6 +105,8 @@ if [ -f "$active" ]; then
     if is_claude "$pid"; then
       kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
       echo "KILL $role (pid $pid)"
+    elif [ ! -d "/proc/$pid" ] || role_is_zombie "$pid"; then
+      kill_exited_role_group "$pid" "$role"
     fi
     [ -n "${wid:-}" ] && tmux kill-window -t "$wid" 2>/dev/null || true
   done < "$active"
@@ -110,8 +152,7 @@ if [ -f "$srv_pidf" ]; then
   # Same gate: server.py in program position, started under this run (the first role client
   # starts it, so it inherits TEAM_RUN_ID), AND serving this run's port. The pidfile is shared bus
   # state, not ours, so a refused pid leaves it in place.
-  if proc_pid_is_run_daemon "$srv_pid" server.py && \
-     [ "$(tr '\0' '\n' < "/proc/$srv_pid/cmdline" 2>/dev/null | sed -n '/^--port$/{n;p;q}')" = "$TEAM_PORT" ]; then
+  if proc_pid_is_run_bus_server "$srv_pid" "$TEAM_PORT"; then
     kill -TERM "$srv_pid" 2>/dev/null || true
     echo "stopped /is bus server (pid $srv_pid, port $TEAM_PORT)"; killed=1
   elif [ -n "$srv_pid" ] && [ -d "/proc/$srv_pid" ]; then

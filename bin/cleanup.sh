@@ -70,10 +70,13 @@ killtree_verified() {
   sleep 1
   if proc_pid_is_run_daemon "$root" "$@"; then
     kill -KILL "-$root" 2>/dev/null || kill -KILL "$root" 2>/dev/null || true
-  elif [ ! -d "/proc/$root" ]; then
+  elif [ ! -d "/proc/$root" ] || /usr/bin/grep -q '^State:[[:space:]]*Z' "/proc/$root/status" 2>/dev/null; then
     # The root exited on TERM. Its group can still hold members that ignored TERM (orphans not in
     # the descendant list). A process-group id is not reused while any member is alive, so a group
     # with this number is still the verified root's: SIGKILL it, as the old code did unconditionally.
+    # A ZOMBIE root (exited, not yet reaped by its parent) counts as exited: it has no cmdline, so
+    # the identity check above refuses it, and its pid -- the group id -- stays allocated until it is
+    # reaped.
     kill -KILL "-$root" 2>/dev/null || true
   fi
   for p in $d; do proc_pid_has_run_env "$p" && { kill -KILL "$p" 2>/dev/null || true; }; done

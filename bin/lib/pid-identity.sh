@@ -8,8 +8,10 @@
 # number can be sshd or the SSM agent, which `kill -0` cannot tell apart. Only the program position
 # counts, so `tail -f bin/x.sh` in the same run does not pass. Unreadable /proc means NOT ours. A
 # self-reload re-exec keeps pid, argv and environ, so a reloaded daemon still passes.
+# An interpreter option that takes a SEPARATE operand (bash/sh -o/+o/-O/+O, python -W/-X) skips that
+# operand too: `bash -o pipefail bin/x.sh` used to put `pipefail` in program position.
 proc_pid_is_run_daemon() {
-  local pid="${1:-}" a e g prog="" i=0
+  local pid="${1:-}" a e g prog="" i=0 skip=0
   shift || true
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   [ "$#" -gt 0 ] || return 1
@@ -17,10 +19,14 @@ proc_pid_is_run_daemon() {
   [ -r "/proc/$pid/cmdline" ] && [ -r "/proc/$pid/environ" ] || return 1
   while IFS= read -r -d '' a; do
     if [ "$i" = 0 ]; then
-      case "${a##*/}" in bash|sh|dash|python|python3|python3.[0-9]*) i=1; continue ;; esac
+      case "${a##*/}" in bash|sh|dash) i=sh; continue ;; python|python3|python3.[0-9]*) i=py; continue ;; esac
       prog="$a"; break
     fi
-    case "$a" in -*) continue ;; esac
+    [ "$skip" = 1 ] && { skip=0; continue; }
+    # Also a combined short-option cluster that ENDS in the operand-taking letter (`bash -eo pipefail`,
+    # `python3 -uW ignore`) and bash's long --rcfile/--init-file.
+    case "$i:$a" in sh:-*[oO]|sh:+*[oO]|sh:--rcfile|sh:--init-file|py:-*[WX]) skip=1; continue ;; esac
+    case "$a" in -*|+*) continue ;; esac
     prog="$a"; break
   done < <( { cat "/proc/$pid/cmdline"; } 2>/dev/null )
   [ -n "$prog" ] || return 1
@@ -67,7 +73,10 @@ proc_run_daemon_globs() {
 proc_pidfile_verdict() {
   local f="${1:-}"; shift || true
   PM_PID=""; PM_WHY=""
-  { IFS= read -r PM_PID < "$f"; } 2>/dev/null || [ -n "$PM_PID" ] || { PM_WHY="unreadable or empty pidfile"; return 1; }
+  # The FIRST whitespace-separated field of the first line: stripping every blank read a
+  # pidfile "1 2" as pid 12. Left over CR (a CRLF file) is still dropped.
+  local _pm_rest=""
+  { read -r PM_PID _pm_rest < "$f"; } 2>/dev/null || [ -n "$PM_PID" ] || { PM_WHY="unreadable or empty pidfile"; return 1; }
   PM_PID="${PM_PID//[[:space:]]/}"
   case "$PM_PID" in
     '') PM_WHY="empty pidfile"; return 1 ;;
@@ -92,4 +101,18 @@ proc_pid_has_run_env() {
     [ -n "${TEAM_DIR:-}" ] && [ "$e" = "TEAM_DIR=$TEAM_DIR" ] && return 0
   done < <( { cat "/proc/$pid/environ"; } 2>/dev/null )
   return 1
+}
+# proc_pid_is_run_bus_server <pid> <port> -> 0 only if <pid> is this run's /is bus server.py (the
+# proc_pid_is_run_daemon gate: server.py in program position, this run's env -- the first role client
+# starts it, so it inherits TEAM_RUN_ID) AND it serves <port>, given as `--port N` or `--port=N`
+# (the equals form used to be refused). One gate for stop-team.sh and panic.sh.
+proc_pid_is_run_bus_server() {
+  local pid="${1:-}" port="${2:-}" a want=0 got=""
+  [ -n "$port" ] || return 1
+  proc_pid_is_run_daemon "$pid" server.py || return 1
+  while IFS= read -r -d '' a; do
+    if [ "$want" = 1 ]; then got="$a"; want=0; continue; fi
+    case "$a" in --port) want=1 ;; --port=*) got="${a#--port=}" ;; esac
+  done < <( { cat "/proc/$pid/cmdline"; } 2>/dev/null )
+  [ "$got" = "$port" ]
 }
