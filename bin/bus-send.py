@@ -44,6 +44,41 @@ sys.path.insert(0, str(_SKILL_DIR))
 
 import shared  # noqa: E402
 
+# The server keeps nothing for a name that is not connected: the send is refused with unknown_peer
+# and the message exists nowhere. A role is off the bus for a few seconds whenever its listener
+# restarts (crash, session respawn, team relaunch), and every send in that window was lost. A refusal
+# for a name that is ABSENT ("no agent matches") is retried every _RETRY_STEP s for up to
+# BUS_SEND_RETRY_S (default 30); after that the exit and the last stderr line are exactly as before
+# (rc 1, "send error: unknown_peer: ..."). Self-sends and every other error are not retried.
+# A caller with its own outer timeout or a tight loop sets BUS_SEND_RETRY_S=0.
+# Parsing is strict: UNSET = 30; anything that is not a finite number > 0 (empty, "off", "nan",
+# negative, 0) = off -- a value someone set means they wanted to change it, and "off" must never
+# mean 30 s; a finite value is clamped to _RETRY_MAX_S, so "inf" cannot hold a caller forever.
+_RETRY_MAX_S = 60.0
+
+
+def _parse_retry(raw):
+    import math
+    if raw is None:
+        return 30.0
+    try:
+        v = float(raw)
+    except ValueError:
+        return 0.0
+    if math.isnan(v) or v <= 0:
+        return 0.0
+    return min(v, _RETRY_MAX_S)
+
+
+_RETRY_S = _parse_retry(os.environ.get("BUS_SEND_RETRY_S"))
+_RETRY_STEP = 2.0
+_last_refusal: dict = {}
+
+
+def _is_absent_refusal() -> bool:
+    return (_last_refusal.get("code") == shared.ErrorCode.UNKNOWN_PEER
+            and str(_last_refusal.get("message", "")).startswith("no agent matches"))
+
 
 async def _run(args: argparse.Namespace) -> int:
     token_file = shared.token_path()
@@ -108,10 +143,14 @@ async def _run(args: argparse.Namespace) -> int:
             resp_raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
             resp = json.loads(resp_raw)
             if resp.get("op") == "error":
+                _last_refusal.clear()
+                _last_refusal.update(code=resp.get("code", ""), message=resp.get("message", ""))
                 err_msg = f"send error: {resp.get('code', '')}: {resp.get('message', '')}"
                 if "candidates" in resp:
                     err_msg += f" (try: {', '.join(resp['candidates'])})"
-                print(err_msg, file=sys.stderr)
+                _last_refusal["line"] = err_msg
+                if not _is_absent_refusal():
+                    print(err_msg, file=sys.stderr)   # an absent name is reported once, by main()
                 return 1
         except asyncio.TimeoutError:
             pass
@@ -136,7 +175,25 @@ def main() -> int:
     args = parser.parse_args()
     if not args.name:
         parser.error("--name required (or set BUS_SEND_NAME env)")
-    return asyncio.run(_run(args))
+    import time
+    t0 = time.monotonic()
+    tries = 0
+    while True:
+        tries += 1
+        _last_refusal.clear()
+        rc = asyncio.run(_run(args))
+        absent = rc == 1 and _is_absent_refusal()
+        if not absent or time.monotonic() - t0 + _RETRY_STEP > _RETRY_S:
+            if absent:
+                # ONE line, starting exactly as before: callers match it for unknown_peer.
+                line = _last_refusal.get("line", "send error: unknown_peer")
+                if tries > 1:
+                    line += f" [absent through {tries} tries over {time.monotonic() - t0:.0f}s; NOT sent]"
+                sys.stderr.write(line + "\n")
+            elif rc == 0 and tries > 1:
+                sys.stderr.write(f"bus-send: {args.to} was off the bus; sent on try {tries}\n")
+            return rc
+        time.sleep(_RETRY_STEP)
 
 
 if __name__ == "__main__":
