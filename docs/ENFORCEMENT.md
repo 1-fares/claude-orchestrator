@@ -16,6 +16,9 @@ Three layers, in order of strength:
 3. **Rule** (card, memory): explains WHY the gate or check exists. Never the only mechanism
    for something that has already gone wrong once.
 
+A rule amendment that changes what counts as compliance updates its row here, and every check the row
+names, in the same change. A check left measuring the old rule reports breaches that are not real.
+
 | Behaviour | Layer | Mechanism | Test | On violation |
 |---|---|---|---|---|
 | A credential, gate URL or value leaves the box only after a live measurement in the same turn | Gate | `bin/hooks/gate-outbound-reply.sh` check 1: every gate value and shared-login password in the body must be in `$TEAM_DIR/health/env-logins.json` (written by the deployment's login probe) and under 15 min old | `bin/tests/gate-outbound-reply.test.sh` 1-3 | send blocked |
