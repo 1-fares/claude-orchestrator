@@ -169,7 +169,12 @@ env; run gates as \$ORCH_HOME/bin/... . This run's shared state dir is \$TEAM_DI
 ledger) under \$TEAM_DIR, never under \$ORCH_HOME/.team directly, so parallel runs
 in this clone do not collide. Your own code changes go in the working tree above.
 Do these in order:
-1. Join the bus:   /is c $role
+1. Join the bus (bus-inbox, never a Monitor on client.py, never /is c). Bash:
+      python3 \$ORCH_HOME/bin/bus-inbox.py start $role
+   then arm the reader with Bash run_in_background:
+      python3 \$ORCH_HOME/bin/bus-inbox.py wait $role 7200
+   Each time it completes, in ONE response: Read its output AND run that wait
+   again (CLAUDE.md "Join the bus first" has the rest). Send with /is s as below.
 2. Tool-IO self-check (born-corrupt guard). Run this one Bash command:
       echo ${role}_TOOLIO_$$
    The stdout MUST be exactly that token. If instead you get a Read-style "File

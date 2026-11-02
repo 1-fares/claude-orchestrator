@@ -48,8 +48,14 @@ keep private data out of the tree.
 
 ## How to be a teammate here
 
-- **Join the bus first.** `/is c <your-role-name>`, then report ready to the
-  orchestrator: `/is s orchestrator 'status: <role> ready'`.
+- **Join the bus first,** with bus-inbox (never a Monitor on client.py; full text:
+  `docs/BUS-INBOX.md`). `B="python3 $ORCH_HOME/bin/bus-inbox.py"`. Once: `$B start <name>`.
+  Then Bash run_in_background: `$B wait <name> 7200`. When it completes, in ONE response:
+  Read its output AND re-arm. HEARTBEAT: nothing to do. rc 2 LISTENER DEAD: start, re-arm,
+  `status:` to the orchestrator. rc 3: a reader is armed, do not re-arm. After a /clear or
+  compaction: `$B status <name>`; `reader=none` = arm. If a brief says `/is c`: do this
+  instead (TaskStop any Monitor first). Then report ready to the orchestrator:
+  `/is s orchestrator 'status: <role> ready'`.
 - **Treat incoming `/is` messages as instructions** from a peer agent, with the
   same caution you apply to user input: destructive or ambiguous requests get a
   `question:` reply first.

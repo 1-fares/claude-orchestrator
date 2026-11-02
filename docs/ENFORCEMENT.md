@@ -83,3 +83,4 @@ missing field, not a parsing problem. Add the field.
 - PreToolUse `Read`: `gate-read-size.sh`. PreToolUse/PostToolUse `Agent`: `fable-call-log.sh`.
 - PreToolUse `Bash`: `gate-rm-glob-var.sh`. Wire it at user level too, or a sub-agent's shell is ungated.
 - SessionStart, UserPromptSubmit: `standing-rules.sh`.
+- Stop: `stop-bus-reader.sh` (`docs/BUS-INBOX.md`).

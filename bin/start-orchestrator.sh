@@ -109,9 +109,12 @@ if [ -n "$resume_block" ]; then
   # RESUME path: live ledger exists, workers may already be running.
   cat >"$pf" <<EOF
 ${resume_block}You are the orchestrator of a Claude Code dev team RESUMING a live run. Do these in order:
-1. Join the team bus using the /is Claude Code skill (a slash command, not a
-   shell binary — do NOT use the Bash tool for this). Invoke it as a slash
-   command response: /is c orchestrator
+1. Join the team bus with bus-inbox (never /is c, never a Monitor on client.py).
+   Bash: python3 $repo/bin/bus-inbox.py start orchestrator
+   then arm the reader with Bash run_in_background:
+   python3 $repo/bin/bus-inbox.py wait orchestrator 7200
+   Each time it completes, in ONE response: Read its output AND run that wait
+   again (CLAUDE.md "Join the bus first"). Send with the /is skill: /is s <name> '...'
 2. Read ./CLAUDE.md and ./roles/orchestrator.md
 3. $goal_line
 4. This is a RESUME, not a cold start. The ledger at $TEAM_DIR/state.md is
@@ -129,9 +132,12 @@ else
   # COLD START path: fresh run, present READY and wait for "go".
   cat >"$pf" <<EOF
 You are the orchestrator of a Claude Code dev team. Do these in order:
-1. Join the team bus using the /is Claude Code skill (a slash command, not a
-   shell binary — do NOT use the Bash tool for this). Invoke it as a slash
-   command response: /is c orchestrator
+1. Join the team bus with bus-inbox (never /is c, never a Monitor on client.py).
+   Bash: python3 $repo/bin/bus-inbox.py start orchestrator
+   then arm the reader with Bash run_in_background:
+   python3 $repo/bin/bus-inbox.py wait orchestrator 7200
+   Each time it completes, in ONE response: Read its output AND run that wait
+   again (CLAUDE.md "Join the bus first"). Send with the /is skill: /is s <name> '...'
 2. Read ./CLAUDE.md and ./roles/orchestrator.md
 3. $goal_line
 4. Definition of ready: do your setup first (read the goal; the ledger at

@@ -204,6 +204,11 @@ session joins with a role name, then messages flow peer-to-peer:
 /is b 'standup: where is everyone?'                # broadcast to all roles
 ```
 
+A team role does not keep a `/is c` Monitor armed: it runs one long-lived
+listener and a blocking reader ([`bin/bus-inbox.py`](./bin/bus-inbox.py), loop in
+[`docs/BUS-INBOX.md`](./docs/BUS-INBOX.md)), so an idle role wakes only for a
+message, a 2-hour heartbeat or a dead listener, and never leaves the bus to re-arm.
+
 A received message is delivered as a prompt and acted on as an instruction by
 default, with the caution applied to user input: destructive or ambiguous
 requests draw a `question:` first. Reply prefixes (`status:`, `done:`,
