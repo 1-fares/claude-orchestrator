@@ -86,6 +86,8 @@
 #                               (engine passes $TEAM_SESSION). Window 0 = orchestrator.
 #   COMPACT_PROBE_WAIT=4         seconds to wait for /context output to render
 #   COMPACT_LOG=<path>           audit log (default ${TEAM_DIR:-.}/compaction-watchdog.log)
+#   COMPACT_SETTINGS_FILE=<path> Claude Code settings read for autoCompactWindow
+#                                (default ~/.claude/settings.json; read on every probe)
 
 set -uo pipefail
 # Original invocation args, captured before any parsing, so self-reload can re-exec
@@ -228,6 +230,94 @@ resolve_thresholds() {
   FORCE_R="${FORCE_OVERRIDE:-$df}"
 }
 
+# The base the transcript usage is measured against (tokens).
+JSONL_WINDOW=200000
+
+# role_model <role>: the model recorded for the role ($MODELS_DIR/<role>, first line), or nothing.
+role_model() { head -1 "$MODELS_DIR/${1:-}" 2>/dev/null | tr -d '[:space:]'; }
+
+# autocompact_window <model>: echo the auto-compact window Claude Code is configured
+# with for that model, in TOKENS, or nothing when none is set. Reads
+# $COMPACT_SETTINGS_FILE (default ~/.claude/settings.json): the per-model key
+# modelSettings.<model>.autoCompactWindow first, then the top-level
+# autoCompactWindow. A missing file, bad JSON or a non-positive value echoes nothing.
+#
+# WHY. With an autoCompactWindow set below the model window, Claude Code compacts on
+# its own near that window. NUDGE/FORCE measured against a larger base then never
+# fire first, and the idle-boundary compaction this daemon exists for never happens.
+# The settings file is read on every call, not once at start, so a later change to
+# the window takes effect without a restart.
+autocompact_window() {
+  local model="${1:-}" f="${COMPACT_SETTINGS_FILE:-$HOME/.claude/settings.json}"
+  [ -f "$f" ] || return 0
+  python3 - "$f" "$model" <<'ACPY' 2>/dev/null || true
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+def pos(v):
+    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+ms = d.get("modelSettings") if isinstance(d, dict) else None
+per = ms.get(sys.argv[2]) if isinstance(ms, dict) and sys.argv[2] else None
+v = per.get("autoCompactWindow") if isinstance(per, dict) else None
+if not pos(v):
+    v = d.get("autoCompactWindow") if isinstance(d, dict) else None
+if pos(v):
+    print(v)
+ACPY
+}
+
+# jsonl_window <role>: echo the base the transcript usage is measured against: the
+# smaller of JSONL_WINDOW and the role's configured auto-compact window. The setting
+# can only LOWER it, never raise it. Logs `effective-window ...` once per role and
+# again whenever the value changes (marker file, because callers run it inside a
+# command substitution).
+jsonl_window() {
+  local role="${1:-}" model ac ew mk line
+  model="$(role_model "$role")"
+  ac="$(autocompact_window "$model")"
+  ew="$JSONL_WINDOW"
+  if [ -n "$ac" ] && [ "$ac" -lt "$ew" ] 2>/dev/null; then ew="$ac"; fi
+  line="model=${model:-<none>} base=$JSONL_WINDOW autocompact=${ac:-<unset>} effective=$ew"
+  mk="$HEALTH_DIR/effective-window-${role:-none}"
+  if [ "$(cat "$mk" 2>/dev/null)" != "$line" ]; then
+    mkdir -p "$HEALTH_DIR" 2>/dev/null || true
+    printf '%s' "$line" > "$mk" 2>/dev/null || true
+    log "effective-window role=${role:-<none>} $line"
+  fi
+  printf '%s' "$ew"
+}
+
+# context_denominator: stdin = /context pane text -> the window the total line is
+# printed against, in TOKENS ("42.1k/500k tokens (8%)" -> 500000, "/1m" -> 1000000),
+# or nothing when no total line is on the pane.
+context_denominator() {
+  grep -oiE '/[0-9.]+[kKmM] tokens \([0-9]+%\)' | tail -1 \
+    | sed -E 's#^/([0-9.]+)([kKmM]).*#\1 \2#' \
+    | awk '{ m = (tolower($2) == "m") ? 1000000 : 1000; printf "%d", $1 * m + 0.5 }'
+}
+
+# rescale_pct <pct> <role> [denominator]: restate a /context percentage against the
+# configured auto-compact window when that is SMALLER than the window printed on the
+# total line, rounded UP (compact slightly early is the safe direction). The base is
+# the printed denominator, never an assumed model window: under autoCompactWindow
+# 500000 Claude Code prints "42.1k/500k tokens (8%)", so that percentage is ALREADY
+# of 500k and must not be scaled again. No denominator on the pane (the footer
+# formats, whose base is not printed) -> the percentage is returned unchanged.
+# Empty in, empty out.
+rescale_pct() {
+  local pct="${1:-}" role="${2:-}" den="${3:-}" ac
+  [ -n "$pct" ] || return 0
+  { [ -n "$role" ] && [ -n "$den" ] && [ "$den" -gt 0 ] 2>/dev/null; } || { printf '%s' "$pct"; return 0; }
+  ac="$(autocompact_window "$(role_model "$role")")"
+  if [ -n "$ac" ] && [ "$ac" -gt 0 ] 2>/dev/null && [ "$ac" -lt "$den" ]; then
+    printf '%s' $(( (pct * den + ac - 1) / ac ))
+  else
+    printf '%s' "$pct"
+  fi
+}
+
 # enumerate_targets: echo "<role> <target> <orchflag> <probeflag>" lines, one per
 # window. The window NAME is the role name. orchflag=1 for window 0 (the
 # orchestrator, autorecover-eligible), 0 otherwise. probeflag=1 (window 0 plus
@@ -295,7 +385,7 @@ input_class() {
 }
 
 probe_pct() {
-  local t="$1"
+  local t="$1" role="${2:-}" cap raw
   tmux_o send-keys -t "$t" C-u 2>/dev/null
   tmux_o send-keys -t "$t" -l "/context" 2>/dev/null
   tmux_o send-keys -t "$t" Enter 2>/dev/null
@@ -304,17 +394,21 @@ probe_pct() {
   # block + footer push the total line up) and parse all known formats. The total
   # moved from a parenthesised "(NN%)" to a "NN% context used" footer in 2.1.x;
   # see bin/lib/compaction-detect.sh.
-  tmux_o capture-pane -t "$t" -p -S -60 2>/dev/null | parse_context_pct
+  # Given a role, the result is restated against that role's auto-compact window
+  # (rescale_pct); without one (the canary only needs "parses or not") it is raw.
+  cap="$(tmux_o capture-pane -t "$t" -p -S -60 2>/dev/null)"
+  raw="$(printf '%s\n' "$cap" | parse_context_pct)"
+  rescale_pct "$raw" "$role" "$(printf '%s\n' "$cap" | context_denominator)"
 }
 
-# probe_pct_from_jsonl <target>: read context % from the session's transcript JSONL
+# probe_pct_from_jsonl <target> [role]: read context % from the session's transcript JSONL
 # usage fields (input_tokens + cache_creation_input_tokens + cache_read_input_tokens
 # from the last assistant message). Updated every turn, even while the session is
 # busy. This is the fallback when the /context probe cannot fire (pane busy).
 # Chain: tmux pane PID -> ~/.claude/sessions/<PID>.json -> sessionId ->
 # ~/.claude/projects/<project>/<sessionId>.jsonl -> last assistant usage.
 probe_pct_from_jsonl() {
-  local t="$1" pid sid jsonl pct proj_dir
+  local t="$1" role="${2:-}" pid sid jsonl pct proj_dir win
   pid="$(tmux_o display-message -t "$t" -p '#{pane_pid}' 2>/dev/null)" || return 1
   [ -n "$pid" ] || return 1
   local sess_file="$HOME/.claude/sessions/${pid}.json"
@@ -341,6 +435,7 @@ print(sid,proj_dir)
   [ -n "$proj_dir" ] || return 1
   jsonl="${proj_dir}/${sid}.jsonl"
   [ -f "$jsonl" ] || return 1
+  win="$(jsonl_window "$role")"
   # pipefail is set globally; tac exits 141 (SIGPIPE) when python breaks the pipe
   # after finding its match, which makes the pipeline return non-zero. Read in python
   # directly to avoid the pipe entirely.
@@ -363,11 +458,11 @@ for line in reversed(tail.splitlines()):
             cr = u.get('cache_read_input_tokens', 0)
             total = inp + cc + cr
             if total > 0:
-                print(total * 100 // 200000)
+                print(total * 100 // int(sys.argv[2]))
                 break
     except:
         pass
-" "$jsonl" 2>/dev/null)" || return 1
+" "$jsonl" "$win" 2>/dev/null)" || return 1
   [ -n "$pct" ] && [ "$pct" -ge 0 ] 2>/dev/null && printf '%s' "$pct"
 }
 
@@ -592,7 +687,7 @@ process_target() {
       # Pane changed AND busy: the /context probe can never fire while the session
       # is working (the pane never stabilises for IDLE_SEC). Fall back to reading
       # the context % from the transcript JSONL, which is updated every turn.
-      pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+      pct="$(probe_pct_from_jsonl "$t" "$role" 2>/dev/null)" || pct=""
       if [ -n "$pct" ]; then
         log "[$role] jsonl-probe: ${pct}% (busy pane, read from transcript)"
       else
@@ -609,7 +704,7 @@ process_target() {
     # Pane is busy: the /context probe cannot fire. Fall back to reading the
     # context % from the session's transcript JSONL, which is updated every turn
     # even while the session is working.
-    pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+    pct="$(probe_pct_from_jsonl "$t" "$role" 2>/dev/null)" || pct=""
     if [ -n "$pct" ]; then
       log "[$role] jsonl-probe: ${pct}% (busy pane, read from transcript)"
     else
@@ -628,11 +723,11 @@ process_target() {
     # ~32k tokens an hour of monitoring overhead and drives compactions with no
     # operator traffic. The transcript read is a file read, no tmux injection.
     # /context stays as the fallback when the transcript cannot be read.
-    pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+    pct="$(probe_pct_from_jsonl "$t" "$role" 2>/dev/null)" || pct=""
     if [ -n "$pct" ]; then
       log "[$role] jsonl-probe: ${pct}% (idle pane, read from transcript)"
     else
-      pct="$(probe_pct "$t")"
+      pct="$(probe_pct "$t" "$role")"
       last_fp[$role]=""   # /context changed the pane; force a fresh baseline next pass
       if [ -n "$pct" ]; then
         log "[$role] pane-probe: ${pct}% (idle pane, /context fallback)"
@@ -695,7 +790,7 @@ canary() {
     # is_busy does not catch (tool output streaming, mid-render) makes /context
     # unreadable while the jsonl transcript still reads. A successful jsonl read
     # means the instrument is fine and the pane was uncooperative at startup.
-    pct="$(probe_pct_from_jsonl "$t" 2>/dev/null)" || pct=""
+    pct="$(probe_pct_from_jsonl "$t" orchestrator 2>/dev/null)" || pct=""
     if [ -n "$pct" ]; then
       log "canary: /context probe failed but jsonl-probe read ${pct}%; instrument healthy, pane busy at startup"
       return
@@ -707,6 +802,14 @@ canary() {
   fi
 }
 
+# Sourcing hook for the unit tests: with COMPACT_TEST_SOURCE=1 the file defines its
+# functions and stops here, so a test can call them directly instead of driving the
+# whole daemon through a fake tmux. It stops BEFORE the start-line, the canary and
+# the main loop, so sourcing injects no keystroke into any pane.
+if [ -n "${COMPACT_TEST_SOURCE:-}" ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 # Start-line: enumerate the watched targets + their resolved thresholds. Use the
 # redirect-to-file pattern (not a pipe) so the listing is complete; see
 # enumerate_targets on why a piped/command-sub call can truncate.
@@ -717,7 +820,8 @@ if enumerate_targets > "$_st_tmp" 2>/dev/null; then
     [ -n "$r" ] || continue
     if [ "${probef:-1}" = 1 ]; then
       resolve_thresholds "$r"
-      start_targets+="${r}(${NUDGE_R}/${FORCE_R}$([ "$orchf" = 1 ] && echo ,orch)) "
+      _ac="$(autocompact_window "$(role_model "$r")")"
+      start_targets+="${r}(${NUDGE_R}/${FORCE_R}${_ac:+ autocompact ${_ac}}$([ "$orchf" = 1 ] && echo ,orch)) "
     else
       start_targets+="${r}(ceiling-only) "
     fi

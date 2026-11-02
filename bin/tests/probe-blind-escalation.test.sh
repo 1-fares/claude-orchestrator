@@ -49,7 +49,7 @@ chmod +x "$FAKEBIN/tmux"
 PATH="$FAKEBIN:$PATH" TEAM_DIR="$TD" TEAM_RUN_ID=testrun \
   COMPACT_SOCKET=x COMPACT_SESSION=orch-sess \
   COMPACT_LOCK="$TD/lock" COMPACT_PIDFILE="$TD/pid" COMPACT_LOG="$TD/log" \
-  COMPACT_HEALTH_DIR="$TD/health" \
+  COMPACT_HEALTH_DIR="$TD/health" COMPACT_SETTINGS_FILE="$TD/no-settings.json" \
   COMPACT_CHECK_INTERVAL=1 COMPACT_IDLE_SEC=0 COMPACT_PROBE_WAIT=0 \
   COMPACT_PROBE_FAIL_ALARM=3 NTFY_URL='' \
   timeout 18 bash "$repo/bin/compaction-watchdog.sh" >/dev/null 2>&1 || true
