@@ -22,8 +22,8 @@
 #   OBSERVER_GH_MIN_INTERVAL  seconds; skip the fetch if the output file's
 #                             fetched_at is younger than this (don't hammer gh).
 #                             Default 300. Pass --force to bypass.
-#   OBSERVER_GH_MERGED_LIMIT  how many recent merged PRs to scan per repo (then
-#                             filtered to the merge window). Default 20.
+#   OBSERVER_GH_MERGED_LIMIT  how many merged PRs to fetch per repo (GitHub filters them
+#                             to the merge window, the jq filter re-checks). Default 100.
 #   OBSERVER_GH_MERGED_HOURS  merge window in hours for "recent merges". Default 24.
 #   OBSERVER_GH_TIMEOUT       per-`gh` call timeout, seconds. Default 60.
 #
@@ -49,7 +49,7 @@ force=0
 config="${OBSERVER_GH_CONFIG:-$TEAM_REPO/observer-github.conf}"
 out="${OBSERVER_GH_GROUNDTRUTH:-$TEAM_DIR/observer/github-ground-truth.txt}"
 min_interval="${OBSERVER_GH_MIN_INTERVAL:-300}"
-merged_limit="${OBSERVER_GH_MERGED_LIMIT:-20}"
+merged_limit="${OBSERVER_GH_MERGED_LIMIT:-100}"
 merged_hours="${OBSERVER_GH_MERGED_HOURS:-24}"
 gh_timeout="${OBSERVER_GH_TIMEOUT:-60}"
 err_sidecar="${out}.error"
@@ -125,8 +125,12 @@ for r in "${repos[@]}"; do
   # accept jq's --arg, so the cutoff is interpolated into the expression string
   # (cutoff_iso is our own ISO timestamp, no injection risk).
   merged_jq=".[] | select((\"${cutoff_iso}\" == \"\") or (.mergedAt >= \"${cutoff_iso}\")) | \"  #\(.number)  merged \(.mergedAt)  \(.headRefName)  \(.title[0:60])\""
+  # `gh pr list --state merged` lists by CREATION date, so a long-lived PR merged inside the window
+  # fell outside the newest N and was missing. GitHub filters by merge time instead.
+  merged_search=()
+  [ -n "$cutoff_iso" ] && merged_search=(--search "merged:>=${cutoff_iso}")
   merged_rows="$(timeout "$gh_timeout" gh pr list --repo "$r" --state merged --limit "$merged_limit" \
-      --json number,title,mergedAt,headRefName \
+      "${merged_search[@]}" --json number,title,mergedAt,headRefName \
       --jq "$merged_jq" 2>>"$err_sidecar.tmp")"
   rc=$?
   if [ "$rc" -ne 0 ]; then
