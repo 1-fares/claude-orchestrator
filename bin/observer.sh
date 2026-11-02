@@ -40,12 +40,15 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
 # shellcheck source=bin/lib/observer-nudge.sh
 . "$repo/bin/lib/observer-nudge.sh"
+# shellcheck source=bin/lib/host-verdict.sh
+. "$repo/bin/lib/host-verdict.sh"
 # Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
 # fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
 . "$repo/bin/lib/self-reload.sh"
-self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/observer-nudge.sh" "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/observer-nudge.sh" "$repo/bin/lib/self-reload.sh" \
+  "$repo/bin/lib/host-verdict.sh"
 
 interval="${OBSERVER_INTERVAL:-900}"
 model="${OBSERVER_MODEL:-sonnet}"
@@ -205,6 +208,7 @@ gather_metrics() {
 
   cat <<EOF
 HOST: load ${l1}/${l5}/${l15} on ${ncpu} vCPU; mem ${mem}; claude procs ${claude_n} (~${claude_rss} GiB RSS)
+$(host_verdict /proc "$ncpu")
 ROSTER (role, idle, health):
 $(printf '%s\n' "$roster" | sed 's/^/  /')
 ROLE MODELS (role: model):
@@ -324,8 +328,10 @@ In <= 17 lines, give a concrete recommendation:
 2) Second line EXACTLY: "HEADLINE: <one terse sentence: grow/shrink/hold + host sizing>"
 3) TEAM: which roles (if any) to retire now (idle and no in-flight unit) and why;
    whether to add a role (a backlog with no owner). If none, say "hold".
-4) HOST: is the instance over/under-sized for this load? (Consider: API-bound, so
-   idle CPU is expected; judge on RAM headroom and peak role count, not CPU.)
+4) HOST: is the instance over/under-sized for this load? Start from the HOST VERDICT line
+   (15-minute load per core against its stated thresholds, never the 1-minute figure) and
+   state swap use and its top holders from it. (API-bound, so idle CPU is expected; also
+   judge RAM headroom and peak role count.)
 5) MODELS: for each NON-CORE role only, suggest model/effort up or down with a
    one-line reason; mark core roles "keep high". Do NOT suggest anything carrying a
    DECLINED disposition (incl. model-pins). If every role is core, settled by a
