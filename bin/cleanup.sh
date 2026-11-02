@@ -30,6 +30,8 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/team-env.sh
 . "$repo/bin/team-env.sh"   # TEAM_SESSION, TEAM_TMUX, TEAM_PORT, tmux() wrapper
+# shellcheck source=bin/lib/pid-identity.sh
+. "$repo/bin/lib/pid-identity.sh" || exit 1
 
 force=0; purge=0
 for a in "$@"; do case "$a" in
@@ -55,6 +57,50 @@ killtree(){ # $* pids: TERM then KILL the process groups/pids (no-op in dry run)
   sleep 1
   for p in "$@"; do kill -KILL "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null || true; done
 }
+# killtree_verified <root> <glob>... : killtree for a root pid read from a FILE (.team/active).
+# The root is re-verified with proc_pid_is_run_daemon before the delayed SIGKILL (it may have exited
+# on TERM and its number been reused in the second between), and a descendant is SIGKILLed only if it
+# still carries this run's environment.
+killtree_verified() {
+  [ "$DRY" = 1 ] && return 0
+  local root="$1" p d; shift
+  d="$(descendants "$root")"
+  kill -TERM "-$root" 2>/dev/null || kill -TERM "$root" 2>/dev/null || true
+  for p in $d; do kill -TERM "$p" 2>/dev/null || true; done
+  sleep 1
+  if proc_pid_is_run_daemon "$root" "$@"; then
+    kill -KILL "-$root" 2>/dev/null || kill -KILL "$root" 2>/dev/null || true
+  elif [ ! -d "/proc/$root" ]; then
+    # The root exited on TERM. Its group can still hold members that ignored TERM (orphans not in
+    # the descendant list). A process-group id is not reused while any member is alive, so a group
+    # with this number is still the verified root's: SIGKILL it, as the old code did unconditionally.
+    kill -KILL "-$root" 2>/dev/null || true
+  fi
+  for p in $d; do proc_pid_has_run_env "$p" && { kill -KILL "$p" 2>/dev/null || true; }; done
+}
+# reap_pidfile_daemon <name>: one of this run's pidfile daemons, gated like panic.sh's _reap_daemon.
+# A refused pid gets one line naming pid, file and why; the pidfile is ours ($TEAM_DIR) and stale.
+reap_pidfile_daemon() {
+  local name="$1" pidf="$TEAM_DIR/$1.pid" globs=()
+  [ -f "$pidf" ] || return 0
+  mapfile -t globs < <(proc_run_daemon_globs "$name")
+  if proc_pidfile_verdict "$pidf" "${globs[@]}"; then
+    tag "kill $name (pid $PM_PID)"
+    [ "$DRY" = 1 ] && return 0
+    kill -TERM "$PM_PID" 2>/dev/null || true
+    pkill -TERM -P "$PM_PID" 2>/dev/null || true
+    sleep 1
+    # Re-verify before escalating: a daemon that exited on TERM leaves a number that can be reused.
+    if proc_pid_is_run_daemon "$PM_PID" "${globs[@]}"; then
+      pkill -KILL -P "$PM_PID" 2>/dev/null || true
+      kill -KILL "$PM_PID" 2>/dev/null || true
+    fi
+  elif [ "$PM_WHY" != "not running" ]; then
+    tag "skip $name: pid $PM_PID from $pidf $PM_WHY; not signalled, pidfile removed"
+  fi
+  [ "$DRY" = 0 ] && rm -f "$pidf"
+  return 0
+}
 
 echo "== cleanup: clone=$repo"
 echo "== socket=$TEAM_TMUX session=$TEAM_SESSION bus-port=$TEAM_PORT  mode=$([ "$DRY" = 1 ] && echo DRY-RUN || echo APPLY)"
@@ -75,8 +121,12 @@ fi
 if [ -f "$TEAM_DIR/active" ]; then
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
-    if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then
-      tag "reap recorded role '$role' (pid $pid)"; killtree "$pid" $(descendants "$pid")
+    # This run's claude only (program position claude + this run's environ): the old args grep for
+    # "claude" passed any process mentioning it, and the kill is a PROCESS-GROUP kill.
+    if proc_pid_is_run_daemon "$pid" claude; then
+      tag "reap recorded role '$role' (pid $pid)"; killtree_verified "$pid" claude
+    elif [ -d "/proc/$pid" ]; then
+      tag "skip recorded role '$role': pid $pid from $TEAM_DIR/active is alive but not this run's claude; not signalled"
     fi
   done < "$TEAM_DIR/active"
 fi
@@ -129,48 +179,16 @@ if [ "${#unsigned[@]}" -gt 0 ]; then
   echo "   To stop one of these, do it yourself after confirming it is not live work."
 fi
 
-# 3b. API watchdog (if launch-team.sh started one for this clone's team).
-wd_pidf="$TEAM_DIR/api-watchdog.pid"
-if [ -f "$wd_pidf" ]; then
-  wd_pid="$(cat "$wd_pidf" 2>/dev/null || true)"
-  if [ -n "$wd_pid" ] && kill -0 "$wd_pid" 2>/dev/null; then
-    tag "kill api-watchdog (pid $wd_pid)"
-    [ "$DRY" = 0 ] && { kill -TERM "$wd_pid" 2>/dev/null || true; sleep 1; kill -KILL "$wd_pid" 2>/dev/null || true; rm -f "$wd_pidf"; }
-  else
-    [ "$DRY" = 0 ] && rm -f "$wd_pidf"
-  fi
-fi
-
-# 3b'. tmux watchdog (May-2026 addition: detects dead tmux server).
-tw_pidf="$TEAM_DIR/tmux-watchdog.pid"
-if [ -f "$tw_pidf" ]; then
-  tw_pid="$(cat "$tw_pidf" 2>/dev/null || true)"
-  if [ -n "$tw_pid" ] && kill -0 "$tw_pid" 2>/dev/null; then
-    tag "kill tmux-watchdog (pid $tw_pid)"
-    [ "$DRY" = 0 ] && { kill -TERM "$tw_pid" 2>/dev/null || true; sleep 1; kill -KILL "$tw_pid" 2>/dev/null || true; rm -f "$tw_pidf"; }
-  else
-    [ "$DRY" = 0 ] && rm -f "$tw_pidf"
-  fi
-fi
-
-# 3b''. compaction-watchdog, host-ram-watchdog, disk-tmp-watchdog,
-# chrome-supervisor, observer, intake-poller (detached nohup daemons that cleanup
-# did not handle before 2026-06-01, so they leaked past a cleanup/reset; the
-# host-ram/disk-tmp pair was missing from this list until 2026-07-20). pkill -P
-# reaps each daemon's backgrounded sleep child, which holds the per-TEAM_DIR
-# flock fd and would otherwise block a relaunch for one INTERVAL.
-for _d in compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
+# 3b. Pidfile daemons: api-watchdog, tmux-watchdog (May-2026: detects a dead tmux server),
+# compaction-watchdog, host-ram-watchdog, disk-tmp-watchdog,
+# chrome-supervisor, observer, intake-poller (detached nohup daemons that cleanup did not handle
+# before 2026-06-01, so they leaked past a cleanup/reset; the host-ram/disk-tmp
+# resource watchdogs were missing from this list until 2026-07-20). pkill -P reaps each daemon's
+# backgrounded sleep child, which holds the per-TEAM_DIR flock fd and would otherwise block a
+# relaunch for one INTERVAL. Every pid is gated by reap_pidfile_daemon.
+for _d in api-watchdog tmux-watchdog compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
           chrome-supervisor observer intake-poller; do
-  _pidf="$TEAM_DIR/$_d.pid"
-  if [ -f "$_pidf" ]; then
-    _pid="$(cat "$_pidf" 2>/dev/null || true)"
-    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
-      tag "kill $_d (pid $_pid)"
-      [ "$DRY" = 0 ] && { kill -TERM "$_pid" 2>/dev/null || true; pkill -TERM -P "$_pid" 2>/dev/null || true; sleep 1; pkill -KILL -P "$_pid" 2>/dev/null || true; kill -KILL "$_pid" 2>/dev/null || true; rm -f "$_pidf"; }
-    else
-      [ "$DRY" = 0 ] && rm -f "$_pidf"
-    fi
-  fi
+  reap_pidfile_daemon "$_d"
 done
 
 # 4. Stale /is bus pidfiles (dead pids only; never kill a live bus server).
