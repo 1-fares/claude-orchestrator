@@ -543,7 +543,7 @@ do_clear_rebrief() {
   tmux_o send-keys -t "$t" -l "/clear" 2>/dev/null
   tmux_o send-keys -t "$t" Enter 2>/dev/null
   sleep 3
-  local brief="You are the orchestrator, auto-recovered from a context-limit wedge (compaction could not reduce below the limit, so the watchdog /cleared you; your state is on disk). Re-join the bus: /is c orchestrator. Then reconstruct the run from ./CLAUDE.md, ./roles/orchestrator.md, and ${TEAM_DIR:-.}/state.md (read the recent tail, including the decision-log). Resume from there; keep context lean (point to files, do not re-read everything, checkpoint+compact at task boundaries). Report status when re-oriented."
+  local brief="You are the orchestrator, auto-recovered from a context-limit wedge (compaction could not reduce below the limit, so the watchdog /cleared you; your state is on disk). Re-join the bus: run python3 $repo/bin/bus-inbox.py status orchestrator; if it says reader=none, arm the reader with Bash run_in_background (python3 $repo/bin/bus-inbox.py wait orchestrator 7200), starting the listener first if it is dead (never /is c, never a Monitor on client.py). Then reconstruct the run from ./CLAUDE.md, ./roles/orchestrator.md, and ${TEAM_DIR:-.}/state.md (read the recent tail, including the decision-log). Resume from there; keep context lean (point to files, do not re-read everything, checkpoint+compact at task boundaries). Report status when re-oriented."
   tmux_o send-keys -t "$t" C-u 2>/dev/null
   submit_o "$t" "$brief"
 }
