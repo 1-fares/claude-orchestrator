@@ -116,7 +116,9 @@ for r in "${repos[@]}"; do
     fail=1; fail_detail="${fail_detail} open:${r}(rc=${rc})"
     echo "  OPEN PRs: FETCH FAILED (gh rc=${rc})" >> "$tmp"
   else
-    n_open="$(printf '%s' "$open_rows" | grep -c '^  #' 2>/dev/null || echo 0)"
+    # grep -c already prints 0 on no match (and exits 1), so `|| echo 0` printed a second 0: "(0\n0)".
+    n_open="$(printf '%s' "$open_rows" | grep -c '^  #' 2>/dev/null)" || :
+    n_open="${n_open:-0}"
     echo "OPEN PRs (${n_open}):" >> "$tmp"
     [ -n "$open_rows" ] && printf '%s\n' "$open_rows" >> "$tmp" || echo "  (none open)" >> "$tmp"
   fi
@@ -137,7 +139,9 @@ for r in "${repos[@]}"; do
     fail=1; fail_detail="${fail_detail} merged:${r}(rc=${rc})"
     echo "  RECENT MERGES: FETCH FAILED (gh rc=${rc})" >> "$tmp"
   else
-    n_merged="$(printf '%s' "$merged_rows" | grep -c '^  #' 2>/dev/null || echo 0)"
+    # grep -c already prints 0 on no match (and exits 1), so `|| echo 0` printed a second 0: "(0\n0)".
+    n_merged="$(printf '%s' "$merged_rows" | grep -c '^  #' 2>/dev/null)" || :
+    n_merged="${n_merged:-0}"
     echo "RECENT MERGES (last ${merged_hours}h) (${n_merged}):" >> "$tmp"
     [ -n "$merged_rows" ] && printf '%s\n' "$merged_rows" >> "$tmp" || echo "  (none in window)" >> "$tmp"
   fi
