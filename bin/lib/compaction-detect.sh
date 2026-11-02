@@ -72,6 +72,18 @@ _context_render_present() { grep -qiE 'context usage|/context all to expand|⛁ 
 # ran /clear + rebrief on a healthy session.
 _chrome_lines() { grep -vE "['\"|]|[0-9]+→|(^|[[:space:]])(grep|printf|sed|awk|echo)[[:space:]]"; }
 
+# until_autocompact_pct: stdin = live pane text -> the N of the status footer
+# "N% until auto-compact" (also "until auto-compact: N%"), or nothing. Status chrome
+# only (_chrome_lines), so this file viewed on a pane does not count. Read when the
+# probe is blind: an idle pane can sit at "0% until auto-compact" while neither
+# /context nor the transcript can be read.
+until_autocompact_pct() {
+  local t n; t="$(cat | _chrome_lines)"
+  n="$(printf '%s' "$t" | grep -oiE '[0-9]+% until auto-?compact' | grep -oE '^[0-9]+' | tail -1)"
+  [ -z "$n" ] && n="$(printf '%s' "$t" | grep -oiE 'until auto-?compact:? *[0-9]+%' | grep -oE '[0-9]+' | tail -1)"
+  printf '%s' "$n"
+}
+
 _ceiling_state() {
   local t; t="$(cat | _chrome_lines)"
   if printf '%s' "$t" | grep -qiE 'compaction failed|could not be reduced below'; then echo compact-failed; return; fi

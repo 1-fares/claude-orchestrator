@@ -147,6 +147,20 @@ RECOVER_DEBOUNCE="${COMPACT_RECOVER_DEBOUNCE:-600}"
 # orchestrator (for a worker). Default 3 cycles (was 5) so a near-ceiling blind pane
 # is flagged in ~6-9 min, not ~20.
 PROBE_FAIL_ALARM="${COMPACT_PROBE_FAIL_ALARM:-3}"
+# That alarm is ONE-SHOT per blind episode: a pane that stays blind for hours is
+# compacted once (which can be refused, e.g. at a usage limit) and then never again,
+# and nobody is told. While a worker stays blind the orchestrator gets a bus line at
+# the PROBE_FAIL_ALARM-th cycle and every BLIND_BUS_EVERY cycles after; 0 turns it off.
+BLIND_BUS_EVERY="${COMPACT_BLIND_BUS_EVERY:-10}"
+BUS_SEND="${COMPACT_BUS_SEND:-$repo/bin/bus-send.py}"
+BUS_TIMEOUT="${COMPACT_BUS_TIMEOUT:-15}"
+# Tests: COMPACT_BUS_SINK=<file> writes the line there instead of the bus (like
+# NOTIFY_SINK). Without a sink a REAL send also needs $TEAM_DIR/state.md, which only a
+# live team has, so a suite that runs this daemon against a mktemp TEAM_DIR can never
+# put a line on a live bus.
+BUS_SINK="${COMPACT_BUS_SINK:-}"
+# How much of a transcript's end the jsonl probe reads (see probe_pct_from_jsonl).
+JSONL_TAIL_BYTES="${COMPACT_JSONL_TAIL_BYTES:-4194304}"
 
 [ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && { echo "compaction-watchdog disabled"; exit 0; }
 
@@ -436,33 +450,57 @@ print(sid,proj_dir)
   jsonl="${proj_dir}/${sid}.jsonl"
   [ -f "$jsonl" ] || return 1
   win="$(jsonl_window "$role")"
+  # The NEWEST of two records wins: the last assistant turn's usage, or the last
+  # /context render (Claude Code writes each one into the transcript as a
+  # local_command stdout record). An idle pane makes no assistant turns, and every
+  # /context probe appends ~23 KB, so after ~11 probes a 256 KB tail held no assistant
+  # record at all, and the only current total was the render the probe had just
+  # written (seen live: two idle workers blind for hours at "1.6m/500k tokens (324%)").
+  # The render's percentage is of the window it prints, so it is restated with
+  # rescale_pct like a pane read. The scan stops at a compact_boundary: a render or
+  # turn from before the compaction is stale.
   # pipefail is set globally; tac exits 141 (SIGPIPE) when python breaks the pipe
   # after finding its match, which makes the pipeline return non-zero. Read in python
   # directly to avoid the pipe entirely.
-  pct="$(python3 -c "
-import json, os, sys
+  local out kind raw
+  out="$(python3 -c "
+import json, os, re, sys
 f = sys.argv[1]
 sz = os.path.getsize(f)
-# Read the last 256KB, enough to find the most recent assistant message
-chunk = min(sz, 262144)
+chunk = min(sz, int(sys.argv[3]))
 with open(f, 'rb') as fh:
     fh.seek(sz - chunk)
     tail = fh.read().decode('utf-8', errors='replace')
 for line in reversed(tail.splitlines()):
     try:
         d = json.loads(line.strip())
-        if d.get('type') == 'assistant' and 'message' in d:
-            u = d['message'].get('usage', {})
-            inp = u.get('input_tokens', 0)
-            cc = u.get('cache_creation_input_tokens', 0)
-            cr = u.get('cache_read_input_tokens', 0)
-            total = inp + cc + cr
-            if total > 0:
-                print(total * 100 // int(sys.argv[2]))
-                break
-    except:
-        pass
-" "$jsonl" "$win" 2>/dev/null)" || return 1
+    except Exception:
+        continue
+    if not isinstance(d, dict):
+        continue
+    if d.get('type') == 'assistant' and isinstance(d.get('message'), dict):
+        u = d['message'].get('usage') or {}
+        total = sum(int(u.get(k) or 0) for k in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
+        if total > 0:
+            print('usage %d' % (total * 100 // int(sys.argv[2])))
+            break
+    elif d.get('type') == 'system' and d.get('subtype') == 'compact_boundary':
+        break   # anything older describes the context before the compaction
+    elif d.get('type') == 'system' and d.get('subtype') == 'local_command':
+        c = d.get('content')
+        if isinstance(c, str) and '<local-command-stdout>' in c and 'Context Usage' in c:
+            print('render')
+            print(re.sub(r'\x1b\[[0-9;]*m', '', c))
+            break
+" "$jsonl" "$win" "$JSONL_TAIL_BYTES" 2>/dev/null)" || return 1
+  kind="${out%%$'\n'*}"
+  case "$kind" in
+    "usage "*) pct="${kind#usage }" ;;
+    render)
+      raw="$(printf '%s\n' "${out#*$'\n'}" | parse_context_pct)"
+      pct="$(rescale_pct "$raw" "$role" "$(printf '%s\n' "${out#*$'\n'}" | context_denominator)")" ;;
+    *) return 1 ;;
+  esac
   [ -n "$pct" ] && [ "$pct" -ge 0 ] 2>/dev/null && printf '%s' "$pct"
 }
 
@@ -593,8 +631,53 @@ probe_blind_alarm() {
   fi
 }
 
+# blind_footer_compact <role> <target> <pane-text> <now>: the probe is blind, but the
+# pane's own status footer says how close auto-compact is. At or past the force band
+# ("N% until auto-compact" with N <= 100 - FORCE_R) drive a /compact, debounced like
+# any forced one. Called only on an idle pane (a busy one returns before the probe).
+blind_footer_compact() {
+  local role="$1" t="$2" txt="$3" nowt="$4" left
+  left="$(printf '%s' "$txt" | until_autocompact_pct)"
+  [ -n "$left" ] || return 0
+  [ "$left" -le $(( 100 - FORCE_R )) ] || return 0
+  if [ $(( nowt - ${last_compact[$role]:-0} )) -lt "$DEBOUNCE" ]; then
+    log "[$role] blind-footer-suppressed: footer ${left}% until auto-compact (within ${DEBOUNCE}s force debounce)"
+    return 0
+  fi
+  log "[$role] BLIND-FOOTER-COMPACT: probe blind, footer shows ${left}% until auto-compact; forcing /compact"
+  do_compact "$t"; last_compact[$role]=$nowt
+}
+
+# blind_bus_notice <role> <n> <is_orch> <pane-text>: tell the orchestrator on the bus
+# that a worker is still blind, at the PROBE_FAIL_ALARM-th consecutive failure and
+# every BLIND_BUS_EVERY after it. The outcome is logged both ways: an unlogged failure
+# looks the same as delivery.
+blind_bus_notice() {
+  local role="$1" n="$2" is_orch="$3" txt="$4" left msg
+  [ "$is_orch" = "1" ] && return 0
+  [ "$BLIND_BUS_EVERY" -gt 0 ] 2>/dev/null || return 0
+  [ "$n" -ge "$PROBE_FAIL_ALARM" ] || return 0
+  [ $(( (n - PROBE_FAIL_ALARM) % BLIND_BUS_EVERY )) -eq 0 ] || return 0
+  left="$(printf '%s' "$txt" | until_autocompact_pct)"
+  msg="status: compaction-watchdog cannot read ${role} context for ${n} cycles (since $(date -u -d "@${blind_since[$role]:-$(date +%s)}" +%H:%MZ)); pane footer: ${left:+${left}% until auto-compact}${left:-none}. Last compact sent $(( ${last_compact[$role]:-0} > 0 ? ($(date +%s) - ${last_compact[$role]:-0}) / 60 : -1 ))m ago (-1 = never this run). Check the pane; compact or retire+respawn."
+  if [ -n "$BUS_SINK" ]; then
+    printf '%s --to orchestrator %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$msg" >> "$BUS_SINK" 2>/dev/null || true
+    log "[$role] BLIND-BUS: written to the test sink $BUS_SINK (${n} cycles)"
+    return 0
+  fi
+  if [ ! -f "${TEAM_DIR:-.}/state.md" ]; then
+    log "[$role] BLIND-BUS: not sent, ${TEAM_DIR:-.} has no state.md (not a live team; a test sets COMPACT_BUS_SINK) (${n} cycles)"
+    return 0
+  fi
+  if BUS_SEND_RETRY_S=0 timeout "$BUS_TIMEOUT" python3 "$BUS_SEND" --name compaction-watchdog --to orchestrator --text "$msg" </dev/null >/dev/null 2>&1; then
+    log "[$role] BLIND-BUS: orchestrator told on the bus (${n} cycles)"
+  else
+    log "[$role] BLIND-BUS: bus-send FAILED, the orchestrator was NOT told (${n} cycles)"
+  fi
+}
+
 # Per-role state (associative arrays keyed by role name).
-declare -A last_fp fp_since last_compact last_nudge last_recover ceiling_seen probe_fail probe_blind_alarmed force_count force_stuck_alarmed
+declare -A last_fp fp_since last_compact last_nudge last_recover ceiling_seen probe_fail probe_blind_alarmed force_count force_stuck_alarmed blind_since
 
 # process_target <role> <target> <orchflag> <probeflag>: one pass of the watch
 # logic for a single pane. probeflag=0 = ceiling guard only, no /context probe.
@@ -731,17 +814,26 @@ process_target() {
       last_fp[$role]=""   # /context changed the pane; force a fresh baseline next pass
       if [ -n "$pct" ]; then
         log "[$role] pane-probe: ${pct}% (idle pane, /context fallback)"
+      else
+        # The pane could not show the total (an over-limit render is taller than an
+        # 80x24 pane), but the render the probe just ran is now in the transcript.
+        pct="$(probe_pct_from_jsonl "$t" "$role" 2>/dev/null)" || pct=""
+        [ -n "$pct" ] && log "[$role] jsonl-probe: ${pct}% (pane unreadable; read the /context render back from the transcript)"
       fi
     fi
   fi
   if [ -z "$pct" ]; then
     probe_fail[$role]=$(( ${probe_fail[$role]:-0} + 1 ))
+    [ "${probe_fail[$role]}" -eq 1 ] && blind_since[$role]=$nowt
     log "[$role] probe: could not read context % (${probe_fail[$role]} consecutive)"
     if [ "${probe_fail[$role]}" -ge "$PROBE_FAIL_ALARM" ] && [ "${probe_blind_alarmed[$role]:-0}" = 0 ]; then
       log "[$role] PROBE-BLIND: ${probe_fail[$role]} consecutive parse failures; alarming + marker (CC /context format may have changed)"
       probe_blind_alarm "$role" "$t" "${probe_fail[$role]}" "$is_orch"
       probe_blind_alarmed[$role]=1
+      last_compact[$role]=$nowt   # the alarm drove a /compact
     fi
+    blind_footer_compact "$role" "$t" "$txt" "$nowt"
+    blind_bus_notice "$role" "${probe_fail[$role]}" "$is_orch" "$txt"
     return
   fi
   # A real read: clear any standing blind alarm and reset the streak.
