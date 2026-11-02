@@ -323,6 +323,21 @@ else
   fail=$((fail + 1))
 fi
 
+# --- file names: a header-only change carries a name and no added line ----------
+# A path used to be scanned only as the prefix of an added line, so a pure rename, an empty new file
+# and a binary file put their names into a patch unscanned.
+echo "file names"
+probe "PLANTED: a pure rename to a private-shaped name" 1 \
+  'diff --git a/notes/x.txt b/notes/i-0123456789abcdef0.txt\nsimilarity index 100%%\nrename from notes/x.txt\nrename to notes/i-0123456789abcdef0.txt\n'
+probe "PLANTED: an empty new file with a private-shaped name" 1 \
+  'diff --git a/notes/i-0123456789abcdef0.txt b/notes/i-0123456789abcdef0.txt\nnew file mode 100644\nindex 0000000..e69de29\n'
+probe "PLANTED: a binary new file with a private-shaped name" 1 \
+  'diff --git a/img/i-0123456789abcdef0.png b/img/i-0123456789abcdef0.png\nnew file mode 100644\nindex 0000000..1234567\nBinary files /dev/null and b/img/i-0123456789abcdef0.png differ\n'
+probe "CONTROL: a generic rename passes" 0 \
+  'diff --git a/notes/x.txt b/notes/y.txt\nsimilarity index 100%%\nrename from notes/x.txt\nrename to notes/y.txt\n'
+probe "CONTROL: a removed line reading like a rename header is content, not a name" 0 \
+  'diff --git a/s.sh b/s.sh\n--- a/s.sh\n+++ b/s.sh\n@@ -1,2 +1,2 @@\n a\n-rename to notes/i-0123456789abcdef0.txt\n+b\n'
+
 if [ "$fail" -eq 0 ]; then
   echo "RESULT status=ok key=privacy-scan failed=0"
 else

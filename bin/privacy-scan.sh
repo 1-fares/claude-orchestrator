@@ -212,8 +212,13 @@ else
       old_rem = 0; new_rem = 0    # malformed hunk: re-read this line as a header
     }
     /^commit [0-9a-f]{7,}/ { file = ""; old_rem = 0; new_rem = 0; prevminus = 0; seen_hunk = 0; next }
-    /^diff /               { file = ""; prevminus = 0; seen_hunk = 0; next }
-    /^--- /                { prevminus = 1; next }
+    # FILE NAMES ARE CONTENT TOO. A path was only ever scanned as the prefix of an ADDED line, so
+    # a pure rename, an empty new file or a binary file carried its name into a patch unscanned.
+    # Every header that names a path is emitted as one "(file name)" line. These rules sit after
+    # the hunk counter above, so only a real header position reaches them; content cannot forge one.
+    /^diff /               { print "(file name):" substr($0, 6); file = ""; prevminus = 0; seen_hunk = 0; next }
+    /^(rename|copy) (from|to) / && !seen_hunk { print "(file name):" $0; next }
+    /^--- /                { print "(file name):" substr($0, 5); prevminus = 1; next }
     # BOTH conditions guard a header: outside a hunk (above) AND paired with a
     # minus-minus-minus line. git always emits the pair, so requiring it costs
     # nothing, and it means a lone plus-plus-plus line cannot retarget the scan
@@ -228,6 +233,7 @@ else
     # whose @@@ header the line counter does not read, so without it a merge
     # diff could still forge a header out of content.
     /^\+\+\+ / && prevminus && !seen_hunk {
+      print "(file name):" substr($0, 5)
       file = substr($0, 5)
       sub(/\t.*$/, "", file)
       sub(/^b\//, "", file)
