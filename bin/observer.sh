@@ -369,7 +369,9 @@ observe_once() {
   metrics="$(gather_metrics)"
   audit_ev="$(gather_audit_evidence 2>/dev/null)" || true
   prompt="$(build_prompt "$metrics" "$audit_ev")"
-  out="$(timeout "$call_timeout" claude -p "$prompt" --model "$model" 2>/dev/null)"
+  # The prompt goes on stdin: as one argv string it can hit the 128 KiB per-argument cap (E2BIG,
+  # rc=126). A here-string, not a pipe, so pipefail cannot turn a SIGPIPE into the call's rc.
+  out="$(timeout "$call_timeout" claude -p --model "$model" <<<"$prompt" 2>/dev/null)"
   [ -z "$out" ] && out="(model call failed or timed out; metrics only)"
   headline="$(printf '%s\n' "$out" | grep -m1 -E '^HEADLINE:' | sed 's/^HEADLINE:[[:space:]]*//')"
   verdict_sig="$(printf '%s\n' "$out" | _verdict_sig)"

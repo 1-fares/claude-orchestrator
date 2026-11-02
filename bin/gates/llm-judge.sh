@@ -101,9 +101,10 @@ pass_votes=0; total=0
 for i in $(seq 1 "$n"); do
   echo "--- run $i ---" >> "$log"
   if [ -n "$model" ]; then
-    out="$(claude -p --model "$model" "$(prompt)" 2>>"$log" || true)"
+    # Prompt on stdin: the artifact can exceed the 128 KiB per-argument cap (E2BIG).
+    out="$(claude -p --model "$model" <<<"$(prompt)" 2>>"$log" || true)"
   else
-    out="$(claude -p "$(prompt)" 2>>"$log" || true)"
+    out="$(claude -p <<<"$(prompt)" 2>>"$log" || true)"
   fi
   echo "$out" >> "$log"
   json="$(printf '%s' "$out" | extract_json || true)"
