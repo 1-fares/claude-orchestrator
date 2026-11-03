@@ -385,7 +385,8 @@ enumerate_targets() {
 # "still running" (the persistent bus monitor, almost always present); the
 # IDLE_SEC gate already catches a changing spinner in the running loop.
 is_busy() {
-  printf '%s' "$1" | tail -n 8 | grep -qiE 'esc to interrupt|working(…|\.\.\.)|thinking(…|\.\.\.)|press up to edit queued'
+  # A here-string, not `| grep -q`: under pipefail grep's early exit can SIGPIPE tail and read a busy pane as idle.
+  grep -qiE 'esc to interrupt|working(…|\.\.\.)|thinking(…|\.\.\.)|press up to edit queued' <<<"$(printf '%s' "$1" | tail -n 8)"
 }
 
 # Classify the input line: empty | shadow | real.
@@ -399,7 +400,7 @@ input_class() {
   stripped="$(printf '%s' "$plain" | grep -aE '❯' | tail -1 | sed -E 's/.*❯//' | sed $'s/\xc2\xa0//g' | tr -d '[:space:]')"
   [ -z "$stripped" ] && { echo empty; return; }
   eline="$(printf '%s' "$etxt" | grep -aE '❯' | tail -1)"
-  if printf '%s' "$eline" | grep -qE $'\x1b\\[0?;?2m'; then echo shadow; else echo real; fi
+  if grep -qE $'\x1b\\[0?;?2m' <<<"$eline"; then echo shadow; else echo real; fi
 }
 
 probe_pct() {
@@ -548,7 +549,7 @@ do_compact() {
 # intact for a session that is genuinely climbing while busy.
 compact_refused() {
   sleep "$PROBE_WAIT"
-  tmux_o capture-pane -t "$1" -p 2>/dev/null | strip_ansi | grep -qi 'not enough messages to compact'
+  grep -qi 'not enough messages to compact' <<<"$(tmux_o capture-pane -t "$1" -p 2>/dev/null | strip_ansi)"
 }
 
 # Last-resort recovery for the ORCHESTRATOR at the UNRECOVERABLE ceiling
