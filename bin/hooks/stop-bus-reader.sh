@@ -42,8 +42,8 @@ claude_at_or_above() {
   local pid=$1 exe rest i=0
   while [ "$pid" -gt 1 ] 2>/dev/null && [ $i -lt 64 ]; do
     i=$((i+1))
-    exe="$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | head -1)"; exe="${exe##*/}"; exe="${exe,,}"
-    rest="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -d' ' -f2-)"; rest="${rest,,}"
+    exe="$(tr '\0' '\n' 2>/dev/null < "/proc/$pid/cmdline" | head -1)"; exe="${exe##*/}"; exe="${exe,,}"
+    rest="$(tr '\0' ' ' 2>/dev/null < "/proc/$pid/cmdline" | cut -d' ' -f2-)"; rest="${rest,,}"
     case "$exe" in claude|claude-*) echo "$pid"; return ;; esac
     case "$exe" in node|node.exe) case "$rest" in */claude*|*claude-code*|*/.claude/*) echo "$pid"; return ;; esac ;; esac
     pid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)"; [ -n "$pid" ] || break
@@ -57,7 +57,7 @@ if [ "$cc" != -1 ]; then
     [ -f "$pf" ] || continue
     read -r pump _ < "$pf" 2>/dev/null || continue
     case "$pump" in ''|*[!0-9]*) continue ;; esac
-    mapfile -t a < <(tr '\0' '\n' < "/proc/$pump/cmdline" 2>/dev/null)
+    mapfile -t a < <(tr '\0' '\n' 2>/dev/null < "/proc/$pump/cmdline")
     for i in "${!a[@]}"; do
       if [ "${a[$i]}" = _pump ] && [ "${a[$((i+2))]:-}" = "$cc" ]; then role="${a[$((i+1))]:-}"; via=pump; break 2; fi
     done
@@ -70,7 +70,7 @@ fi
 # print mode, not nested under another claude, in the window's FIRST pane; and only when the role's listener is
 # DEAD (a live listener belongs to another claude, so this session is not that role).
 if [ -z "$role" ] && [ "$cc" != -1 ] && [ -n "${TMUX_PANE:-}" ] && [ -n "${TEAM_SESSION:-}" ]; then
-  ccargs=" $(tr '\0' ' ' < "/proc/$cc/cmdline" 2>/dev/null) "
+  ccargs=" $(tr '\0' ' ' 2>/dev/null < "/proc/$cc/cmdline") "
   parent="$(awk '{print $4}' "/proc/$cc/stat" 2>/dev/null)"
   case "$ccargs" in *" -p "*|*" --print "*|*" --print="*) exit 0 ;; esac
   [ "$(claude_at_or_above "${parent:-1}")" = -1 ] || exit 0

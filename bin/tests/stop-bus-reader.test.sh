@@ -102,11 +102,12 @@ echo "== 6. the window fallback names the role only for the role's own claude ==
 fx="$(tr '\0' ' ' < "/proc/$DCC/cmdline")"; ppid_d="$(awk '{print $4}' "/proc/$DCC/stat")"
 # detached: it leads its own session and no claude is above it. Its parent is init, or the nearest child
 # subreaper (systemd --user, a container init, WSL's per-session /init, this suite's shell), so ppid is not checked.
+# "claude" is judged by argv0, the hook's own rule (claude_at_or_above): the stand-ins run as `exec -a claude`.
 anc_d=""; a_d="$DCC"; for _ in $(seq 1 64); do a_d="$(awk '/^PPid:/ {print $2}' "/proc/$a_d/status" 2>/dev/null)"
-  case "$a_d" in ''|0) break ;; esac; anc_d="$anc_d $a_d:$(ps -o comm= -p "$a_d" 2>/dev/null)"; done
-[ "$(ps -o sid= -p "$DCC" | tr -d ' ')" = "$DCC" ] && ! /usr/bin/grep -qE ':claude( |$)' <<<"$anc_d" \
-  && ok "fixture: the detached stand-in is detached (own session, no claude above it; ppid $ppid_d)" \
-  || no "fixture: detached cc not detached (sid $(ps -o sid= -p "$DCC" | tr -d ' '), ancestors:$anc_d)"
+  case "$a_d" in ''|0) break ;; esac; a0="$(tr '\0' '\n' 2>/dev/null < "/proc/$a_d/cmdline" | head -1)"; anc_d="$anc_d $a_d:${a0##*/}"; done
+[ "$(ps -o sid= -p "$DCC" | tr -d ' ')" = "$DCC" ] && ! /usr/bin/grep -qE ':claude(-[^ ]*)?( |$)' <<<"$anc_d" \
+  && ok "fixture: the detached stand-in is detached (own session, no argv0 claude above it; ppid $ppid_d)" \
+  || no "fixture: detached cc not detached (sid $(ps -o sid= -p "$DCC" | tr -d ' '), ancestors pid:argv0:$anc_d)"
 W6=(TMUX_PANE=%1 FAKE_TMUX_OUT="orch-test rolex")
 run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
 [ "$rc" = 0 ] && [ ! -s "$W/out" ] && ok "listener ALIVE for another claude, this one named only by the window: allowed" || no "rc=$rc out=$(cat "$W/out")"
@@ -138,6 +139,14 @@ head -c 300 /dev/zero | tr '\0' x > "$W/cap.log"
 run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}" STOP_BUS_READER_LOG="$W/cap.log" STOP_BUS_READER_LOG_MAX=200
 [ -f "$W/cap.log.1" ] && [ "$(stat -c %s "$W/cap.log.1")" = 300 ] && [ "$(stat -c %s "$W/cap.log")" -lt 200 ] \
   && ok "over the cap: moved to .1, a fresh log started" || no "cap: $(ls -l "$W"/cap.log*)"
+
+echo "== 6d. a pidfile whose pump has exited: no bash error on stderr =="
+sleep 0 & GONE=$!; wait "$GONE" 2>/dev/null
+echo "$GONE $GONE" > "$BUS_INBOX_DIR/gone.pid"
+[ ! -e "/proc/$GONE" ] && ok "fixture: the pidfile's pump $GONE has exited" || no "fixture: pid $GONE still exists"
+run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
+[ ! -s "$W/err" ] && ok "a vanished pump leaves stderr empty" || no "stderr: $(cat "$W/err")"
+rm -f -- "$BUS_INBOX_DIR/gone.pid"
 
 echo "== 7. nothing reached a live channel =="
 [ ! -s "$NOTIFY_SINK" ] && [ ! -s "$WATCH_ALERT_SINK" ] && ok "sinks empty" || no "a sink was written"
