@@ -21,6 +21,8 @@
 set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC="${SRC:-$repo}"
+# shellcheck disable=SC1091
+. "$repo/bin/tests/lib/tmux-socket.sh"
 pass=0; fail=0
 ok(){ printf '  PASS  %s\n' "$1"; pass=$((pass+1)); }
 no(){ printf '  FAIL  %s\n     %s\n' "$1" "${2:-}"; fail=$((fail+1)); }
@@ -35,7 +37,7 @@ SOCK="tpb$$"
 export NOTIFY_SINK="$SB/notify.sink" WATCH_ALERT_SINK="$SB/watch.sink"
 KIDS="$SB/kids"
 cleanup(){ local k; while read -r k; do pkill -9 -P "$k" 2>/dev/null; kill -9 "-$k" 2>/dev/null; kill -9 "$k" 2>/dev/null || true; done < "$KIDS"
-           tmux -L "$SOCK" kill-server 2>/dev/null; rm -rf -- "${SB:?}"; }
+           tmux_kill_unlink tmux "$SOCK"; rm -rf -- "${SB:?}"; }
 trap cleanup EXIT
 mkdir -p "$R" "$SB/d/bin" "$SB/home/.claude/data/inter-session"; : > "$KIDS"
 cp -a "$SRC/bin" "$R/bin"
@@ -114,6 +116,7 @@ reset_procs
 panic_scenario(){
   mkdir -p "$TD"
   env TEAM_RUN_ID="$RID" TEAM_DIR="$TD" tmux -L "$SOCK" new-session -d -s "$SESS" "sleep 600"
+  [ -S "$(tmux_sock_path "$SOCK")" ] && SOCK_SEEN=1
   PANE="$(tmux -L "$SOCK" list-panes -s -t "$SESS" -F '#{pane_pid}' 2>/dev/null | head -1)"
   ROLE="$(EXEC_A=claude start "$RID" sleep 600)"                     # this run's role, detached
   ROLE_OTHER="$(EXEC_A=claude start "other-$$" sleep 600)"          # another run's claude
@@ -309,5 +312,10 @@ for tool in stop-team cleanup; do
   reset_procs
 done
 
+# The socket FILE is this test's too: it existed while the server ran, and is gone after.
+tmux_kill_unlink tmux "$SOCK"
+sp="$(tmux_sock_path "$SOCK")"
+[ "${SOCK_SEEN:-0}" = 1 ] && ok "tmux socket file existed while the server ran ($sp)" || no "tmux socket file never seen at $sp" ""
+[ ! -e "$sp" ] && ok "tmux socket file removed after the run" || no "tmux socket file left behind: $sp" ""
 echo "=== result: $pass passed, $fail failed ==="
 [ "$fail" -eq 0 ]

@@ -14,6 +14,7 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 . "$repo/bin/tests/lib/isolate.sh"
+. "$repo/bin/tests/lib/tmux-socket.sh"
 export API_WATCHDOG_PATTERNS="$repo/bin/api-watchdog.patterns"
 export API_BACKOFF_SEC="1 1"
 export API_EPISODE_WINDOW_SEC=1800
@@ -26,7 +27,7 @@ hf="$TEAM_DIR/health"
 af="$TEAM_DIR/audit/api-watchdog/apirole.log"
 
 cleanup() {
-  $TM kill-server 2>/dev/null || true
+  tmux_kill_unlink "$TEAM_TMUX_BIN" "$TEAM_TMUX"
   rm -rf "$TEAM_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -67,6 +68,7 @@ echo "setting up isolated tmux session $TEAM_SESSION on socket $TEAM_TMUX"
 # refused as "not seen typed".
 $TM new-session -d -s "$TEAM_SESSION" -n orchestrator \
   "bash -c 'printf \"● standing by.\n\"; while read -r _; do :; done; sleep 600'"
+[ -S "$(tmux_sock_path "$TEAM_TMUX")" ] && SOCK_SEEN=1
 sleep 1
 
 echo "step 1: first stall -> stalled-api, retry 1, episode marker written"
@@ -152,6 +154,11 @@ otxt="$($TM capture-pane -t "$TEAM_SESSION:orchestrator" -p 2>/dev/null | tr -d 
 grep -q "usage outage may be over" <<<"$otxt" \
   && ok "orchestrator pane received the wake nudge" || bad "orchestrator pane missing wake text"
 
+# The socket FILE is this test's too: it existed while the server ran, and is gone after.
+tmux_kill_unlink "$TEAM_TMUX_BIN" "$TEAM_TMUX"
+sp="$(tmux_sock_path "$TEAM_TMUX")"
+[ "${SOCK_SEEN:-0}" = 1 ] && ok "tmux socket file existed while the server ran ($sp)" || bad "tmux socket file never seen at $sp"
+[ ! -e "$sp" ] && ok "tmux socket file removed after the run" || bad "tmux socket file left behind: $sp"
 echo
 if [ "$fail" = 0 ]; then echo "PASS: api-stall episode memory + give-up escalation + usage wake"; exit 0
 else echo "FAIL: see above"; exit 1; fi

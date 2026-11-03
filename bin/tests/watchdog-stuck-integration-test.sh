@@ -11,6 +11,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Isolated run: own socket + own .team dir under the worktree, via the
 # mandatory isolation prelude (see docs/incident-2026-07-11-*).
 . "$repo/bin/tests/lib/isolate.sh"
+. "$repo/bin/tests/lib/tmux-socket.sh"
 export STUCK_THRESHOLD_SEC=2
 export STUCK_MAX_NUDGES=2
 export AWAIT_OPERATOR_SEC=2
@@ -24,7 +25,7 @@ TM="$TEAM_TMUX_BIN -L $TEAM_TMUX"
 hf="$TEAM_DIR/health"
 
 cleanup() {
-  $TM kill-server 2>/dev/null || true
+  tmux_kill_unlink "$TEAM_TMUX_BIN" "$TEAM_TMUX"
   rm -rf "$TEAM_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -43,6 +44,7 @@ echo "setting up isolated tmux session $TEAM_SESSION on socket $TEAM_TMUX"
 # escalate" path deterministically.
 $TM new-session -d -s "$TEAM_SESSION" -n stuckrole \
   "bash -c 'stty -echo 2>/dev/null; printf \"● Calling chrome-devtools…\n· Working… (12m 0s · esc to interrupt)\n────\n❯ \n\"; sleep 600'"
+[ -S "$(tmux_sock_path "$TEAM_TMUX")" ] && SOCK_SEEN=1
 # A genuinely-working role: pane content changes every second.
 $TM new-window -t "$TEAM_SESSION" -n busyrole \
   "bash -c 'i=0; while true; do printf \"● step %d done, continuing… esc to interrupt\n\" \$i; i=\$((i+1)); sleep 1; done'"
@@ -149,6 +151,11 @@ su2="$(state_of usagerole)"
 grep -q "RECOVERED-USAGE" "$TEAM_DIR/audit/api-watchdog/usagerole.log" 2>/dev/null \
   && ok "audit log records RECOVERED-USAGE" || bad "audit log missing RECOVERED-USAGE line"
 
+# The socket FILE is this test's too: it existed while the server ran, and is gone after.
+tmux_kill_unlink "$TEAM_TMUX_BIN" "$TEAM_TMUX"
+sp="$(tmux_sock_path "$TEAM_TMUX")"
+[ "${SOCK_SEEN:-0}" = 1 ] && ok "tmux socket file existed while the server ran ($sp)" || bad "tmux socket file never seen at $sp"
+[ ! -e "$sp" ] && ok "tmux socket file removed after the run" || bad "tmux socket file left behind: $sp"
 echo
 if [ "$fail" = 0 ]; then echo "PASS: stuck detection + recovery ladder + awaiting-input + usage-stall"; exit 0
 else echo "FAIL: see above"; exit 1; fi
