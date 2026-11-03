@@ -189,7 +189,7 @@ chk "one BLIND-FOOTER-COMPACT (debounced after)" "$(n_of 'BLIND-FOOTER-COMPACT' 
 chk "bus lines at cycles 3 and 5 (every 2)" "$(grep -oE 'for [0-9]+ cycles' "$TD/bus" 2>/dev/null | head -2 | tr '\n' ' ')" "for 3 cycles for 5 cycles "
 grep -q -- '--to orchestrator status: compaction-watchdog cannot read testrole' "$TD/bus" \
   && ok "sink line: to orchestrator, status: prefix" || no "sink line shape" "$(head -1 "$TD/bus" 2>/dev/null)"
-grep -q 'pane footer: 0% until auto-compact' "$TD/bus" && ok "bus line carries the footer" || no "footer in bus line" "$(head -1 "$TD/bus")"
+grep -q 'pane footer: 0% until auto-compact\. ' "$TD/bus" && ok "bus line carries the footer" || no "footer in bus line" "$(head -1 "$TD/bus")"
 logged_per_send 'BLIND-BUS: written to the test sink' "$TD/bus" && ok "BLIND-BUS logged as written to the sink, per line" \
   || no "BLIND-BUS logged per sink line" "log $(n_of 'BLIND-BUS: written to the test sink' "$TD/log"), sink $(grep -c . "$TD/bus")"
 [ "$(n_of 'orch-sess:1 -l /compact' "$TD/keys")" -ge 1 ] && ok "a /compact was typed into testrole's pane (orch-sess:1)" || no "/compact typed" "$(grep compact "$TD/keys" 2>/dev/null | head -3)"

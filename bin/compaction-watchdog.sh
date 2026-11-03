@@ -309,11 +309,11 @@ jsonl_window() {
 
 # context_denominator: stdin = /context pane text -> the window the total line is
 # printed against, in TOKENS ("42.1k/500k tokens (8%)" -> 500000, "/1m" -> 1000000),
-# or nothing when no total line is on the pane.
+# or nothing when no total line is on the pane. Of several total lines, the one with the
+# most used tokens (context_total_line), the same line parse_context_pct reads.
 context_denominator() {
-  grep -oiE '/[0-9.]+[kKmM] tokens \([0-9]+%\)' | tail -1 \
-    | sed -E 's#^/([0-9.]+)([kKmM]).*#\1 \2#' \
-    | awk '{ m = (tolower($2) == "m") ? 1000000 : 1000; printf "%d", $1 * m + 0.5 }'
+  local t; t="$(context_total_line)"
+  [ -n "$t" ] && printf '%s' "${t#* }"
 }
 
 # rescale_pct <pct> <role> [denominator]: restate a /context percentage against the
@@ -814,13 +814,16 @@ blind_footer_compact() {
 # every BLIND_BUS_EVERY after it. The outcome is logged both ways: an unlogged failure
 # looks the same as delivery.
 blind_bus_notice() {
-  local role="$1" n="$2" is_orch="$3" txt="$4" left msg
+  local role="$1" n="$2" is_orch="$3" txt="$4" left foot msg
   [ "$is_orch" = "1" ] && return 0
   [ "$BLIND_BUS_EVERY" -gt 0 ] 2>/dev/null || return 0
   [ "$n" -ge "$PROBE_FAIL_ALARM" ] || return 0
   [ $(( (n - PROBE_FAIL_ALARM) % BLIND_BUS_EVERY )) -eq 0 ] || return 0
   left="$(printf '%s' "$txt" | until_autocompact_pct)"
-  msg="status: compaction-watchdog cannot read ${role} context for ${n} cycles (since $(date -u -d "@${blind_since[$role]:-$(date +%s)}" +%H:%MZ)); pane footer: ${left:+${left}% until auto-compact}${left:-none}. Last compact sent $(( ${last_compact[$role]:-0} > 0 ? ($(date +%s) - ${last_compact[$role]:-0}) / 60 : -1 ))m ago (-1 = never this run). Check the pane; compact or retire+respawn."
+  # "none" only when the footer shows no value: ${left:-none} alone also printed the value a second time
+  # ("0% until auto-compact0").
+  foot="${left:+${left}% until auto-compact}"; foot="${foot:-none}"
+  msg="status: compaction-watchdog cannot read ${role} context for ${n} cycles (since $(date -u -d "@${blind_since[$role]:-$(date +%s)}" +%H:%MZ)); pane footer: ${foot}. Last compact sent $(( ${last_compact[$role]:-0} > 0 ? ($(date +%s) - ${last_compact[$role]:-0}) / 60 : -1 ))m ago (-1 = never this run). Check the pane; compact or retire+respawn."
   if [ -n "$BUS_SINK" ]; then
     printf '%s --to orchestrator %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$msg" >> "$BUS_SINK" 2>/dev/null || true
     log "[$role] BLIND-BUS: written to the test sink $BUS_SINK (${n} cycles)"
@@ -1059,7 +1062,9 @@ canary() {
 # functions and stops here, so a test can call them directly instead of driving the
 # whole daemon through a fake tmux. It stops BEFORE the start-line, the canary and
 # the main loop, so sourcing injects no keystroke into any pane.
-if [ -n "${COMPACT_TEST_SOURCE:-}" ]; then
+# Exactly "1": a stray COMPACT_TEST_SOURCE=0 (or any other value) in a launch environment must not stop the daemon
+# silently after it has taken the flock and the pidfile.
+if [ "${COMPACT_TEST_SOURCE:-}" = 1 ]; then
   return 0 2>/dev/null || exit 0
 fi
 

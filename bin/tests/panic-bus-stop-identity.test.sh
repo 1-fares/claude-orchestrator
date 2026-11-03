@@ -58,9 +58,9 @@ BUSPF="$SB/home/.claude/data/inter-session/server.$PORT.pid"
 # start <run-id|-> <argv...>: setsid'd background process; "-" = no run identity in its environ.
 start(){ local r="$1"; shift
   if [ "$r" = - ]; then
-    env -u TEAM_RUN_ID -u TEAM_DIR setsid ${EXEC_A:+bash -c 'exec -a "$0" "$@"' "$EXEC_A"} "$@" >/dev/null 2>&1 &
+    env -u TEAM_RUN_ID -u TEAM_DIR setsid ${EXEC_A:+bash -c 'exec -a "$0" "$@"' "$EXEC_A"} "$@" >/dev/null 2>"${FX_ERR:-/dev/null}" &
   else
-    env TEAM_RUN_ID="$r" TEAM_DIR="$R/.team-$r" setsid ${EXEC_A:+bash -c 'exec -a "$0" "$@"' "$EXEC_A"} "$@" >/dev/null 2>&1 &
+    env TEAM_RUN_ID="$r" TEAM_DIR="$R/.team-$r" setsid ${EXEC_A:+bash -c 'exec -a "$0" "$@"' "$EXEC_A"} "$@" >/dev/null 2>"${FX_ERR:-/dev/null}" &
   fi
   local p=$!; echo "$p" >> "$KIDS"; echo "$p"; }
 # orphans <pgid>: live members of the group that are neither its leader nor the leader's children
@@ -254,13 +254,21 @@ echo "=== PB: panic, a bus server on THIS run's port without the run env or with
 # Old panic: kill -0 + "args contain server.py" stopped these. Panic must not stop LESS: a server.py
 # provably LISTENING on TEAM_PORT, named by server.<TEAM_PORT>.pid, is stopped without the env.
 OPORT=$((PORT + 1)); _ltn="$(ss -ltn 2>/dev/null)"; while /usr/bin/grep -q ":$OPORT " <<<"$_ltn"; do OPORT=$((OPORT + 1)); done
+listening(){ /usr/bin/grep -q "127\.0\.0\.1:$1 " <<<"$(ss -ltn 2>/dev/null)"; }
+# Readiness, not fixed sleeps: under a loaded pre-push gate the previous case's server had not released the port
+# within the old 0.3 s + 0.6 s, the new one's bind failed, and "fixture alive" failed (3 rows, 2026-11-03).
 pb_case(){ # <label> <expect stopped|survives> <run-id|-> <listen-port> [args...]
-  local label="$1" want="$2" r="$3" lp="$4" pid out; shift 4
+  local label="$1" want="$2" r="$3" lp="$4" pid out i; shift 4
   mkdir -p "$TD"
-  pid="$(LISTEN_PORT="$lp" start "$r" python3 "$SB/d/lbin/server.py" "$@")"; sleep 0.6
-  alive "$pid" || { no "PB $label: fixture alive" ""; return; }
+  for i in $(seq 1 100); do listening "$lp" || break; sleep 0.1; done
+  : > "$SB/fx.err"
+  pid="$(FX_ERR="$SB/fx.err" LISTEN_PORT="$lp" start "$r" python3 "$SB/d/lbin/server.py" "$@")"
+  for i in $(seq 1 100); do { alive "$pid" && listening "$lp"; } && break; alive "$pid" || break; sleep 0.1; done
+  { alive "$pid" && listening "$lp"; } || { no "PB $label: fixture alive and listening on $lp" \
+    "alive=$(alive "$pid" && echo yes || echo no) stderr: $(tail -c 300 "$SB/fx.err" 2>/dev/null) port: $(ss -ltn 2>/dev/null | /usr/bin/grep ":$lp ")"; reset_procs; return; }
   echo "$pid" > "$BUSPF"
-  out="$(run_panic)"; sleep 0.6
+  out="$(run_panic)"
+  if [ "$want" = stopped ]; then for i in $(seq 1 50); do alive "$pid" || break; sleep 0.1; done; else sleep 0.6; fi
   if [ "$want" = stopped ]; then alive "$pid" && no "PB $label: STOPPED" "$out" || ok "PB $label: STOPPED"
   else alive "$pid" && ok "PB $label: SURVIVES" || no "PB $label: survives" "$out"; fi
   reset_procs

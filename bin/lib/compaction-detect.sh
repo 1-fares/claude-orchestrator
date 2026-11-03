@@ -36,12 +36,25 @@
 #      the derived used% UP (compact slightly early = the safe direction). This is
 #      a fallback after the direct used%-formats above, so older versions that
 #      still print a footer/total are read from it, not from this derivation.
+# context_total_line: stdin = pane text -> "<pct> <window tokens>" of the total line ("60k/500k tokens (12%)") that
+# carries the MOST used tokens (pct x window), or nothing. A pane can hold more than one total line: the render's
+# own, and one quoted in output or in a file being read. Taking the last one let a quoted smaller total stand in
+# for the real one ("10k/100k tokens (10%)" under "60k/500k tokens (12%)" read the context low, the unsafe
+# direction). The largest one is never below the real total; a quoted larger one can only compact early.
+context_total_line() {
+  grep -oiE '/[0-9.]+[kKmM] tokens \([0-9]+%\)' \
+    | sed -E 's#^/([0-9.]+)([kKmM]) tokens \(([0-9]+)%\).*#\3 \1 \2#' \
+    | awk '{ w = int($2 * ((tolower($3) == "m") ? 1000000 : 1000) + 0.5); u = $1 * w
+             if (u > best || !seen) { best = u; out = $1 " " w; seen = 1 } }
+           END { if (seen) print out }'
+}
+
 parse_context_pct() {
   local out p free
   out="$(cat)"
   p="$(printf '%s' "$out" | grep -oiE '[0-9]+% context used'   | grep -oE '[0-9]+' | tail -1)"
   [ -z "$p" ] && p="$(printf '%s' "$out" | grep -oiE 'context is [0-9]+% full' | grep -oE '[0-9]+' | tail -1)"
-  [ -z "$p" ] && p="$(printf '%s' "$out" | grep -oiE '/[0-9.]+[kKmM] tokens \([0-9]+%\)' | grep -oE '\([0-9]+%\)' | grep -oE '[0-9]+' | tail -1)"
+  [ -z "$p" ] && { p="$(printf '%s\n' "$out" | context_total_line)"; p="${p%% *}"; }
   if [ -z "$p" ]; then
     free="$(printf '%s' "$out" | grep -oiE 'free space:[^(]*\([0-9.]+%\)' | grep -oE '\([0-9.]+%\)' | grep -oE '[0-9.]+' | tail -1)"
     [ -n "$free" ] && p=$(( 100 - ${free%.*} ))
