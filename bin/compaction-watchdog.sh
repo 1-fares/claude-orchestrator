@@ -425,20 +425,15 @@ probe_pct() {
   rescale_pct "$raw" "$role" "$(printf '%s\n' "$cap" | context_denominator)"
 }
 
-# probe_pct_from_jsonl <target> [role]: read context % from the session's transcript JSONL
-# usage fields (input_tokens + cache_creation_input_tokens + cache_read_input_tokens
-# from the last assistant message). Updated every turn, even while the session is
-# busy. This is the fallback when the /context probe cannot fire (pane busy).
-# Chain: tmux pane PID -> ~/.claude/sessions/<PID>.json -> sessionId ->
-# ~/.claude/projects/<project>/<sessionId>.jsonl -> last assistant usage.
-probe_pct_from_jsonl() {
-  local t="$1" role="${2:-}" pid sid jsonl pct proj_dir win
+# pane_session <target>: prints "<sessionId> <transcript path>" for the claude in that pane (the file need not exist).
+# Chain: tmux pane PID -> ~/.claude/sessions/<PID>.json -> sessionId and cwd -> ~/.claude/projects/<project>/<sid>.jsonl
+# (the project directory derived from cwd the way Claude Code does; COMPACT_PROJECT_DIR overrides it).
+pane_session() {
+  local t="$1" pid sid proj_dir
   pid="$(tmux_o display-message -t "$t" -p '#{pane_pid}' 2>/dev/null)" || return 1
   [ -n "$pid" ] || return 1
   local sess_file="$HOME/.claude/sessions/${pid}.json"
   [ -f "$sess_file" ] || return 1
-  # Read both sessionId and cwd from the session file in one call; derive the
-  # project-specific transcript directory from cwd (the same scheme CC uses).
   read -r sid proj_dir < <(python3 -c "
 import json,sys,os
 d=json.load(open(sys.argv[1]))
@@ -457,7 +452,19 @@ print(sid,proj_dir)
   [ -n "$sid" ] || return 1
   proj_dir="${COMPACT_PROJECT_DIR:-$proj_dir}"
   [ -n "$proj_dir" ] || return 1
-  jsonl="${proj_dir}/${sid}.jsonl"
+  printf '%s %s\n' "$sid" "${proj_dir}/${sid}.jsonl"
+}
+
+# probe_pct_from_jsonl <target> [role]: read context % from the session's transcript JSONL
+# usage fields (input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+# from the last assistant message). Updated every turn, even while the session is
+# busy. This is the fallback when the /context probe cannot fire (pane busy).
+# Chain: tmux pane PID -> ~/.claude/sessions/<PID>.json -> sessionId ->
+# ~/.claude/projects/<project>/<sessionId>.jsonl -> last assistant usage.
+probe_pct_from_jsonl() {
+  local t="$1" role="${2:-}" sid="" jsonl="" pct win
+  read -r sid jsonl < <(pane_session "$t")
+  [ -n "$sid" ] && [ -n "$jsonl" ] || return 1
   [ -f "$jsonl" ] || return 1
   win="$(jsonl_window "$role")"
   # The NEWEST of two records wins: the last assistant turn's usage, or the last
@@ -556,13 +563,15 @@ orch_rebrief_text() {
   printf '%s' "$brief"
 }
 
-# send_rebrief <target>: exit 0 when the rebrief was seen submitted (or typed blind into a shell pane with no box).
+# send_rebrief <target> [noblind]: exit 0 when the rebrief was seen submitted (or typed blind into a shell pane with
+# no box, unless noblind).
 send_rebrief() {
-  local t="$1" brief rc
+  local t="$1" noblind="${2:-}" brief rc
   brief="$(orch_rebrief_text)"
   ti_send "$t" "$brief" clear; rc=$?
   [ -n "${TI_DISCARDED:-}" ] && log "[$t] rebrief cleared typed text from the box first: [$TI_DISCARDED]"
   [ "$rc" = 2 ] || return "$rc"
+  [ -n "$noblind" ] && return 1
   tmux_o send-keys -t "$t" C-u 2>/dev/null
   tmux_o send-keys -t "$t" -l "$brief" 2>/dev/null
   tmux_o send-keys -t "$t" Enter 2>/dev/null
@@ -570,8 +579,13 @@ send_rebrief() {
   tmux_o send-keys -t "$t" Enter 2>/dev/null
 }
 
+# A recovery always sends /clear: it runs only at the ceiling, so the context is full again whatever happened before.
+# If /clear went in and the rebrief did not, CLEAR_PENDING records the session the /clear started; the main loop retries
+# the rebrief (pending_rebrief) while the pane is still in that session with no prompt typed since. A second /clear
+# would discard whatever the orchestrator has rebuilt meanwhile, so the retry sends the rebrief only.
+CLEAR_PENDING="$HEALTH_DIR/clear-rebrief-pending"
 do_clear_rebrief() {
-  local t="$1" rc
+  local t="$1" rc try sid _j
   ti_send "$t" "/clear" clear; rc=$?
   [ -n "${TI_DISCARDED:-}" ] && log "[$t] /clear cleared typed text from the box first: [$TI_DISCARDED]"
   [ "$rc" = 1 ] && { log "clear-rebrief: /clear not seen submitted on $t (${TI_REFUSED:-}); rebrief not typed"; return 1; }
@@ -581,9 +595,110 @@ do_clear_rebrief() {
     tmux_o send-keys -t "$t" Enter 2>/dev/null
   fi
   sleep 3
-  send_rebrief "$t" && return 0
-  log "clear-rebrief: orchestrator /cleared but the rebrief was not seen submitted on $t (${TI_REFUSED:-})"
+  for try in 1 2 3; do
+    send_rebrief "$t" && { rm -f "$CLEAR_PENDING"; return 0; }
+    log "clear-rebrief: rebrief not seen submitted on $t (try $try/3: ${TI_REFUSED:-})"
+    sleep 3
+  done
+  sid=""; read -r sid _j < <(pane_session "$t")
+  mkdir -p "$HEALTH_DIR" 2>/dev/null
+  printf 'sid=%s\nat=%s\n' "${sid:-unknown}" "$(date +%s)" > "$CLEAR_PENDING"
+  log "clear-rebrief: orchestrator /cleared but NOT rebriefed (session ${sid:-unknown}); the main loop retries the rebrief only"
   return 1
+}
+
+# _transcript_has_prompt <jsonl>: exit 0 when someone typed a prompt in that session (not a slash command, not a hook).
+_transcript_has_prompt() {
+  [ -f "$1" ] || return 1
+  python3 - "$1" <<'PY' 2>/dev/null
+import json, sys
+for line in open(sys.argv[1], errors="replace"):
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    if d.get("type") != "user" or d.get("isMeta"):
+        continue
+    c = (d.get("message") or {}).get("content")
+    if isinstance(c, list):
+        if any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c):
+            continue
+        c = " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+    c = (c or "").lstrip()
+    if c and not c.startswith(("<command-", "<local-command", "<bash-", "Caveat:")):
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# rebrief_tell <text>: tell the orchestrator on the bus (info) that its pane may be cleared with no brief, so that state
+# is never silent. Same sink, live-team guard and timeout as blind_bus_notice.
+rebrief_tell() {
+  local msg="info: compaction-watchdog: $1"
+  if [ -n "$BUS_SINK" ]; then
+    printf '%s --to orchestrator %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$msg" >> "$BUS_SINK" 2>/dev/null || true
+    log "clear-rebrief: notice written to the test sink $BUS_SINK"; return 0
+  fi
+  if [ ! -f "${TEAM_DIR:-.}/state.md" ]; then
+    log "clear-rebrief: notice not sent, ${TEAM_DIR:-.} has no state.md (not a live team)"; return 0
+  fi
+  if BUS_SEND_RETRY_S=0 timeout "$BUS_TIMEOUT" python3 "$BUS_SEND" --name compaction-watchdog --to orchestrator --text "$msg" </dev/null >/dev/null 2>&1; then
+    log "clear-rebrief: orchestrator told on the bus"
+  else
+    log "clear-rebrief: bus-send FAILED, the orchestrator was NOT told"
+  fi
+}
+
+# _pending_wait <reason>: log a wait; once the marker is over 10 minutes old, tell the orchestrator once.
+_pending_wait() {
+  log "clear-rebrief: pending rebrief waits ($1)"
+  local at; at="$(sed -n 's/^at=//p' "$CLEAR_PENDING" 2>/dev/null)"
+  case "$at" in ''|*[!0-9]*) return 0 ;; esac
+  if [ $(( $(date +%s) - at )) -gt 600 ] && ! grep -qx 'told=1' "$CLEAR_PENDING" 2>/dev/null; then
+    echo 'told=1' >> "$CLEAR_PENDING"
+    rebrief_tell "the orchestrator pane was /cleared over 10 minutes ago and the rebrief has still not gone in ($1); it retries each cycle for up to an hour."
+  fi
+}
+
+# pending_rebrief <target>: retry a rebrief that did not go in after a /clear. The marker is dropped when it is over an
+# hour old, when the pane is in another session than the one the /clear started, or when a prompt was typed there
+# since: in each case somebody else has dealt with the pane. It fails closed: a marker whose session was never read is
+# dropped, a pane whose session cannot be read now waits, and a busy pane or one holding typed text is not touched. It
+# never types blind. A drop that leaves the pane unbriefed, and a wait past 10 minutes, are told to the orchestrator.
+pending_rebrief() {
+  local t="$1" want at sid jsonl etxt txt
+  want="$(sed -n 's/^sid=//p' "$CLEAR_PENDING" 2>/dev/null)"; at="$(sed -n 's/^at=//p' "$CLEAR_PENDING" 2>/dev/null)"
+  case "$at" in ''|*[!0-9]*) at=0 ;; esac
+  if [ $(( $(date +%s) - at )) -gt 3600 ]; then
+    rm -f "$CLEAR_PENDING"; log "clear-rebrief: pending rebrief dropped (over an hour old)"
+    rebrief_tell "the orchestrator pane was /cleared over an hour ago and never rebriefed; the retry has stopped. Rebrief it by hand."
+    return 0
+  fi
+  case "$want" in ''|unknown)
+    rm -f "$CLEAR_PENDING"; log "clear-rebrief: pending rebrief dropped (the /clear's session was never read)"
+    rebrief_tell "the orchestrator pane was /cleared but its session could not be read, so the rebrief is not retried. Rebrief it by hand."
+    return 0 ;;
+  esac
+  sid=""; jsonl=""
+  read -r sid jsonl < <(pane_session "$t")
+  if [ -z "$sid" ]; then _pending_wait "pane session unreadable"; return 0; fi
+  if [ "$sid" != "$want" ]; then
+    rm -f "$CLEAR_PENDING"; log "clear-rebrief: pending rebrief dropped (pane now in session $sid, the /clear started $want)"; return 0
+  fi
+  if [ -n "$jsonl" ] && _transcript_has_prompt "$jsonl"; then
+    rm -f "$CLEAR_PENDING"; log "clear-rebrief: pending rebrief dropped (a prompt was typed in session $sid since the /clear)"; return 0
+  fi
+  etxt="$(tmux_o capture-pane -e -t "$t" -p 2>/dev/null)"
+  txt="$(printf '%s' "$etxt" | strip_ansi)"
+  if [ -z "$txt" ] || is_busy "$txt"; then _pending_wait "pane busy or empty"; return 0; fi
+  case "$(input_class "$txt" "$etxt")" in
+    real) _pending_wait "real unsubmitted text on the input line"; return 0 ;;
+  esac
+  if send_rebrief "$t" noblind; then
+    rm -f "$CLEAR_PENDING"; log "clear-rebrief: pending rebrief sent (session ${sid:-unknown})"
+  else
+    _pending_wait "rebrief not seen submitted"
+  fi
 }
 
 # Escalate a WORKER that is at the unrecoverable ceiling to the orchestrator (it
@@ -976,6 +1091,10 @@ while :; do
   fi
   while read -r role target orchflag probeflag; do
     [ -n "$role" ] || continue
+    if [ "$orchflag" = 1 ] && [ -f "$CLEAR_PENDING" ]; then
+      pending_rebrief "$target"
+      continue
+    fi
     process_target "$role" "$target" "$orchflag" "$probeflag"
   done < "${TEAM_DIR:-.}/.compaction-targets.$$"
   rm -f "${TEAM_DIR:-.}/.compaction-targets.$$" 2>/dev/null
