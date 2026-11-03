@@ -50,5 +50,8 @@ if ! tmux -L orchestrator list-windows -t "$sess" -F '#{window_name}' 2>/dev/nul
   target="$sess:0"
 fi
 
-tmux_submit "$target" "$text"
-echo "sent to $target: $text"
+if tmux_submit "$target" "$text"; then
+  echo "sent to $target: $text"
+else
+  echo "NOT sent to $target (see the line above): $text" >&2; exit 1
+fi

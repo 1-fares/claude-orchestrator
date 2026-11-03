@@ -47,7 +47,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
 . "$repo/bin/lib/self-reload.sh"
-self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/observer-nudge.sh" "$repo/bin/lib/self-reload.sh" \
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" "$repo/bin/lib/observer-nudge.sh" "$repo/bin/lib/self-reload.sh" \
   "$repo/bin/lib/host-verdict.sh"
 
 interval="${OBSERVER_INTERVAL:-900}"
@@ -127,9 +127,9 @@ post_orch() {
   win="$(tmux -L "$TEAM_TMUX" list-windows -t "$TEAM_SESSION" -F '#{window_index} #{window_name}' 2>/dev/null | awk '$2=="orchestrator"{print $1; exit}')"
   [ -n "$win" ] || win=0
   target="$TEAM_SESSION:$win"
-  tmux -L "$TEAM_TMUX" send-keys -t "$target" C-u 2>/dev/null || return 0
   # Verified submit (team-env's tmux_submit): a single Enter left long observer
-  # messages collapsed into an unsubmitted [Pasted text] block under load.
+  # messages collapsed into an unsubmitted [Pasted text] block under load. No C-u
+  # first: a box holding someone's draft is refused (logged), never wiped.
   tmux_submit "$target" "$text" || true
 }
 

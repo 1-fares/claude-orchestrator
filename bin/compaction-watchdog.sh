@@ -106,7 +106,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
 . "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
-self_reload_init "$0" "$repo/bin/lib/compaction-detect.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/status-hook.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+self_reload_init "$0" "$repo/bin/lib/compaction-detect.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" "$repo/bin/lib/status-hook.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
 
 SOCK="${COMPACT_SOCKET:-orchestrator}"
 SESSION="${COMPACT_SESSION:-}"

@@ -61,9 +61,12 @@ busy_pane() {
 }
 
 echo "setting up isolated tmux session $TEAM_SESSION on socket $TEAM_TMUX"
-# Window 0 = orchestrator (echo ON so the give-up escalation text is assertable).
+# Window 0 = orchestrator (echo ON so the give-up escalation text is assertable). A shell pane with no drawn
+# input box, bash itself in the foreground (a read loop that discards each line, so nothing typed runs):
+# tmux_submit types blind only into a shell pane, and a drawn box whose typed text never appears in it is
+# refused as "not seen typed".
 $TM new-session -d -s "$TEAM_SESSION" -n orchestrator \
-  "bash -c 'printf \"● standing by.\n────\n❯ \n\"; sleep 600'"
+  "bash -c 'printf \"● standing by.\n\"; while read -r _; do :; done; sleep 600'"
 sleep 1
 
 echo "step 1: first stall -> stalled-api, retry 1, episode marker written"

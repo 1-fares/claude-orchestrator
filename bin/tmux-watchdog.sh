@@ -44,7 +44,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
 . "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
-self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
 
 interval=${TMUX_WATCHDOG_INTERVAL_S:-15}
 snap_interval=${TMUX_WATCHDOG_SNAPSHOT_S:-60}

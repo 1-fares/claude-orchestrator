@@ -223,7 +223,7 @@ pattern_regex="$(grep -vE '^[[:space:]]*(#|$)' "$patterns_file" | paste -sd'|' -
 . "$repo/bin/lib/status-hook.sh"
 self_reload_init "$0" \
   "$repo/bin/team-env.sh" \
-  "$repo/bin/lib/tmux-submit.sh" \
+  "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" \
   "$repo/bin/lib/watchdog-detect.sh" \
   "$repo/bin/lib/status-hook.sh" \
   "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
