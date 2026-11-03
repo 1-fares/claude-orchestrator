@@ -250,6 +250,31 @@ another_role
 wall_once "$(( R1 + 604800 ))"
 [ "$(grep -c . "$SINK" 2>/dev/null || echo 0)" = "2" ] && ok "$label: a new wall (new reset) pages again" || bad "$label: new wall pushes: $(grep -c . "$SINK") (want 2)"
 
+# --- only a MULTI-DAY wall pages ----------------------------------------------
+# A page means a human must act now; on a live deployment a wall ~12h from its
+# reset paged at night. A reset under USAGE_WALL_MULTIDAY_SEC (24h) is still paced
+# on the slow probe, but it is logged and filed as info, never pushed. A 3-day
+# wall is the positive control: it must still reach the phone.
+for case in "12h:43200:0" "just under 24h:86100:0" "3-day:259200:1"; do
+  label="${case%%:*}"; rest="${case#*:}"; secs="${rest%%:*}"; want="${rest##*:}"
+  label="wall $label"
+  cp "$PANE_USAGE" "$PANEFILE"; rm -rf "$TD"; rm -rf "$SINK".*; : > "$SINK"
+  wall_once "$(( $(date +%s) + secs ))"
+  grep -q 'USAGE-WALL (seven_day;' "$af" 2>/dev/null && ok "$label: entry ran, wall recorded (positive control)" || bad "$label: no USAGE-WALL line: $(tail -2 "$af" 2>/dev/null)"
+  [ -s "$TD/health/testrole.usage-wall" ] && ok "$label: slow-probe marker written" || bad "$label: no wall marker"
+  p="$(grep -c . "$SINK" 2>/dev/null)"; p="${p:-0}"
+  [ "$p" = "$want" ] && ok "$label: phone pushes $p (want $want)" || bad "$label: phone pushes $p (want $want): $(head -1 "$SINK" 2>/dev/null)"
+  if [ "$want" = 0 ]; then
+    grep -q 'USAGE-WALL not paged: reset ~' "$af" && ok "$label: the decision not to page is logged" || bad "$label: no not-paged line: $(tail -2 "$af")"
+    grep -q 'DIGEST info' "$SINK.log" 2>/dev/null && ok "$label: filed as DIGEST info" || bad "$label: not filed as info: $(head -2 "$SINK.log" 2>/dev/null)"
+    # "SENT page 5 usage wall", "DEDUPE page usage wall", "LOG-ONLY page usage wall"
+    ! grep -qE 'page( [0-9]+)? usage wall' "$SINK.log" 2>/dev/null && ok "$label: no page decision at all" || bad "$label: a page decision was made: $(grep -E 'page( [0-9]+)? usage wall' "$SINK.log")"
+  else
+    grep -qi 'login' "$SINK" && ok "$label: the page names the /login action" || bad "$label: page lacks the action: $(head -1 "$SINK")"
+    ! grep -q 'not paged' "$af" && ok "$label: no not-paged line" || bad "$label: logged not-paged on a multi-day wall"
+  fi
+done
+
 echo
 if [ "$fail" = 0 ]; then echo "usage-stall-waits.test: PASS"; exit 0
 else echo "usage-stall-waits.test: FAIL"; echo "--- send-keys log:"; cat "$SENDLOG"; exit 1; fi

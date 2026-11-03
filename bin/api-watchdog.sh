@@ -65,10 +65,11 @@
 #      hours and giving up would strand the team exactly when it becomes
 #      recoverable. The operator is pushed ONCE on entry (usage exhaustion is
 #      operator-actionable: add funds or wait) and the recovery is logged.
-#      A MULTI-DAY wall is the exception. When the role's refusal record names a
+#      A FAR wall is the exception. When the role's refusal record names a
 #      rateLimitType and a resetsAt further out than USAGE_WALL_PAGE_SEC, the
-#      cadence drops to USAGE_WALL_PROBE_SEC and the operator is PAGED, because
-#      that wall does not clear until they act (see usage_wall_reset).
+#      cadence drops to USAGE_WALL_PROBE_SEC (see usage_wall_reset). Only a
+#      MULTI-DAY wall (reset at least USAGE_WALL_MULTIDAY_SEC away) PAGES the
+#      operator; a nearer one is logged and filed as info.
 #
 # Pure shell + curl + jq + tmux. Never makes a Claude API call, so cannot
 # itself be rate-limited.
@@ -137,11 +138,15 @@ usage_retry_sec="${USAGE_RETRY_SEC:-300}"
 # run to its reset the same cadence would have made about 3,700. So when the
 # role's own refusal record names a reset further out than USAGE_WALL_PAGE_SEC,
 # the cadence drops to USAGE_WALL_PROBE_SEC -- slow enough to cost nothing,
-# frequent enough to notice an operator /login -- and the operator is PAGED
-# rather than filed, because at that point only they can clear it. A wall with
-# no record, or one resetting soon, keeps the old behaviour exactly.
+# frequent enough to notice an operator /login. A wall with no record, or one
+# resetting soon, keeps the old behaviour exactly.
+# The operator is PAGED only for a MULTI-DAY wall, a reset at least
+# USAGE_WALL_MULTIDAY_SEC (24h) away. A page means a human must act now; a wall
+# that resets within the day clears while the team waits, so it is logged and
+# filed as info (on a live deployment, a wall ~12h from its reset paged at night).
 usage_wall_probe_sec="${USAGE_WALL_PROBE_SEC:-1800}"
 usage_wall_page_sec="${USAGE_WALL_PAGE_SEC:-7200}"
+usage_wall_multiday_sec="${USAGE_WALL_MULTIDAY_SEC:-86400}"
 # API-STALL episode window: a "try again" makes the pane busy for a scan or
 # two, the busy path resets the health-file counters, and without a memory the
 # retry count restarted at 0 on every re-entry — a role stalling on the SAME
@@ -495,7 +500,12 @@ scan_once() {
             echo "$(iso "$nowts") [$name] USAGE-WALL ($_wkind; resets $(iso "$_wreset"), ~${_whrs}h; probing every ${usage_wall_probe_sec}s)" >> "$af"
           fi
           if [ $((nowts - _uplast)) -ge "${USAGE_PUSH_DEDUPE_SEC:-3600}" ]; then
-            if [ "$_multiday" = 1 ]; then
+            if [ "$_multiday" = 1 ] && [ $((_wreset - nowts)) -lt "$usage_wall_multiday_sec" ]; then
+              # A far wall, but not multi-day: logged and filed as info, never paged.
+              echo "$(iso "$nowts") [$name] USAGE-WALL not paged: reset ~${_whrs}h away, under $((usage_wall_multiday_sec / 3600))h (only a multi-day wall pages)" >> "$af"
+              notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the $_wkind limit; it clears at $(iso "$_wreset") (~${_whrs}h); probing every $((usage_wall_probe_sec / 60))m, not paged (under $((usage_wall_multiday_sec / 3600))h)"
+              status_hook usage-wall "$name" "hit the $_wkind limit; resets $(iso "$_wreset") (~${_whrs}h)"
+            elif [ "$_multiday" = 1 ]; then
               # ONE PAGE PER WALL. Every role enters this path on its own, at its own
               # time, and the marker above dedupes per role only, so the subject used
               # to be the same "usage wall: seven_day" for all of them and the only
