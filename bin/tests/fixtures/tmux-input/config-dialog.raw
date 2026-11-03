@@ -1,0 +1,50 @@
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m/path/to/work[39m
+
+[38;5;153m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [38;5;246m◐ medium · /effort[38;5;153m ▔
+[39m   [1m[38;5;153mSettings[0m  Status  [1;7m Config [0m  Usage   Stats
+
+   [38;5;153m╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[39m
+   [38;5;153m│[39m ⌕ [38;5;246mSearch settings…[39m                                                                                                                                                                             [38;5;153m│[39m
+   [38;5;153m╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯[39m
+
+   [38;5;246m❯[39m Auto-compact                                true
+     Idle compaction                             true
+     Continue automatically at usage limit       true
+     Switch models when a message is flagged     Not asked yet[38;5;246m ›[39m
+     Show tips                                   false
+     Reduce motion                               false
+     Thinking mode                               [38;5;246mtrue[39m
+     [38;5;246mThinking can't be turned off for Opus 5.5[39m
+     Prompt suggestions                          true
+     Session recap                               true
+     Rewind code (checkpoints)                   true
+     Dynamic workflows                           true
+     Ultracode keyword trigger                   true
+     Dynamic workflow size                       medium (default)
+     Artifacts                                   true
+     Verbose output                              false
+     Terminal progress bar                       true
+     Show turn duration                          true
+     Time format                                 auto[38;5;246m ›[39m
+     Default permission mode                     Auto
+     Worktree base ref                           fresh
+     Use auto mode during plan                   true
+     Respect .gitignore in file picker           true
+     Skip the /copy picker                       false
+     Copy on select                              true
+     Auto-scroll                                 true
+     Open agents view by default                 false
+     ← opens agents                              true
+     Auto-update channel                         disabled (set by env: DISABLE_AUTOUPDATER)[38;5;246m ›[39m
+     Theme                                       Dark mode[38;5;246m ›[39m
+     Local notifications                         Auto
+     Push when actions required                  false
+     Push when Claude decides                    true
+     Output style                                default[38;5;246m ›[39m
+     Language                                    Default (English)[38;5;246m ›[39m
+     Editor mode                                 vim
+     Question auto-continue timeout              never
+     Show last response in external editor       false
+     [38;5;246m↓ 8 more[39m
+
+   [38;5;246mType to filter · Enter/↓ to select · ↑ to tabs · Esc to clear[39m

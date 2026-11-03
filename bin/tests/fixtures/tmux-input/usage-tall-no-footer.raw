@@ -1,0 +1,50 @@
+
+[38;5;246m  ⎿  [39mKept model as [38;5;153mOpus 5.5[39m
+[38;5;153m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [38;5;246m◐ medium · /effort[38;5;153m ▔
+[39m   [1m[38;5;153mSettings[0m  Status   Config  [1m[38;5;16m[48;5;153m Usage [0m  Stats
+
+   [1mSession[0m
+
+   [38;5;246mTotal cost:            $0.4856[39m
+   [38;5;246mTotal duration (API):  3s[39m
+   [38;5;246mTotal duration (wall): 1m 22s[39m
+   [38;5;246mTotal code changes:    0 lines added, 0 lines removed[39m
+   [38;5;246mUsage by model:[39m
+   [38;5;246m     claude-opus-5-5:  2 input, 204 output, 27.0k cache read, 59.5k cache write ($0.4856)[39m
+   [38;5;246mPrompt cache (main):   1 request · 31% of input tokens from cache · no misses · warm (1h TTL, last activity 42s ago)[39m
+
+
+   [1mPlugin skill-listing footprint[0m
+   [38;5;246mWhat each plugin's skill descriptions add to the system prompt (cached input after the first turn). Agents and MCP tools not yet counted.[39m
+
+   [38;5;246mexample-plugin      [39m        [38;5;246m1 skill · ~30 tok/turn[39m
+
+   Total                       ~30 tok/turn
+
+   [1mCurrent week (all models)[0m
+   [38;5;153m[48;5;102m████████████████████████████████████▌             [39m[49m 73% used
+   [38;5;246mResets Nov 3, 4am (UTC)[39m
+
+   [1mCurrent week (Fable)[0m
+   [38;5;153m[48;5;102m                                                  [39m[49m 0% used
+   [38;5;246mResets Nov 3, 4am (UTC)[39m
+
+   [1mWhat's contributing to your usage?[0m
+   [38;5;246mApproximate · sessions on this machine only[39m
+
+   [38;5;246mLast 24h · shares overlap[39m
+
+   83%  Start fresh when you switch tasks[38;5;246m · run /clear[39m
+   68%  Run fewer sessions at once[38;5;246m · up to 8 at once[39m
+   61%  Stop sessions you no longer need[38;5;246m · some ran 8 hours or more[39m
+   27%  Compact before you step away[38;5;246m · run /compact[39m
+   19%  Trim ~/path/to/CLAUDE.md[38;5;246m · 8k tokens per request[39m
+
+   Subagents               [38;5;246m% of usage[39m
+   [38;5;246mgeneral-purpose[39m                 [38;5;246m1%[39m
+
+   [38;5;246mf to fix 1 of 5 · d to day · w to week[39m
+
+   [1mUsage credits[0m
+   [38;5;246mUsage credits are off · /usage-credits to turn them on[39m
+

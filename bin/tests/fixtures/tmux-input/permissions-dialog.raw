@@ -1,0 +1,50 @@
+
+[38;5;174m ▐[48;5;16m▛███▛█[39m[49m   [1mClaude Code[0m [38;5;246mv2.1.312[39m
+[38;5;174m▝▜[48;5;16m█████[49m█▀[39m  [38;5;246mOpus 5.5 · Claude Ultra[39m
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m/path/to/work[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[38;5;153m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [38;5;246mtmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tracking[38;5;153m ▔
+[39m   [1m[38;5;153mPermissions[0m  Recently denied  [1m[38;5;16m[48;5;153m Allow [0m  Ask   Deny   Auto mode   Workspace
+
+   Claude Code won't ask before using allowed tools.
+   [2m╭───────────────────────────────────────────────╮[0m
+   [2m│[0m [38;5;246m⌕ Search…[39m                                     [2m│[0m
+   [2m╰───────────────────────────────────────────────╯[0m
+
+     [38;5;246m1.  [39mAdd a new rule…
+     [38;5;246m2.  [39mBash
+     [38;5;246m3.  [39mEdit
+     [38;5;246m4.  [39mGlob
+     [38;5;246m5.  [39mGrep
+     [38;5;246m6.  [39mNotebookEdit
+     [38;5;246m7.  [39mRead
+     [38;5;246m8.  [39mWebFetch
+     [38;5;246m9.  [39mWebSearch
+   [38;5;246m↓[39m [38;5;246m10. [39mWrite
+
+   [38;5;246m←/→ to switch · ↓ to select · Esc to cancel[39m

@@ -1,0 +1,50 @@
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m/path/to/work
+
+[38;5;153m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [38;5;246m◐ medium · /effort[38;5;153m ▔
+[39m   [1m[38;5;153mSettings[0m  Status   Config  [1m[38;5;16m[48;5;153m Usage [0m  Stats
+
+   [1mSession[0m
+
+   [38;5;246mTotal cost:            $0.0000[39m
+   [38;5;246mTotal duration (API):  0s[39m
+   [38;5;246mTotal duration (wall): 7s[39m
+   [38;5;246mTotal code changes:    0 lines added, 0 lines removed[39m
+   [38;5;246mUsage:                 0 input, 0 output, 0 cache read, 0 cache write[39m
+
+
+   [1mPlugin skill-listing footprint[0m
+   [38;5;246mWhat each plugin's skill descriptions add to the system prompt (cached input after the first turn). Agents and MCP tools not yet counted.[39m
+
+   [38;5;246mexample-plugin      [39m        [38;5;246m1 skill · ~30 tok/turn[39m
+
+   Total                       ~30 tok/turn
+
+   [1mCurrent week (all models)[0m
+   [38;5;153m[48;5;102m████████████████████████████████████              [39m[49m 72% used
+   [38;5;246mResets Nov 3, 4am (UTC)[39m
+
+   [1mCurrent week (Fable)[0m
+   [38;5;153m[48;5;102m                                                  [39m[49m 0% used
+   [38;5;246mResets Nov 3, 4am (UTC)[39m
+
+   [1mWhat's contributing to your usage?[0m
+   [38;5;246mApproximate · sessions on this machine only[39m
+
+   [38;5;246mLast 24h · shares overlap[39m
+
+   86%  Start fresh when you switch tasks[38;5;246m · run /clear[39m
+   70%  Run fewer sessions at once[38;5;246m · up to 8 at once[39m
+   58%  Stop sessions you no longer need[38;5;246m · some ran 8 hours or more[39m
+   29%  Compact before you step away[38;5;246m · run /compact[39m
+   18%  Trim ~/path/CLAUDE.md · 8k tokens per request[39m
+
+   Subagents               [38;5;246m% of usage[39m
+   [38;5;246mgeneral-purpose[39m                 [38;5;246m1%[39m
+
+   [38;5;246mf to fix 1 of 5 · d to day · w to week[39m
+
+   [1mUsage credits[0m
+   [38;5;246mUsage credits are off · /usage-credits to turn them on[39m
+
+   [38;5;246mEsc to cancel[39m
+
