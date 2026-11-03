@@ -61,9 +61,14 @@ bus_keep_lines="${NJ_BUS_KEEP_LINES:-4000}"
 stamp="$(date -u '+%Y%m%d-%H%M')"
 jlog="$TEAM_DIR/janitor.log"
 
+# Returns the janitor.log write status under --apply, 0 in a dry run. It was `[ apply ] &&
+# printf`, which returns 1 in a dry run; the script ends on a note, so every dry run exited 1.
+# An if keeps a failed log write visible under --apply.
 note() {
   printf '%s\n' "$*"
-  [ "$apply" -eq 1 ] && printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$jlog"
+  if [ "$apply" -eq 1 ]; then
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$jlog"
+  fi
 }
 mode="DRY-RUN"; [ "$apply" -eq 1 ] && mode="APPLY"
 note "night-janitor [$mode] run=$TEAM_DIR"
