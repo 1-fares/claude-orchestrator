@@ -215,6 +215,41 @@ printf 'seven_day %s\n' "$(( $(date +%s) + 172800 ))" > "$TD/health/testrole.usa
 wall_once "$(( $(date +%s) + 172800 ))"
 [ ! -e "$TD/health/testrole.usage-wall" ] && ok "$label: marker dropped when the role left the dialog" || bad "$label: marker outlived the wall after recovery"
 
+# --- ONE page per wall --------------------------------------------------------
+# Each role enters the wall on its own; on a live deployment (2026-11-01) one
+# seven_day wall paged 4 times, an hour or more apart, because the only
+# cross-role dedupe was the 30-minute page window. Another entry into the SAME
+# wall (same kind, same reset) must not page, even after that window has passed;
+# a NEW wall (another reset) must. Each later entry stands for ANOTHER role, so
+# it also drops this role's own usage-pushed marker (a per-role dedupe that a
+# second role does not share).
+label="one page per wall"
+cp "$PANE_USAGE" "$PANEFILE"; rm -rf "$TD"; rm -rf "$SINK".*; : > "$SINK"
+another_role() { rm -f "$hf" "$TD/health/testrole.usage-wall" "$TD/health/testrole.usage-pushed"; }
+R1=$(( $(date +%s) + 172800 ))
+wall_once "$R1"
+p1="$(grep -c . "$SINK" 2>/dev/null || echo 0)"
+[ "$p1" = "1" ] && ok "$label: first entry pages once" || bad "$label: first entry pushes: $p1 (want 1)"
+grep -q "resets $(date -u -d "@$R1" +%Y-%m-%dT%H:%M:%SZ)" "$SINK" && ok "$label: the page names the reset" || bad "$label: page lacks the reset: $(head -1 "$SINK")"
+# Another role entering the same wall, after the old 30-minute window: age every
+# page stamp by an hour.
+for f in "$SINK".state/page.*; do [ -f "$f" ] && printf '%s' "$(( $(date +%s) - 3600 ))" > "$f"; done
+another_role
+wall_once "$R1"
+[ "$(grep -c 'USAGE-WALL (seven_day;' "$af")" -ge 2 ] && ok "$label: second entry recorded (positive control: the entry path ran)" || bad "$label: second entry did not run: $(tail -2 "$af")"
+[ "$(grep -c . "$SINK" 2>/dev/null || echo 0)" = "1" ] && ok "$label: same wall again: no second page" || bad "$label: same wall paged again: $(grep -c . "$SINK")"
+grep -q 'DEDUPE page usage wall: seven_day' "$SINK.log" && ok "$label: the repeat is logged as DEDUPE" || bad "$label: no DEDUPE line: $(tail -2 "$SINK.log")"
+# Past the wall's midpoint: the first page is older than the time left to the
+# reset (stamp 3 days old, reset 2 days away). Same wall: no page.
+for f in "$SINK".state/page.*; do [ -f "$f" ] && printf '%s' "$(( $(date +%s) - 259200 ))" > "$f"; done
+another_role
+wall_once "$R1"
+[ "$(grep -c . "$SINK" 2>/dev/null || echo 0)" = "1" ] && ok "$label: same wall past its midpoint: still no page" || bad "$label: same wall paged past its midpoint: $(grep -c . "$SINK")"
+# A NEW wall: the reset moved (the account reset and the limit was hit again).
+another_role
+wall_once "$(( R1 + 604800 ))"
+[ "$(grep -c . "$SINK" 2>/dev/null || echo 0)" = "2" ] && ok "$label: a new wall (new reset) pages again" || bad "$label: new wall pushes: $(grep -c . "$SINK") (want 2)"
+
 echo
 if [ "$fail" = 0 ]; then echo "usage-stall-waits.test: PASS"; exit 0
 else echo "usage-stall-waits.test: FAIL"; echo "--- send-keys log:"; cat "$SENDLOG"; exit 1; fi

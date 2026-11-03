@@ -496,7 +496,24 @@ scan_once() {
           fi
           if [ $((nowts - _uplast)) -ge "${USAGE_PUSH_DEDUPE_SEC:-3600}" ]; then
             if [ "$_multiday" = 1 ]; then
-              notify_operator page "usage wall: $_wkind" "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the $_wkind limit; it does not clear until $(iso "$_wreset") (~${_whrs}h). The team is stopped until you switch account with /login. Probing every $((usage_wall_probe_sec / 60))m in case you do."
+              # ONE PAGE PER WALL. Every role enters this path on its own, at its own
+              # time, and the marker above dedupes per role only, so the subject used
+              # to be the same "usage wall: seven_day" for all of them and the only
+              # cross-role dedupe was the 30-minute page window: one wall paged 4
+              # times on a live deployment (2026-11-01, an hour or more apart). The
+              # wall is now named by kind AND reset, so later roles hitting the SAME
+              # wall are deduped and a NEW wall (another kind or another reset) pages
+              # again. The window is not "until the reset, measured from now":
+              # notify.sh compares it with now - stamp, so a role entering past the
+              # wall's midpoint would page again. Because the subject carries the
+              # reset, any stamp under it was written during THIS wall, so the window
+              # only has to outlast the longest wall (seven_day; 8 days with margin).
+              # A passed reset never reaches here: _multiday needs the reset at least
+              # usage_wall_page_sec ahead. The stamp is still written only after a
+              # delivered push (notify.sh), so a failed page is retried by the next
+              # role that enters.
+              NOTIFY_PAGE_REPEAT_SEC=$(( 8 * 86400 )) \
+              notify_operator page "usage wall: $_wkind, resets $(iso "$_wreset")" "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the $_wkind limit; it does not clear until $(iso "$_wreset") (~${_whrs}h). The team is stopped until you switch account with /login. Probing every $((usage_wall_probe_sec / 60))m in case you do."
               status_hook usage-wall "$name" "hit the $_wkind limit; no reset before $(iso "$_wreset"), operator /login needed"
             else
               notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' hit the usage limit; auto-retrying every ${usage_retry_sec}s until usage returns"
