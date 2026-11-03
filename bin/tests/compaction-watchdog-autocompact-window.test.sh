@@ -39,7 +39,7 @@ case "\$cmd" in
   has-session)     exit 0 ;;
   list-sessions)   echo "orch-sess" ;;
   list-windows)    echo "0 orchestrator" ;;
-  display-message) echo 4242 ;;
+  display-message) case "\$*" in *pane_current_command*) echo "bash 4242" ;; *) echo 4242 ;; esac ;;  # no box: a shell pane
   capture-pane)    cat "$TD/ctxpane" ;;
   *) : ;;
 esac

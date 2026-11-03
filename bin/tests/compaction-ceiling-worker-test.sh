@@ -47,6 +47,7 @@ case "$cmd" in
         ;;
     esac ;;
   send-keys) : ;;
+  display-message) case "$*" in *pane_current_command*) echo "bash 4242" ;; *) echo 4242 ;; esac ;;  # no box: a shell pane
   *) : ;;
 esac
 exit 0

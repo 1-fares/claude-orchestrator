@@ -18,6 +18,7 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   send-keys) printf '%s\n' "$*" >> "$FAKE_TD/keys" ;;
   capture-pane) printf '%s\n' "❯ " ;;
+  display-message) echo "bash 4242" ;;   # no input box: a shell pane, so the text is typed blind
   *) : ;;
 esac
 exit 0

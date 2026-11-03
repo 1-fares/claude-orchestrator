@@ -197,6 +197,10 @@ tmux_o() { tmux -L "$SOCK" "$@"; }
 # Replaces the hand-rolled "-l msg; Enter; sleep 1; Enter" sequences, several of
 # which left long nudges sitting unsubmitted under load.
 submit_o() { _tmux_submit_via tmux_o "$@"; }
+# Every line this daemon types goes through bin/lib/tmux-input.sh (sourced by tmux-submit.sh): force INSERT, confirm,
+# submit. Its direct ti_send calls reach tmux through tmux_o. A blind recipe runs only where ti_send finds no input box
+# in a pane that is positively a shell (exit 2).
+TI_VIA=tmux_o
 strip_ansi() { sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g'; }
 # Operator push (mirrors api-watchdog.sh): no-op when NTFY_URL is unset, the
 # durable marker carries the signal regardless.
@@ -399,10 +403,16 @@ input_class() {
 }
 
 probe_pct() {
-  local t="$1" role="${2:-}" cap raw
-  tmux_o send-keys -t "$t" C-u 2>/dev/null
-  tmux_o send-keys -t "$t" -l "/context" 2>/dev/null
-  tmux_o send-keys -t "$t" Enter 2>/dev/null
+  local t="$1" role="${2:-}" cap raw rc
+  ti_send "$t" "/context" clear; rc=$?
+  [ -n "${TI_DISCARDED:-}" ] && log "[$t] /context probe cleared typed text from the box first: [$TI_DISCARDED]"
+  # Not seen submitted: whatever /context render is on screen is an old one.
+  [ "$rc" = 1 ] && return 1
+  if [ "$rc" = 2 ]; then
+    tmux_o send-keys -t "$t" C-u 2>/dev/null
+    tmux_o send-keys -t "$t" -l "/context" 2>/dev/null
+    tmux_o send-keys -t "$t" Enter 2>/dev/null
+  fi
   sleep "$PROBE_WAIT"
   # Capture a wide window (the /context block grows near the ceiling: the warning
   # block + footer push the total line up) and parse all known formats. The total
@@ -509,13 +519,17 @@ for line in reversed(tail.splitlines()):
 do_nudge() {
   local t="$1" pct="$2"
   local msg="[compaction-watchdog] Context is at ${pct} percent. When you reach a safe checkpoint (ledger and state written, no in-flight subagent), please run /compact so the run stays in a cheap context. Finish the current step first; there is no rush."
-  tmux_o send-keys -t "$t" C-u 2>/dev/null
-  submit_o "$t" "$msg"
+  # No C-u first: a cooperative nudge never wipes a draft; a box holding typed text is refused and logged.
+  submit_o "$t" "$msg" 2>/dev/null || log "[$t] nudge not sent: ${TI_REFUSED:-not seen submitted}"
 }
 
 # Backstop: force a controlled compaction with focus instructions.
 do_compact() {
-  local t="$1"
+  local t="$1" rc
+  ti_send "$t" "/compact $PRESERVE" clear; rc=$?
+  [ -n "${TI_DISCARDED:-}" ] && log "[$t] /compact cleared typed text from the box first: [$TI_DISCARDED]"
+  [ "$rc" = 1 ] && log "[$t] /compact not seen submitted: ${TI_REFUSED:-}"
+  [ "$rc" = 2 ] || return "$rc"
   tmux_o send-keys -t "$t" C-u 2>/dev/null
   tmux_o send-keys -t "$t" -l "/compact $PRESERVE" 2>/dev/null
   tmux_o send-keys -t "$t" Enter 2>/dev/null
@@ -537,15 +551,39 @@ compact_refused() {
 # state.md + the ledger, so a clear is safe and the rebrief points it back at
 # those rather than summarising from memory. Workers have no such rebrief and are
 # escalated to the orchestrator instead (notify_orch_worker_wedged).
-do_clear_rebrief() {
-  local t="$1"
-  tmux_o send-keys -t "$t" C-u 2>/dev/null
-  tmux_o send-keys -t "$t" -l "/clear" 2>/dev/null
-  tmux_o send-keys -t "$t" Enter 2>/dev/null
-  sleep 3
+orch_rebrief_text() {
   local brief="You are the orchestrator, auto-recovered from a context-limit wedge (compaction could not reduce below the limit, so the watchdog /cleared you; your state is on disk). Re-join the bus: run python3 $repo/bin/bus-inbox.py status orchestrator; if it says reader=none, arm the reader with Bash run_in_background (python3 $repo/bin/bus-inbox.py wait orchestrator 7200), starting the listener first if it is dead (never /is c, never a Monitor on client.py). Then reconstruct the run from ./CLAUDE.md, ./roles/orchestrator.md, and ${TEAM_DIR:-.}/state.md (read the recent tail, including the decision-log). Resume from there; keep context lean (point to files, do not re-read everything, checkpoint+compact at task boundaries). Report status when re-oriented."
+  printf '%s' "$brief"
+}
+
+# send_rebrief <target>: exit 0 when the rebrief was seen submitted (or typed blind into a shell pane with no box).
+send_rebrief() {
+  local t="$1" brief rc
+  brief="$(orch_rebrief_text)"
+  ti_send "$t" "$brief" clear; rc=$?
+  [ -n "${TI_DISCARDED:-}" ] && log "[$t] rebrief cleared typed text from the box first: [$TI_DISCARDED]"
+  [ "$rc" = 2 ] || return "$rc"
   tmux_o send-keys -t "$t" C-u 2>/dev/null
-  submit_o "$t" "$brief"
+  tmux_o send-keys -t "$t" -l "$brief" 2>/dev/null
+  tmux_o send-keys -t "$t" Enter 2>/dev/null
+  sleep 1
+  tmux_o send-keys -t "$t" Enter 2>/dev/null
+}
+
+do_clear_rebrief() {
+  local t="$1" rc
+  ti_send "$t" "/clear" clear; rc=$?
+  [ -n "${TI_DISCARDED:-}" ] && log "[$t] /clear cleared typed text from the box first: [$TI_DISCARDED]"
+  [ "$rc" = 1 ] && { log "clear-rebrief: /clear not seen submitted on $t (${TI_REFUSED:-}); rebrief not typed"; return 1; }
+  if [ "$rc" = 2 ]; then
+    tmux_o send-keys -t "$t" C-u 2>/dev/null
+    tmux_o send-keys -t "$t" -l "/clear" 2>/dev/null
+    tmux_o send-keys -t "$t" Enter 2>/dev/null
+  fi
+  sleep 3
+  send_rebrief "$t" && return 0
+  log "clear-rebrief: orchestrator /cleared but the rebrief was not seen submitted on $t (${TI_REFUSED:-})"
+  return 1
 }
 
 # Escalate a WORKER that is at the unrecoverable ceiling to the orchestrator (it
@@ -560,8 +598,13 @@ notify_orch_worker_wedged() {
   case "$(input_class "$otxt" "$oet")" in
     real) log "[$role] wedge-notice deferred (orchestrator has real unsubmitted input)"; return ;;
   esac
-  tmux_o send-keys -t "$ot" C-u 2>/dev/null
-  submit_o "$ot" "[compaction-watchdog] Worker '${role}' is at an unrecoverable context ceiling (${cstate}); compaction cannot recover it. You own retire+respawn: please retire and respawn '${role}'. Its task state is on disk / in its PR; rebrief it fresh."
+  local msg="[compaction-watchdog] Worker '${role}' is at an unrecoverable context ceiling (${cstate}); compaction cannot recover it. You own retire+respawn: please retire and respawn '${role}'. Its task state is on disk / in its PR; rebrief it fresh." rc
+  ti_send "$ot" "$msg" clear; rc=$?
+  [ -n "${TI_DISCARDED:-}" ] && log "[$role] wedge-notice cleared typed text from the orchestrator box first: [$TI_DISCARDED]"
+  [ "$rc" = 1 ] && log "[$role] wedge-notice not seen submitted: ${TI_REFUSED:-}"
+  [ "$rc" = 2 ] || return 0
+  tmux_o send-keys -t "$ot" -l "$msg" 2>/dev/null
+  tmux_o send-keys -t "$ot" Enter 2>/dev/null
 }
 
 # Write/refresh a per-role ceiling marker.
@@ -623,10 +666,12 @@ probe_blind_alarm() {
     oet="$(tmux_o capture-pane -e -t "$ot" -p 2>/dev/null)"; otxt="$(printf '%s' "$oet" | strip_ansi)"
     if [ -z "$otxt" ] || is_busy "$otxt"; then return 0; fi
     case "$(input_class "$otxt" "$oet")" in real) return 0 ;; esac
-    tmux_o send-keys -t "$ot" C-u 2>/dev/null
-    tmux_o send-keys -t "$ot" -l "[compaction-watchdog] Worker '${role}' is probe-blind (${n} cycles): I cannot read its context % to compact it early (likely a large context overflowing /context in fullscreen TUI). I have driven a /compact on it; if it wedges, retire+respawn." 2>/dev/null
-    tmux_o send-keys -t "$ot" Enter 2>/dev/null
-    sleep 1
+    local msg="[compaction-watchdog] Worker '${role}' is probe-blind (${n} cycles): I cannot read its context % to compact it early (likely a large context overflowing /context in fullscreen TUI). I have driven a /compact on it; if it wedges, retire+respawn." rc
+    ti_send "$ot" "$msg" clear; rc=$?
+    [ -n "${TI_DISCARDED:-}" ] && log "[$role] probe-blind notice cleared typed text from the orchestrator box first: [$TI_DISCARDED]"
+    [ "$rc" = 1 ] && log "[$role] probe-blind notice not seen submitted: ${TI_REFUSED:-}"
+    [ "$rc" = 2 ] || return 0
+    tmux_o send-keys -t "$ot" -l "$msg" 2>/dev/null
     tmux_o send-keys -t "$ot" Enter 2>/dev/null
   fi
 }
