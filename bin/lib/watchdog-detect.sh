@@ -91,37 +91,42 @@ VOLATILE_RE='esc to interrupt|Working|Thinking|for [0-9]+s|\([0-9]+m|\([0-9]+s|�
 # rendered plus a configured error pattern in the recent output. Else
 # "active". Needs $pattern_regex set by the caller.
 _classify_text() {
-  local visible busy idle hit
+  local visible tail15 busy idle hit
   visible="$(cat)"
+  # Every `grep -q` reads a here-string, never a pipe. The callers run under
+  # `set -o pipefail`, and in `printf | tail | grep -q` grep exits on its first
+  # match, tail can then take SIGPIPE, and pipefail turns the MATCH into a
+  # NON-MATCH: the usage dialog read as awaiting-input in 3 of 2000 calls.
+  tail15="$(printf '%s' "$visible" | tail -15)"
   busy="$(printf '%s' "$visible" | tail -25 | grep -avE "$AGENTS_PANEL_RE" | grep -ciE "$BUSY_RE")"
   if [ "$busy" -gt 0 ]; then echo "active"; return; fi
   idle="$(printf '%s' "$visible" | tail -8 | grep -c '❯' || true)"
   # stalled-usage is gated on the '❯' like stalled-api: the real dialog always
   # renders it on the selected option, and requiring it keeps the (injecting)
   # usage recovery off panes that merely scrolled matching text.
-  if [ "$idle" -gt 0 ] && printf '%s' "$visible" | tail -15 | grep -qiE "$USAGE_RE"; then echo "stalled-usage"; return; fi
-  if printf '%s' "$visible" | tail -15 | grep -qiE "$AWAIT_RE"; then echo "awaiting-input"; return; fi
+  if [ "$idle" -gt 0 ] && grep -qiE "$USAGE_RE" <<<"$tail15"; then echo "stalled-usage"; return; fi
+  if grep -qiE "$AWAIT_RE" <<<"$tail15"; then echo "awaiting-input"; return; fi
   if [ "$idle" -eq 0 ]; then echo "active"; return; fi
-  hit="$(printf '%s' "$visible" | tail -15 | grep -iE "${pattern_regex:-$^}" | head -1 || true)"
+  hit="$(grep -iE "${pattern_regex:-$^}" <<<"$tail15" | head -1 || true)"
   if [ -n "$hit" ]; then echo "stalled-api"; return; fi
   echo "active"
 }
 
 # _is_busy_text: stdin = pane text -> exit 0 if a spinner / active turn is shown
-_is_busy_text() { tail -25 | grep -avE "$AGENTS_PANEL_RE" | grep -qiE "$BUSY_RE"; }
+_is_busy_text() { local t; t="$(tail -25 | grep -avE "$AGENTS_PANEL_RE")"; grep -qiE "$BUSY_RE" <<<"$t"; }
 
 # _is_awaiting_input_text: stdin = pane text -> exit 0 iff an interactive prompt
 # is awaiting a human decision (selection menu / confirmation).
-_is_awaiting_input_text() { tail -15 | grep -qiE "$AWAIT_RE"; }
+_is_awaiting_input_text() { local t; t="$(tail -15)"; grep -qiE "$AWAIT_RE" <<<"$t"; }
 
 # _is_usage_stall_text: stdin = pane text -> exit 0 iff the usage-limit dialog
 # (or its residue) is on screen.
-_is_usage_stall_text() { tail -15 | grep -qiE "$USAGE_RE"; }
+_is_usage_stall_text() { local t; t="$(tail -15)"; grep -qiE "$USAGE_RE" <<<"$t"; }
 
 # _has_modal_dialog_text: stdin = pane text -> exit 0 iff a modal dialog is
 # open (its footer is on screen). Recovery must send Escape to dismiss the
 # modal before any typed nudge can reach the input line.
-_has_modal_dialog_text() { tail -15 | grep -qiE 'Enter to confirm|Esc to cancel'; }
+_has_modal_dialog_text() { local t; t="$(tail -15)"; grep -qiE 'Enter to confirm|Esc to cancel' <<<"$t"; }
 
 # _fingerprint_text: stdin = pane text -> stable hash of the non-volatile tail.
 # Strips the animated status chrome so the hash only changes on real progress
