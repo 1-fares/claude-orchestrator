@@ -4,6 +4,9 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TD="$(mktemp -d)"; trap 'rm -rf "$TD"' EXIT
 export TEAM_DIR="$TD" TEAM_RUN_ID=testrun NOTIFY_SINK="$TD/sink" NOTIFY_LOG="$TD/log" NOTIFY_STATE_DIR="$TD/st"
+# The sections assume every sender may push an action unless they set NOTIFY_ACTION_SOURCES
+# themselves; a value inherited from the calling environment would mute some of them.
+export NOTIFY_ACTION_SOURCES=""
 . "$repo/bin/lib/notify.sh"
 fail=0; ok() { printf '  ok   %s\n' "$1"; }; bad() { printf '  FAIL %s\n' "$1"; fail=1; }
 posts() { [ -f "$TD/sink" ] && wc -l < "$TD/sink" || echo 0; }

@@ -74,8 +74,8 @@ grep -q 'FIRE compact-stuck orchestrator' "$TD/reports/status-hook.log" 2>/dev/n
 # --- Second episode: the pane shows the near-full banner AND Claude Code's reply
 # "Not enough messages to compact". The reply is the verdict: the session is at its
 # floor and the banner is stale text. Expect CEILING-STALE and an episode reset,
-# never CEILING-STUCK, never a compact-stuck hook call. (Seven false firings on run
-# r1780489249, 2-6 Sep 2026, each after one real compaction and three refusals.)
+# never CEILING-STUCK, never a compact-stuck hook call. (Seven false firings on one
+# run, 2-6 Sep 2026, each after one real compaction and three refusals.)
 rm -f "$TD/hook-calls" "$TD/log" "$TD/lock" "$TD/pid" "$TD/reports/status-hook.log" "$TD/health/"* 2>/dev/null
 echo stale > "$TD/mode"
 PATH="$FAKEBIN:$PATH" TEAM_DIR="$TD" TEAM_RUN_ID=testrun TEAM_STATUS_HOOK="$TD/hook.sh" \
