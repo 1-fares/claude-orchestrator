@@ -141,7 +141,28 @@ fi
 #    default bus) cannot be told apart from live work, so they are REPORTED ONLY
 #    and never killed. There is intentionally no override for this.
 mapfile -t _clients < <(pgrep -f 'skills/is/bin/client.py --name' 2>/dev/null || true)
-declare -A _seen=(); signed=(); unsigned=()
+declare -A _seen=() _pump_of=(); signed=(); unsigned=(); otherrun=()
+# classify_role <claude pid> <role>: skip a live pane of THIS team session; else signed (this clone
+# AND this run), otherrun (this clone, another run: never reaped, as step 2 never signals another
+# run's daemon), or unsigned. A run is its TEAM_RUN_ID; two unset values are the same (legacy) run.
+classify_role(){ local cl="$1" role="$2" env
+  [ -n "${_seen[$cl]:-}" ] && return 0; _seen[$cl]=1
+  # A live pane of THIS team session is not an orphan.
+  if tmux has-session -t "$TEAM_SESSION" 2>/dev/null && \
+     tmux list-panes -s -t "$TEAM_SESSION" -F '#{pane_pid}' 2>/dev/null | grep -qx "$cl"; then
+    return 0
+  fi
+  env="$(tr '\0' '\n' < "/proc/$cl/environ" 2>/dev/null)"
+  if grep -qxF "ORCH_HOME=$repo" <<<"$env"; then
+    if [ "$(grep -m1 '^TEAM_RUN_ID=' <<<"$env")" = "${TEAM_RUN_ID:+TEAM_RUN_ID=$TEAM_RUN_ID}" ]; then
+      signed+=("$cl:${role:-?}")
+    else
+      otherrun+=("$cl:${role:-?}")
+    fi
+  else
+    unsigned+=("$cl:${role:-?}")
+  fi
+}
 for cp in "${_clients[@]:-}"; do
   [ -n "${cp:-}" ] || continue
   case "$(ps -o comm= -p "$cp" 2>/dev/null)" in python*) ;; *) continue ;; esac  # real client.py, not a wrapper shell
@@ -152,25 +173,39 @@ for cp in "${_clients[@]:-}"; do
     a="$pa"
   done
   [ -n "$cl" ] || continue
-  [ -n "${_seen[$cl]:-}" ] && continue; _seen[$cl]=1
-  # A live pane of THIS team session is not an orphan.
-  if tmux has-session -t "$TEAM_SESSION" 2>/dev/null && \
-     tmux list-panes -s -t "$TEAM_SESSION" -F '#{pane_pid}' 2>/dev/null | grep -qx "$cl"; then
-    continue
-  fi
   role=$(ps -o args= -p "$cp" 2>/dev/null | grep -oP '(?<=--name )\S+' | head -1)
-  if grep -qxF "ORCH_HOME=$repo" <(tr '\0' '\n' < "/proc/$cl/environ" 2>/dev/null); then
-    signed+=("$cl:${role:-?}")
-  else
-    unsigned+=("$cl:${role:-?}")
-  fi
+  classify_role "$cl" "$role"
+done
+# bin/bus-inbox.py listeners: the client runs under a PUMP started in its own
+# session and re-parented away from the claude (to init or the nearest subreaper), so the walk above never
+# reaches the role's claude. The pump's argv names it: `bus-inbox.py _pump <role> <claude pid>`. A pump
+# whose named pid is not a live claude is skipped (its client exits by itself within ~10 s of its owner).
+for _d in /proc/[0-9]*; do
+  mapfile -t _a < <(tr '\0' '\n' < "$_d/cmdline" 2>/dev/null)
+  for _i in "${!_a[@]}"; do
+    [ "${_a[$_i]}" = _pump ] && [ "$_i" -ge 1 ] || continue
+    case "${_a[$((_i-1))]}" in */bus-inbox.py|bus-inbox.py) ;; *) break ;; esac
+    role="${_a[$((_i+1))]:-}"; cl="${_a[$((_i+2))]:-}"
+    case "$cl" in ''|*[!0-9]*) break ;; esac
+    [ "$(ps -o comm= -p "$cl" 2>/dev/null)" = claude ] || break
+    _pump_of[$cl]="${_d#/proc/}"
+    classify_role "$cl" "$role"
+    break
+  done
 done
 if [ "${#signed[@]}" -gt 0 ]; then
   for o in "${signed[@]}"; do cl="${o%%:*}"; role="${o#*:}"
-    tag "reap orphaned role '$role' (this clone; claude pid $cl + tree)"
-    killtree "$cl" $(descendants "$cl"); done
+    tag "reap orphaned role '$role' (this clone; claude pid $cl + tree${_pump_of[$cl]:+; bus-inbox pump ${_pump_of[$cl]} + client})"
+    killtree "$cl" $(descendants "$cl") ${_pump_of[$cl]:+${_pump_of[$cl]} $(descendants "${_pump_of[$cl]}")}; done
 else
   echo "   no signed orphans (launched by this clone's launch-team)"
+fi
+if [ "${#otherrun[@]}" -gt 0 ]; then
+  echo "   NOTE: ${#otherrun[@]} role(s) of this clone belong to ANOTHER run (TEAM_RUN_ID is not"
+  echo "   '${TEAM_RUN_ID:-}'). cleanup never touches another run's team. Listed for awareness only:"
+  for o in "${otherrun[@]}"; do cl="${o%%:*}"; role="${o#*:}"
+    echo "        pid $cl  role '$role'  run '$(tr '\0' '\n' < "/proc/$cl/environ" 2>/dev/null | sed -n 's/^TEAM_RUN_ID=//p' | head -1)'  (LEFT RUNNING)"
+  done
 fi
 if [ "${#unsigned[@]}" -gt 0 ]; then
   echo "   NOTE: ${#unsigned[@]} other /is session(s) are running that are NOT this clone's"

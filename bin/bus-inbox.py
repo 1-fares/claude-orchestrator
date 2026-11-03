@@ -117,10 +117,28 @@ def _alive(p: P, name: str):
     return pump, client
 
 
+def _cursor_reset(p: P, size: int, cur: int, where: str) -> int:
+    """Caller holds p.lock. The inbox is SHORTER than the cursor: it was deleted or truncated from outside.
+    Left alone, every later line was skipped until the file grew past the old cursor, and then
+    read from mid-line. Reset to 0 (the file holds only lines written since) and log it
+    in <name>.pump.err, the role's bus-inbox log."""
+    p.cursor.write_text("0")
+    try:
+        with open(p.err, "a") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {where}[{os.getpid()}] cursor reset: "
+                     f"inbox is {size} bytes but the cursor was {cur} (deleted or truncated from outside); "
+                     f"reading from 0\n")
+    except OSError:
+        pass
+    return 0
+
+
 def _append(p: P, data: bytes):
     with Locked(p.lock):
         size = p.inbox.stat().st_size if p.inbox.exists() else 0
         cur = int(p.cursor.read_text() or 0) if p.cursor.exists() else 0
+        if cur > size:
+            cur = _cursor_reset(p, size, cur, "pump")
         if size > CAP and cur >= size:
             os.replace(p.inbox, str(p.inbox) + ".1")
             p.cursor.write_text("0")
@@ -338,6 +356,8 @@ def wait(name: str, max_s: float) -> int:
         with Locked(p.lock):
             cur = int(p.cursor.read_text() or 0) if p.cursor.exists() else 0
             size = p.inbox.stat().st_size if p.inbox.exists() else 0
+            if cur > size:
+                cur = _cursor_reset(p, size, cur, "reader")
             pending = size > cur
         if pending:
             t_first, last_size, t_last = time.monotonic(), size, time.monotonic()

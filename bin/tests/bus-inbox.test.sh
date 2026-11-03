@@ -167,6 +167,29 @@ send "f3c-one" >/dev/null; send "f3c-two" >/dev/null; wait $r1
   || no "F3c rc2=$rc2 dt=$dt second=$(cat "$W/f3c2") first=$(cat "$W/f3c1")"
 case "$st" in *"reader=armed"*) ok "F3d status shows reader=armed while one waits";; *) no "F3d status: $st";; esac
 
+# C: an inbox deleted or truncated from outside leaves the cursor past the new end.
+# The cursor must be reset, logged, and the next messages delivered; before, they were skipped until the
+# file grew past the old cursor, and then read from mid-line.
+cur0="$(cat "$W/inbox/$N.cursor")"
+[ "${cur0:-0}" -gt 0 ] && ok "C0 precondition: cursor at $cur0 bytes" || no "C0 cursor is ${cur0:-empty}, the rows below test nothing"
+mv -- "$W/inbox/$N.log" "$W/inbox/$N.log.gone"
+send "cur-moved-a" >/dev/null; send "cur-moved-b" >/dev/null; sleep 1
+"$PY" "$IB" wait "$N" 10 > "$W/rc1"
+[ "$(/usr/bin/grep -c 'cur-moved-' "$W/rc1")" -eq 2 ] && ! /usr/bin/grep -q HEARTBEAT "$W/rc1" \
+  && ok "C1 inbox deleted: the next 2 messages delivered" || no "C1 after delete: $(cat "$W/rc1")"
+/usr/bin/grep -q 'cursor reset' "$W/inbox/$N.pump.err" && ok "C1b the reset is logged in $N.pump.err" \
+  || no "C1b no 'cursor reset' line in $N.pump.err"
+: > "$W/inbox/$N.log"
+send "cur-trunc-c" >/dev/null; sleep 1
+"$PY" "$IB" wait "$N" 10 > "$W/rc2"
+/usr/bin/grep -q 'cur-trunc-c' "$W/rc2" && /usr/bin/grep -q '^\[inter-session msg=' "$W/rc2" \
+  && ok "C2 inbox truncated to 0: the next message delivered whole" || no "C2 after truncate: $(cat "$W/rc2")"
+# C3 the reader's own check, without the pump: a line written straight into a short inbox while the
+# cursor points far past its end (the pump's append never runs, so only the reader can reset it)
+printf '[inter-session msg=c3c3c3c3 from="peer"] cur-reader-d\n' > "$W/inbox/$N.log"; printf '999999' > "$W/inbox/$N.cursor"
+"$PY" "$IB" wait "$N" 10 > "$W/rc3"
+/usr/bin/grep -q 'cur-reader-d' "$W/rc3" && ok "C3 a cursor past a short inbox is reset by the reader too" || no "C3 $(cat "$W/rc3")"
+
 # R: SELF-RELOAD of the pump. Runs a COPY of bus-inbox.py from a scratch dir, so the test can edit it.
 # BUS_INBOX_SRC overrides the copied file (used to run these rows red-first on an old build).
 E="$W/eng"; mkdir -p "$E/bin" "$W/team"
