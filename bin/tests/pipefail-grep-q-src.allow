@@ -15,7 +15,6 @@ bin/communicator.sh	| grep -Fxq communicator; then	tmux list-*: the tmux server 
 bin/gates/link-live.sh	[ -n "$exclude" ] && echo "$u" | grep -qE "$exclude" && continue	one-line value (name/path/url/date/match/line): 1 write (measured)
 bin/launch-team.sh	printf '%s' "$role" | grep -Eq '^[a-z0-9][a-z0-9-]{0,39}$' \	one-line value (name/path/url/date/match/line): 1 write (measured)
 bin/lib/roster.sh	is_claude() { ps -p "$1" -o args= 2>/dev/null | grep -q '[c]laude'; }	ps -o args= of one pid: one line, 1 write (measured)
-bin/lib/team-dir-guard.sh	if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then	ps -o args= of one pid: one line, 1 write (measured)
 bin/lib/team-spawn.sh	&& ps -p "$_pid" -o args= 2>/dev/null | grep -q '[c]laude' \	ps -o args= of one pid: one line, 1 write (measured)
 bin/lib/team-spawn.sh	&& ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/chrome-supervisor\.sh'; then	ps -o args= of one pid: one line, 1 write (measured)
 bin/lib/team-spawn.sh	&& ps -p "$oldpid" -o args= 2>/dev/null | grep -q 'bin/disk-tmp-watchdog\.sh'; then	ps -o args= of one pid: one line, 1 write (measured)

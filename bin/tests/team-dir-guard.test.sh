@@ -35,6 +35,39 @@ tdg_is_live_run_dir "$SCRATCH/plain" && bad "wrongly flagged a plain scratch dir
 # 2) a dir with a live-claude active entry is flagged even off the .team-* name.
 mkdir -p "$SCRATCH/byactive"; printf '%s\t@0\tx\n' "$$" > "$SCRATCH/byactive/active"  # $$ is bash, not claude
 tdg_is_live_run_dir "$SCRATCH/byactive" && bad "flagged a dir whose active pid is NOT claude" || ok "is_live_run_dir: a non-claude active pid does not falsely flag"
+# 2b) the same from a script whose PATH contains "claude" (a clone in a directory named claude-orchestrator):
+#     a bash is not claude however it was started, so its args line must not decide.
+mkdir -p "$SCRATCH/claude-clone" "$SCRATCH/byclaudepath"
+printf '%s\n' '. "$1"; printf "%s\t@0\tx\n" "$$" > "$2/active"; tdg_is_live_run_dir "$2" && echo FLAGGED || echo CLEAR' > "$SCRATCH/claude-clone/row.sh"
+r="$(bash "$SCRATCH/claude-clone/row.sh" "$repo/bin/lib/team-dir-guard.sh" "$SCRATCH/byclaudepath")"
+[ "$r" = CLEAR ] && ok "is_live_run_dir: a bash started from a path containing claude does not falsely flag" || bad "flagged a bash started from a claude-named path (got '$r')"
+# 2c) positive controls: a live process named claude (comm), and one whose argv0 is claude, still flag.
+#     The comm stand-in is a copy of bash named claude run with argv0 "notclaude" (so only comm says claude);
+#     `; true` keeps bash -c from exec-ing sleep, which would rename the process.
+mkdir -p "$SCRATCH/cbin" "$SCRATCH/bycomm" "$SCRATCH/byargv0"; cp "$(command -v bash)" "$SCRATCH/cbin/claude"
+bash -c 'exec -a notclaude "$0" -c "sleep 30; true"' "$SCRATCH/cbin/claude" & P_COMM=$!
+bash -c 'exec -a claude sleep 30' & P_ARGV0=$!
+trap 'kill "$P_COMM" "$P_ARGV0" 2>/dev/null; rm -rf "$SCRATCH"' EXIT
+sleep 0.3
+printf '%s\t@0\tx\n' "$P_COMM" > "$SCRATCH/bycomm/active"; printf '%s\t@0\tx\n' "$P_ARGV0" > "$SCRATCH/byargv0/active"
+tdg_is_live_run_dir "$SCRATCH/bycomm" && ok "is_live_run_dir: a live process named claude (comm) flags" || bad "did not flag a live process named claude"
+tdg_is_live_run_dir "$SCRATCH/byargv0" && ok "is_live_run_dir: a live process with argv0 claude flags" || bad "did not flag a live process with argv0 claude"
+kill "$P_COMM" "$P_ARGV0" 2>/dev/null; wait "$P_COMM" "$P_ARGV0" 2>/dev/null
+# 2d) a native install exec'd by its real path (CLAUDE_BIN=~/.local/share/claude/versions/<v>): comm and argv0's
+#     basename are the version, so only the executable's location says claude. Both shapes flag: the versions path
+#     itself, and a non-claude-named link to it (argv0 says neither, only /proc/<pid>/exe does).
+mkdir -p "$SCRATCH/share/claude/versions" "$SCRATCH/byver" "$SCRATCH/bylink"; cp "$(command -v bash)" "$SCRATCH/share/claude/versions/9.9.9"
+ln -s "$SCRATCH/share/claude/versions/9.9.9" "$SCRATCH/cbin/runner"
+"$SCRATCH/share/claude/versions/9.9.9" -c 'sleep 30; true' & P_VER=$!
+"$SCRATCH/cbin/runner" -c 'sleep 30; true' & P_LINK=$!
+trap 'kill "$P_VER" "$P_LINK" 2>/dev/null; rm -rf "$SCRATCH"' EXIT
+sleep 0.3
+printf '%s\t@0\tx\n' "$P_VER" > "$SCRATCH/byver/active"; printf '%s\t@0\tx\n' "$P_LINK" > "$SCRATCH/bylink/active"
+tdg_is_live_run_dir "$SCRATCH/byver" && ok "is_live_run_dir: a claude exec'd by its versions path flags" || bad "did not flag a claude exec'd by its versions path (comm $(ps -o comm= -p "$P_VER"))"
+if [ -e "/proc/$P_LINK/exe" ]; then
+  tdg_is_live_run_dir "$SCRATCH/bylink" && ok "is_live_run_dir: a claude exec'd through a non-claude-named link flags (by its executable)" || bad "did not flag a claude exec'd through a link named runner"
+fi
+kill "$P_VER" "$P_LINK" 2>/dev/null; wait "$P_VER" "$P_LINK" 2>/dev/null
 
 # 3) tdg_guard_rmrf: refuses the run dir, removes the plain dir.
 tdg_guard_rmrf "$SCRATCH/fakeclone/.team-fake" 2>/dev/null && bad "guard_rmrf removed a run dir" || ok "guard_rmrf: REFUSES a .team-* run dir"

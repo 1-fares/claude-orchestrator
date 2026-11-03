@@ -28,6 +28,28 @@ _tdg_norm() {
   printf '%s' "${p%/}"
 }
 
+# True (0) if <pid> is a claude process: its name (comm) or the program it runs
+# (argv0, the executable, or argv1 under node) is `claude`, the program sits in a
+# native install's claude/versions/ directory (exec'd by its real path, comm and
+# argv0 carry only the version), or it runs the claude-code package.
+# Never a match on the whole args line: a script started from a path that merely
+# contains "claude" (a clone in a directory named claude-orchestrator) is not a claude.
+_tdg_pid_is_claude() {
+  local comm exe a0 a1 args
+  read -r comm _ < <(ps -p "$1" -o comm= 2>/dev/null)
+  [ "${comm##*/}" = claude ] && return 0
+  exe="$(readlink "/proc/$1/exe" 2>/dev/null)"
+  [ "${exe##*/}" = claude ] && return 0
+  case "$exe" in */claude/versions/*) return 0 ;; esac
+  args="$(ps -p "$1" -o args= 2>/dev/null)"
+  read -r a0 a1 _ <<<"$args"
+  [ "${a0##*/}" = claude ] && return 0
+  case "$a0" in */claude/versions/*) return 0 ;; esac
+  case "${a0##*/}" in node|nodejs) [ "${a1##*/}" = claude ] && return 0 ;; esac
+  case "$args" in */@anthropic-ai/claude-code/*) return 0 ;; esac
+  return 1
+}
+
 # True (0) if <path> is, or is inside, a team run dir: a path whose basename is
 # `.team` or `.team-<something>` AND that sits directly under an orchestrator clone
 # (the parent holds bin/team-env.sh) — OR a path that carries a live team's state
@@ -55,7 +77,7 @@ tdg_is_live_run_dir() {
     local pid _w _r
     while IFS=$'\t' read -r pid _w _r || [ -n "${pid:-}" ]; do
       [ -n "${pid:-}" ] || continue
-      if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then
+      if kill -0 "$pid" 2>/dev/null && _tdg_pid_is_claude "$pid"; then
         return 0
       fi
     done < "$norm/active"
