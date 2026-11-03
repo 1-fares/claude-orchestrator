@@ -68,16 +68,16 @@ owned_by_this_run() {
   local pid="$1" env
   [ -n "${pid:-}" ] && [ -r "/proc/$pid/environ" ] || return 1
   env="$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null)" || return 1
-  printf '%s\n' "$env" | grep -qxF "ORCH_HOME=$repo" || return 1
+  grep -qxF "ORCH_HOME=$repo" <<<"$env" || return 1
   # The strong per-run discriminator is TEAM_RUN_ID (unique per run, exported into
   # every role by start_one). Prefer it: two runs that accidentally share a bus
   # port (a manual INTER_SESSION_PORT override) still differ by run id. Fall back
   # to the bus port only in legacy single-team mode (no TEAM_RUN_ID), where there
   # is one team per clone anyway.
   if [ -n "${TEAM_RUN_ID:-}" ]; then
-    printf '%s\n' "$env" | grep -qxF "TEAM_RUN_ID=$TEAM_RUN_ID" || return 1
+    grep -qxF "TEAM_RUN_ID=$TEAM_RUN_ID" <<<"$env" || return 1
   else
-    printf '%s\n' "$env" | grep -qxF "INTER_SESSION_PORT=$TEAM_PORT" || return 1
+    grep -qxF "INTER_SESSION_PORT=$TEAM_PORT" <<<"$env" || return 1
   fi
   return 0
 }

@@ -102,18 +102,18 @@ fi
 SPIN_RE='esc to interrupt|…[[:space:]]*\(|↓[[:space:]]*[0-9.]+[kKmM]?[[:space:]]*tokens|Working…|Thinking…'
 spin_zone="$(printf '%s\n' "$pane" | tail -15)"
 
-if printf '%s\n' "$pane" | grep -Eq '(^|[^a-zA-Z])Task\('; then
+if grep -Eq '(^|[^a-zA-Z])Task\(' <<<"$pane"; then
   # Bare Task( invocation visible in scroll; no parseable count.
   # Only promote to delegating if no active spinner is also present, since a
   # spinner means the role is processing the result, not waiting on a subagent.
-  if ! printf '%s\n' "$spin_zone" | grep -Eq "$SPIN_RE"; then
+  if ! grep -Eq "$SPIN_RE" <<<"$spin_zone"; then
     echo "delegating"
     exit 0
   fi
 fi
 
 # Busy spinner: any of Claude Code's processing indicators.
-if printf '%s\n' "$spin_zone" | grep -Eq "$SPIN_RE"; then
+if grep -Eq "$SPIN_RE" <<<"$spin_zone"; then
   echo "working"
   exit 0
 fi

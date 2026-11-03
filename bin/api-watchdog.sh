@@ -409,7 +409,7 @@ escalate_stuck() {
 escalate_apistall() {
   local name="$1" nretries="$2" errline="$3" hint=""
   [ "$name" = "orchestrator" ] && return 0
-  if printf '%s' "$errline" | grep -qi 'content filter'; then
+  if grep -qi 'content filter' <<<"$errline"; then
     hint=" This looks like a content-filter block; a plain retry rarely clears it. Ladder: split the unit into smaller chunks, delegate the blocked passage to a sub-agent writing directly to the file, or retire+respawn the owner if its context is filter-poisoned."
   fi
   tmux_submit "$TEAM_SESSION:orchestrator" "[watchdog] role '$name' has stalled on the same API error $nretries times within one episode and auto-retry is exhausted (error line in $TEAM_DIR/audit/api-watchdog/$name.log).${hint} Intervene: re-brief it around the error, re-route the unit, or retire+respawn."
@@ -853,7 +853,7 @@ canary() {
   # Every live Claude Code pane shows the input prompt glyph or the busy
   # 'esc to interrupt' marker or the permission-mode footer. None of them = the
   # chrome the detectors parse has changed.
-  if printf '%s' "$txt" | grep -qE '❯|esc to interrupt|bypass permissions'; then
+  if grep -qE '❯|esc to interrupt|bypass permissions' <<<"$txt"; then
     echo "api-watchdog canary: pane readable, Claude Code chrome recognised (ok)"
   else
     echo "api-watchdog CANARY-WARN: pane readable but no recognised Claude Code chrome (UI format may have changed)"

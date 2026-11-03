@@ -86,9 +86,9 @@ until_autocompact_pct() {
 
 _ceiling_state() {
   local t; t="$(cat | _chrome_lines)"
-  if printf '%s' "$t" | grep -qiE 'compaction failed|could not be reduced below'; then echo compact-failed; return; fi
-  if printf '%s' "$t" | grep -qiE 'context limit reached'; then echo limit; return; fi
-  if printf '%s' "$t" | grep -qiE 'context is [0-9]+% full|autocompact will trigger'; then
+  if grep -qiE 'compaction failed|could not be reduced below' <<<"$t"; then echo compact-failed; return; fi
+  if grep -qiE 'context limit reached' <<<"$t"; then echo limit; return; fi
+  if grep -qiE 'context is [0-9]+% full|autocompact will trigger' <<<"$t"; then
     # The banner is also part of the /context render that probe_pct injects, and it
     # stays on the pane after the compaction it asked for has happened. Measured on
     # run r1780489249, 2-6 Sep 2026: all seven CEILING-STUCK firings read this banner
@@ -96,7 +96,7 @@ _ceiling_state() {
     # already landed (180k -> 28k tokens) and the next three were refused with "Not
     # enough messages to compact". With a render signature present the banner is the
     # render's, and the number that counts is parse_context_pct on the same text.
-    if printf '%s' "$t" | _context_render_present; then echo ''; return; fi
+    if _context_render_present <<<"$t"; then echo ''; return; fi
     echo warn; return
   fi
   echo ''

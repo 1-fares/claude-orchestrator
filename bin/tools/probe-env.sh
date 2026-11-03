@@ -21,7 +21,7 @@ if [ -f package.json ]; then
   [ -f yarn.lock ] && { pm="yarn"; run="yarn"; }
   scripts=""
   have jq && scripts="$(jq -r '.scripts // {} | keys[]' package.json 2>/dev/null)"
-  has() { printf '%s\n' "$scripts" | grep -qx "$1"; }
+  has() { grep -qx "$1" <<<"$scripts"; }
   has build && build="$run build"
   if has test; then test="$pm test"; fi
   has lint && lint="$run lint"

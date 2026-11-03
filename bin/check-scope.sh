@@ -136,8 +136,7 @@ fi
 # the trailer path would find commits=0 and the gate would scan nothing (g3b).
 # Fail loudly rather than silently fall through to greenfield.
 if [ -z "$base" ] \
-   && git log --format='%B' HEAD 2>/dev/null \
-        | grep -Eqi "^Unit:[[:space:]]*${unit}[[:space:]]*$"; then
+   && grep -Eqi "^Unit:[[:space:]]*${unit}[[:space:]]*$" <<<"$(git log --format='%B' HEAD 2>/dev/null)"; then
   echo "check-scope: no baseline for '$unit' (looked for $basefile), yet HEAD carries" >&2
   echo "  commits marked 'Unit: $unit'. Without a baseline the commit range cannot be" >&2
   echo "  bounded and the gate would inspect nothing. Run bin/unit-start.sh for '$unit'" >&2
@@ -201,13 +200,11 @@ fi
 
 trailer_used=0
 if [ -n "$base" ] \
-   && git log --format='%B' "$base..HEAD" 2>/dev/null \
-        | grep -Eqi '^Unit:[[:space:]]*[A-Za-z0-9][A-Za-z0-9_-]*[[:space:]]*$'; then
+   && grep -Eqi '^Unit:[[:space:]]*[A-Za-z0-9][A-Za-z0-9_-]*[[:space:]]*$' <<<"$(git log --format='%B' "$base..HEAD" 2>/dev/null)"; then
   marked_range=1
   trailer_used=1
   for c in $(git rev-list --no-merges "$base..HEAD" 2>/dev/null); do
-    git show -s --format='%B' "$c" \
-      | grep -Eqi "^Unit:[[:space:]]*${unit}[[:space:]]*$" || continue
+    grep -Eqi "^Unit:[[:space:]]*${unit}[[:space:]]*$" <<<"$(git show -s --format='%B' "$c")" || continue
     add_commit_files "$c"
   done
 fi

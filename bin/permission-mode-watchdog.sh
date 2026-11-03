@@ -130,8 +130,8 @@ pane_mode() {
     | sed -E 's/^⏵⏵ //; s/ on$//'
 }
 
-has_menu()       { printf '%s' "$1" | grep -qE "$AWAIT_RE"; }
-has_classifier() { printf '%s' "$1" | grep -qE "$CLASSIFIER_RE"; }
+has_menu()       { grep -qE "$AWAIT_RE" <<<"$1"; }
+has_classifier() { grep -qE "$CLASSIFIER_RE" <<<"$1"; }
 
 push_ntfy() {
   [ -n "${NTFY_URL:-}" ] || return 0
