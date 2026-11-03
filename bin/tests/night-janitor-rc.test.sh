@@ -20,10 +20,10 @@ bad(){ fail=$((fail+1)); printf '  FAIL %s\n' "$1"; }
 # jan <run-id|-> <args...>: run the sandbox janitor; "-" leaves TEAM_RUN_ID unset (disk resolution).
 jan(){ local r="$1"; shift
   if [ "$r" = - ]; then
-    env -u TEAM_RUN_ID -u TEAM_DIR -u TEAM_DIR_ALLOW_OVERRIDE -u NJ_BUS_DIR \
+    env -u TEAM_RUN_ID -u TEAM_DIR -u TEAM_DIR_ALLOW_OVERRIDE -u NJ_BUS_DIR -u NJ_DOCKER_BUILDER_PRUNE \
       HOME="$SB/home" GH_ATTACHMENTS_DIR="$SB/attach" TEAM_TMUX="ttnj$$" bash "$R/bin/night-janitor.sh" "$@" >"$SB/out" 2>&1
   else
-    env -u TEAM_DIR -u TEAM_DIR_ALLOW_OVERRIDE -u NJ_BUS_DIR TEAM_RUN_ID="$r" \
+    env -u TEAM_DIR -u TEAM_DIR_ALLOW_OVERRIDE -u NJ_BUS_DIR -u NJ_DOCKER_BUILDER_PRUNE TEAM_RUN_ID="$r" \
       HOME="$SB/home" GH_ATTACHMENTS_DIR="$SB/attach" TEAM_TMUX="ttnj$$" bash "$R/bin/night-janitor.sh" "$@" >"$SB/out" 2>&1
   fi
 }
