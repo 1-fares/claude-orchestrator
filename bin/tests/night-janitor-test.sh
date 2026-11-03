@@ -60,11 +60,11 @@ check "apply: old spill bundled" "$([ -n "$(ls "$bus"/spill-archive/*.tar.gz 2>/
 check "apply: old spill removed" "$([ ! -f "$bus/spill/old-spill" ]; echo $?)"
 check "apply: fresh spill kept" "$([ -f "$bus/spill/new-spill" ]; echo $?)"
 check "apply: messages.log truncated to keep-lines" "$([ "$(wc -l < "$bus/messages.log")" -eq 5 ]; echo $?)"
-check "apply: messages.log archive holds full copy" "$(zcat "$bus"/spill-archive/messages-*.log.gz | grep -q '"msg":1}'; echo $?)"
+check "apply: messages.log archive holds full copy" "$({ _pgq="$(zcat "$bus"/spill-archive/messages-*.log.gz)" && grep -q '"msg":1}' <<<"$_pgq"; }; echo $?)"
 check "apply: janitor.log written" "$([ -s "$TEAM_DIR/janitor.log" ]; echo $?)"
 
 # spill archive content check
-check "apply: spill archive holds old content" "$(tar -xzOf "$bus"/spill-archive/[0-9]*.tar.gz 2>/dev/null | grep -q oldspill; echo $?)"
+check "apply: spill archive holds old content" "$({ _pgq="$(tar -xzOf "$bus"/spill-archive/[0-9]*.tar.gz 2>/dev/null)" && grep -q oldspill <<<"$_pgq"; }; echo $?)"
 
 echo
 echo "night-janitor: $pass passed, $fail failed"

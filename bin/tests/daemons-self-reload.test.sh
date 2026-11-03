@@ -23,7 +23,7 @@ for f in api-watchdog compaction-watchdog observer permission-mode-watchdog tmux
   init_block="$(sed -n '/self_reload_init "\$0"/,/[^\\]$/p' "$p")"
   while read -r lib; do
     case "$lib" in */self-reload.sh) continue;; esac
-    printf '%s' "$init_block" | grep -qF "$lib" || miss="$miss untracked:${lib##*/}"
+    grep -qF "$lib" <<<"$init_block" || miss="$miss untracked:${lib##*/}"
   done < <(grep -oE '^\. "\$repo/[^"]+"' "$p" | sed -E 's/^\. "\$repo\///; s/"$//')
   if [ -z "$miss" ]; then printf '  ok   %s\n' "$f"; else printf '  FAIL %s:%s\n' "$f" "$miss"; fail=1; fi
 done

@@ -127,7 +127,7 @@ show_shaped() {
   printf 'commit 0123456789abcdef0123456789abcdef01234567\nAuthor: x <x@example.com>\n\n    %s\n\ndiff --git a/f.sh b/f.sh\n--- a/f.sh\n+++ b/f.sh\n+echo hello\n' "$1"
 }
 out="$(show_shaped 'engine: upstreamed from the acmecorp fork' | PRIVACY_DENY_FILE="$DENY" bash "$SCAN" 2>&1)"; rc=$?
-if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'commit message'; then
+if [ "$rc" -eq 1 ] && grep -q 'commit message' <<<"$out"; then
   echo "  ok       PLANTED POSITIVE: a deny-list name in a commit message is blocked"
 else
   echo "  FAIL     a commit message carrying a private name passed (exit $rc) -- $out"
@@ -175,7 +175,7 @@ cp "$SCAN" "$tree_repo/bin/privacy-scan.sh"
 ) >/dev/null 2>&1
 
 out="$(cd "$tree_repo" && PRIVACY_DENY_FILE="$NO_DENY" bash bin/privacy-scan.sh --tree 2>&1)"; rc=$?
-if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'i-0123456789abcdef0'; then
+if [ "$rc" -eq 1 ] && grep -q 'i-0123456789abcdef0' <<<"$out"; then
   echo "  ok       PLANTED POSITIVE: --tree finds data that is already committed"
 else
   echo "  FAIL     --tree missed an already-committed resource id (exit $rc) -- $out"
@@ -254,7 +254,7 @@ else
 fi
 
 out="$(printf 'diff --git a/f.sh b/f.sh\n--- a/f.sh\n+++ b/f.sh\n+TARGET=i-0123456789abcdef0\n' | PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
-if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q '^  f.sh:'; then
+if [ "$rc" -eq 1 ] && grep -q '^  f.sh:' <<<"$out"; then
   echo "  ok       CONTROL: a real --- / +++ pair still attributes to its file"
 else
   echo "  FAIL     a real header pair stopped attributing (exit $rc) -- $out"

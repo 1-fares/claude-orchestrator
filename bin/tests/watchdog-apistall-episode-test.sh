@@ -105,9 +105,9 @@ grep -q "GIVE-UP after 2 retries" "$af" 2>/dev/null \
 sleep 1
 # tr -d '\n' before grepping: the pane hard-wraps long messages mid-word.
 otxt="$($TM capture-pane -t "$TEAM_SESSION:orchestrator" -p 2>/dev/null | tr -d '\n')"
-printf '%s' "$otxt" | grep -q "stalled on the same API error" \
+grep -q "stalled on the same API error" <<<"$otxt" \
   && ok "orchestrator pane received the escalation" || bad "orchestrator pane missing escalation text"
-printf '%s' "$otxt" | grep -q "content-filter block" \
+grep -q "content-filter block" <<<"$otxt" \
   && ok "escalation carries the content-filter ladder hint" || bad "content-filter hint missing"
 
 echo "step 5: still stalled -> give-up holds, no repeat escalation"
@@ -149,7 +149,7 @@ grep -q "USAGE-WAKE sent to orchestrator" "$TEAM_DIR/audit/api-watchdog/usagerol
   && ok "audit records the wake" || bad "audit missing USAGE-WAKE line"
 sleep 1
 otxt="$($TM capture-pane -t "$TEAM_SESSION:orchestrator" -p 2>/dev/null | tr -d '\n')"
-printf '%s' "$otxt" | grep -q "usage outage may be over" \
+grep -q "usage outage may be over" <<<"$otxt" \
   && ok "orchestrator pane received the wake nudge" || bad "orchestrator pane missing wake text"
 
 echo

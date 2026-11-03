@@ -96,9 +96,9 @@ render_and_limit() { render_banner; hard_limit; }
 # Source, diff and grep output that QUOTE the ceiling strings are not chrome. A
 # session viewing this very file put them on its pane; the watchdog answered with
 # /clear + rebrief on a healthy orchestrator (2026-09-07 08:16 CEST).
-source_view() { printf '%s\n' "    63→  if printf '%s' \"\$t\" | grep -qiE 'compaction failed|could not be reduced below'; then echo compact-failed; return; fi"; }
-grep_result() { printf '%s\n' "bin/lib/compaction-detect.sh:64:  if printf '%s' \"\$t\" | grep -qiE 'context limit reached'; then echo limit; return; fi"; }
-diff_view()   { printf '%s\n' "+  if printf '%s' \"\$t\" | grep -qiE 'context is [0-9]+% full|autocompact will trigger'; then"; }
+source_view() { printf '%s\n' "    63→  if printf '%s' \"\$t\" | grep -qiE 'compaction failed|could not be reduced below'; then echo compact-failed; return; fi"; }  # pgq: not a pipe (fixture text)
+grep_result() { printf '%s\n' "bin/lib/compaction-detect.sh:64:  if printf '%s' \"\$t\" | grep -qiE 'context limit reached'; then echo limit; return; fi"; }  # pgq: not a pipe (fixture text)
+diff_view()   { printf '%s\n' "+  if printf '%s' \"\$t\" | grep -qiE 'context is [0-9]+% full|autocompact will trigger'; then"; }  # pgq: not a pipe (fixture text)
 fixture_view() { printf '%s\n' "compact_fail() { printf '%s\\n' '⎿  Error: Compaction failed · conversation could not be reduced below the context limit'; }"; }
 
 echo "_ceiling_state (busy-agnostic ceiling guard):"

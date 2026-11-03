@@ -45,12 +45,12 @@ tdg_guard_rmrf "$SCRATCH/plain" 2>/dev/null && ok "guard_rmrf: removes a plain s
 # 4) team-env refuses to silently override a conflicting pre-set TEAM_DIR. Use a
 #    FAKE non-live run id so the canonical path is a scratch (never the live run).
 out="$(TEAM_RUN_ID="potest-$$" TEAM_DIR="$SCRATCH/preset" bash -c '. '"$repo"'/bin/team-env.sh 2>/dev/null; echo "RC=$?"; echo "TD=$TEAM_DIR"')"
-echo "$out" | grep -q 'RC=1' && ok "team-env: returns non-zero on a conflicting pre-set TEAM_DIR" || { bad "team-env did not fail"; echo "$out"; }
-echo "$out" | grep -q "TD=$SCRATCH/preset" && ok "team-env: leaves TEAM_DIR as pre-set (does NOT move it to the canonical/live run)" || { bad "team-env moved TEAM_DIR"; echo "$out"; }
+grep -q 'RC=1' <<<"$out" && ok "team-env: returns non-zero on a conflicting pre-set TEAM_DIR" || { bad "team-env did not fail"; echo "$out"; }
+grep -q "TD=$SCRATCH/preset" <<<"$out" && ok "team-env: leaves TEAM_DIR as pre-set (does NOT move it to the canonical/live run)" || { bad "team-env moved TEAM_DIR"; echo "$out"; }
 
 # 5) TEAM_DIR_ALLOW_OVERRIDE=1 honors the explicit dir (rc 0, TEAM_DIR unchanged).
 out2="$(TEAM_RUN_ID="potest-$$" TEAM_DIR="$SCRATCH/preset" TEAM_DIR_ALLOW_OVERRIDE=1 bash -c '. '"$repo"'/bin/team-env.sh 2>/dev/null; echo "RC=$?"; echo "TD=$TEAM_DIR"')"
-echo "$out2" | grep -q 'RC=0' && echo "$out2" | grep -q "TD=$SCRATCH/preset" && ok "team-env: ALLOW_OVERRIDE honors the explicit dir" || { bad "ALLOW_OVERRIDE wrong"; echo "$out2"; }
+grep -q 'RC=0' <<<"$out2" && grep -q "TD=$SCRATCH/preset" <<<"$out2" && ok "team-env: ALLOW_OVERRIDE honors the explicit dir" || { bad "ALLOW_OVERRIDE wrong"; echo "$out2"; }
 
 # 6) tdg_assert_scratch_team_dir: passes for a temp dir, aborts (subshell exit 1) for a run dir.
 ( TEAM_DIR="$SCRATCH/plainok"; mkdir -p "$TEAM_DIR"; . "$repo/bin/lib/team-dir-guard.sh"; tdg_assert_scratch_team_dir ) 2>/dev/null \

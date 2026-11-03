@@ -26,8 +26,8 @@ await_pane=$'● Bash(rm -r build)\n  Do you want to proceed?\n ❯ 1. Yes\n   2
 busy_pane=$'● Reading the logs.\n· Working… (12s · esc to interrupt)\n❯ '
 
 # Positive control: the shim really makes `tail | grep -q` lose its match.
-if printf 'x\n' | tail -1 | grep -q x; then bad "control: the tail shim did not break a piped grep -q (the test would prove nothing)"
-else ok "control: under the shim, printf | tail | grep -q loses its match"; fi
+if printf 'x\n' | tail -1 | grep -q x; then bad "control: the tail shim did not break a piped grep -q (the test would prove nothing)"  # pgq: not a pipe (the control needs it)
+else ok "control: under the shim, printf | tail | grep -q loses its match"; fi  # pgq: not a pipe (message text)
 
 s="$(printf '%s' "$usage_pane" | _classify_text)"
 [ "$s" = stalled-usage ] && ok "usage dialog classifies stalled-usage" || bad "usage dialog classified '$s' (want stalled-usage)"

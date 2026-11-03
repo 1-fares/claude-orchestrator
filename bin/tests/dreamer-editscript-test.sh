@@ -202,8 +202,8 @@ body
 EOF
 
 il="$(dream_index_line "$bank/new-ref.md")"
-check "index-line: type prefix" "$(printf '%s' "$il" | grep -q '^reference	'; echo $?)"
-check "index-line: markdown link + desc" "$(printf '%s' "$il" | grep -qF -- '- [new-ref](new-ref.md) — a fresh reference fact'; echo $?)"
+check "index-line: type prefix" "$(grep -q '^reference	' <<<"$il"; echo $?)"
+check "index-line: markdown link + desc" "$(grep -qF -- '- [new-ref](new-ref.md) — a fresh reference fact' <<<"$il"; echo $?)"
 
 dream_append_index "$bank/MEMORY.md" "$bank/new-ref.md" "$bank/proj-x.md" "$bank/feedback_existing.md" > "$tmp/mem.new"
 check "append: new-ref indexed under reference section" "$(awk '/^## reference/{r=1;next} /^## /{r=0} r && /\(new-ref.md\)/{f=1} END{exit !f}' "$tmp/mem.new"; echo $?)"

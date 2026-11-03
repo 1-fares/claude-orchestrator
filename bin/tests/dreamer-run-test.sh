@@ -157,7 +157,7 @@ check "apply: digest has day 2" "$(grep -q '^## 2026-07-02' "$TEAM_DIR/observer/
 check "apply: history keeps fresh entry" "$(grep -q 'fresh entry stays' "$TEAM_DIR/observer/history.md"; echo $?)"
 check "apply: history dropped old entries" "$(! grep -q 'body a' "$TEAM_DIR/observer/history.md"; echo $?)"
 arch="$(ls -1 "$TEAM_DIR"/dreams/archive/*/observer-history.*.md.gz 2>/dev/null | head -1)"
-check "apply: raw old entries archived (gz)" "$([ -n "$arch" ] && zcat "$arch" | grep -q 'body a'; echo $?)"
+check "apply: raw old entries archived (gz)" "$([ -n "$arch" ] && { _pgq="$(zcat "$arch")" && grep -q 'body a' <<<"$_pgq"; }; echo $?)"
 check "apply: state.md collapsed" "$(grep -q 'claim A terminal' "$TEAM_DIR/state.md"; echo $?)"
 check "apply: state.md fresh section kept" "$(grep -q 'fresh unit' "$TEAM_DIR/state.md"; echo $?)"
 check "apply: originals in state-archive.md" "$(grep -q 'long derivation text' "$TEAM_DIR/state-archive.md"; echo $?)"

@@ -1,0 +1,2 @@
+# pipefail-grep-q.allow -- read by bin/tests/pipefail-grep-q-ratchet.test.sh.
+# One bin/tests file name per line that may still pipe into grep -q under pipefail. Empty: every test is fixed.
