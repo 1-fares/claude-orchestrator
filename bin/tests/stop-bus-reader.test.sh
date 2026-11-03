@@ -42,9 +42,12 @@ DCC="$(detached cc sleep 600)"; pids="$pids $DCC"
 printf 'import time\ntime.sleep(600)\n' > "$W/fk/claude-shape.py"
 PCC="$(detached p python3 "$W/fk/claude-shape.py" -p --model x)"; pids="$pids $PCC"
 # NESTED: a process under a fake claude (argv0 named claude)
-ln -s "$(command -v python3)" "$W/fk/claude"
-"$W/fk/claude" -c 'import subprocess,sys,time; p=subprocess.Popen(["sleep","600"]); open(sys.argv[1],"w").write(str(p.pid)); time.sleep(600)' "$W/nested.pid" >/dev/null 2>&1 & FCL=$!; pids="$pids $FCL"
-sleep 0.5; NCC="$(cat "$W/nested.pid")"; pids="$pids $NCC"
+# the REAL interpreter: with a python3 shim earlier on PATH (pyenv, a test harness), a claude linked to the shim
+# runs as the shim's interpreter, not as claude, and the nested row passes only when a real claude sits above the suite
+ln -s "$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))')" "$W/fk/claude"
+"$W/fk/claude" -c 'import os,subprocess,sys,time; p=subprocess.Popen(["sleep","600"]); open(sys.argv[1]+".tmp","w").write(str(p.pid)); os.rename(sys.argv[1]+".tmp",sys.argv[1]); time.sleep(600)' "$W/nested.pid" >/dev/null 2>&1 & FCL=$!; pids="$pids $FCL"
+for _ in $(seq 100); do [ -s "$W/nested.pid" ] && break; sleep 0.1; done
+NCC="$(cat "$W/nested.pid" 2>/dev/null)"; pids="$pids $NCC"
 sleep 0.5
 
 # run_hook <stdin-json> [VAR=val ...]: stdout to $W/out, rc to $rc, duration to $dt
@@ -97,7 +100,13 @@ run_hook '{}' STOP_BUS_READER_CC_PID=999999999 TMUX_PANE=%1 FAKE_TMUX_OUT="orch-
 
 echo "== 6. the window fallback names the role only for the role's own claude =="
 fx="$(tr '\0' ' ' < "/proc/$DCC/cmdline")"; ppid_d="$(awk '{print $4}' "/proc/$DCC/stat")"
-[ "$ppid_d" != "$$" ] && ok "fixture: the detached stand-in is not this suite's child (ppid $ppid_d)" || no "fixture: detached cc still a child"
+# detached: it leads its own session and no claude is above it. Its parent is init, or the nearest child
+# subreaper (systemd --user, a container init, WSL's per-session /init, this suite's shell), so ppid is not checked.
+anc_d=""; a_d="$DCC"; for _ in $(seq 1 64); do a_d="$(awk '/^PPid:/ {print $2}' "/proc/$a_d/status" 2>/dev/null)"
+  case "$a_d" in ''|0) break ;; esac; anc_d="$anc_d $a_d:$(ps -o comm= -p "$a_d" 2>/dev/null)"; done
+[ "$(ps -o sid= -p "$DCC" | tr -d ' ')" = "$DCC" ] && ! /usr/bin/grep -qE ':claude( |$)' <<<"$anc_d" \
+  && ok "fixture: the detached stand-in is detached (own session, no claude above it; ppid $ppid_d)" \
+  || no "fixture: detached cc not detached (sid $(ps -o sid= -p "$DCC" | tr -d ' '), ancestors:$anc_d)"
 W6=(TMUX_PANE=%1 FAKE_TMUX_OUT="orch-test rolex")
 run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
 [ "$rc" = 0 ] && [ ! -s "$W/out" ] && ok "listener ALIVE for another claude, this one named only by the window: allowed" || no "rc=$rc out=$(cat "$W/out")"
@@ -109,6 +118,9 @@ run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
   && ok "the reason gives start, then arm" || no "reason: $(cat "$W/out")"
 run_hook '{}' STOP_BUS_READER_CC_PID="$PCC" "${W6[@]}"
 [ "$rc" = 0 ] && [ ! -s "$W/out" ] && ok "a claude -p --model (llm-judge.sh shape) in the role's pane: allowed" || no "rc=$rc out=$(cat "$W/out")"
+fk0="$(tr '\0' '\n' < "/proc/$FCL/cmdline" 2>/dev/null | head -1)"
+[ -n "$NCC" ] && [ "${fk0##*/}" = claude ] && ok "fixture: the nested stand-in's parent runs as claude ($fk0)" \
+  || no "fixture: nested pid '${NCC}', parent argv0 '$fk0' (not claude: the row below would pass only by a claude above the suite)"
 run_hook '{}' STOP_BUS_READER_CC_PID="$NCC" "${W6[@]}"
 [ "$rc" = 0 ] && [ ! -s "$W/out" ] && ok "a claude nested under another claude: allowed" || no "rc=$rc out=$(cat "$W/out")"
 run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}" FAKE_TMUX_PANES='0 %0\n1 %1'
