@@ -263,6 +263,19 @@ kill "$CC"; for i in $(seq 1 20); do [ -z "$(procs_for "$N")" ] && break; sleep 
   && ok "T9 CC gone -> pump+client exited within ${i}s, $N off the bus, 0 orphans" || no "T9 left: $(procs_for "$N")"
 "$PY" "$IB" status "$N" >/dev/null; rc=$?; [ $rc -eq 2 ] && ok "T9b status after death: rc 2" || no "T9b rc=$rc"
 
+# T13 _cc_pid finds the native build when argv[0] and the process name are the version string: only
+#   the executable path (<dir>/claude/versions/<version>) shows that it is Claude Code. A copy of bash
+#   at such a path stands in for it; before, the walk went past it to the next ancestor.
+mkdir -p "$W/nat/claude/versions"; cp "$(command -v bash)" "$W/nat/claude/versions/2.9.9"
+out="$( (exec -a 2.9.9 "$W/nat/claude/versions/2.9.9" -c 'echo "self=$$"; "$1" - "$2" <<"PYEOF"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ib", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m); print("cc=%d" % m._cc_pid())
+PYEOF
+:' _ "$PY" "$IB") 2>&1)"
+self="$(sed -n 's/^self=//p' <<<"$out")"; cc="$(sed -n 's/^cc=//p' <<<"$out")"
+[ -n "$self" ] && [ "$cc" = "$self" ] && ok "T13 native build seen by its executable path (pid $cc)" || no "T13 self=$self cc=$cc: $out"
+
 # T12 live bus untouched
 LIVE="$HOME/.claude/data/inter-session/messages.log"
 [ ! -f "$LIVE" ] || ! /usr/bin/grep -q "ibx-" "$LIVE" && ok "T12 live messages.log holds no ibx- row" || no "T12 live bus touched"

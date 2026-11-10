@@ -69,10 +69,10 @@ t=$(date +%s); out="$(BUS_SEND_RETRY_S=20 send bsr self 2>&1)"; rc=$?; dt=$(( $(
 [ $rc -eq 1 ] && [ $dt -le 5 ] && ok "5 non-absent refusal not retried: rc 1 in ${dt}s ($(printf '%s' "$out" | tail -1 | cut -c1-50))" \
   || no "5 rc=$rc dt=$dt: $out"
 
-# 7 a successful send returns once the bus has handled it, not after the fallback wait (_ACK_S): a `list`
-#   follows the send on the same connection and its list_ok confirms the send (the server handles frames
+# 7 a successful send returns once the bus has handled it, not after the fallback wait (_ACK_S): a `ping`
+#   follows the send on the same connection and its pong confirms the send (the server handles frames
 #   in order and acknowledges nothing else). The fallback is raised to 30 s in-process, so a send that
-#   waited for it takes 30 s and one confirmed by list_ok returns long before; the 15 s bound leaves room
+#   waited for it takes 30 s and one confirmed by the pong returns long before; the 15 s bound leaves room
 #   for a loaded host. (A wall-clock bound of 1500 ms on the normal 2 s fallback failed under load.)
 t=$(date +%s); out="$(BUS_SEND_RETRY_S=0 INTER_SESSION_NO_REEXEC=1 PYTHONDONTWRITEBYTECODE=1 timeout 60 "$VPY" - "$BS" "$SINK" "timing-probe-$$" 2>&1 <<'PYEOF'
 import importlib.util, sys
@@ -85,7 +85,7 @@ PYEOF
 )"; rc=$?; dt=$(( $(date +%s) - t ))
 for i in $(seq 1 20); do grep -q "timing-probe-$$" "$W/sink.out" 2>/dev/null && break; sleep 0.1; done
 [ $rc -eq 0 ] && [ $dt -lt 15 ] && grep -q "timing-probe-$$" "$W/sink.out" \
-  && ok "7 success confirmed in ${dt}s with a 30 s fallback (list_ok, not the fallback), and delivered" || no "7 rc=$rc ${dt}s: $out"
+  && ok "7 success confirmed in ${dt}s with a 30 s fallback (pong, not the fallback), and delivered" || no "7 rc=$rc ${dt}s: $out"
 
 # 8 no port: refused with exit 2 and nothing sent, also with TEAM_RUN_ID set (it does not name the
 #   port); the skill's default port is not a team bus. --port names the bus explicitly.
@@ -99,9 +99,10 @@ for i in $(seq 1 20); do /usr/bin/grep -q "viaport-$$" "$W/sink.out" 2>/dev/null
 [ $rc -eq 0 ] && /usr/bin/grep -q "viaport-$$" "$W/sink.out" && ok "8 --port: sent and delivered" || no "8 --port rc=$rc: $out"
 
 # 9 a bus that accepts and never answers is bounded. A stand-in server with its own data dir, token,
-#   port and pidfile (at <dir>/bin/server.py, so the identity check passes) in three modes: tcp (accepts,
+#   port and pidfile (at <dir>/bin/server.py, so the identity check passes) in four modes: tcp (accepts,
 #   never speaks: the handshake hangs), ws (handshake done, no welcome: the welcome recv hung forever),
-#   close (handshake, then hangs up). Each must end in rc 1 with ONE stderr line and no traceback.
+#   close (handshake, then hangs up), mute (welcome, then no answer to the send or to the `ping` behind
+#   it: this was reported as sent). Each must end in rc 1 with ONE stderr line and no traceback.
 FAKE=""; trap 'kill "$FAKE" 2>/dev/null; cleanup' EXIT
 mkdir -p "$W/fake/bin" "$W/fdata"; printf 'fake-token-%s\n' "$$" > "$W/fdata/token"
 cat > "$W/fake/bin/server.py" <<'PYEOF'
@@ -116,14 +117,16 @@ import websockets
 async def handler(ws, *a):
     if mode == "close":
         await ws.close(); return
+    if mode == "mute":
+        await ws.recv(); await ws.send('{"op": "welcome"}')
     await asyncio.sleep(3600)
 async def main():
     async with websockets.serve(handler, "127.0.0.1", port):
         await asyncio.Future()
 asyncio.run(main())
 PYEOF
-want() { case "$1" in tcp) echo 'no websocket handshake from' ;; ws) echo 'accepted but sent no welcome' ;; close) echo 'closed the connection' ;; esac; }
-for mode in tcp ws close; do
+want() { case "$1" in tcp) echo 'no websocket handshake from' ;; ws) echo 'accepted but sent no welcome' ;; close) echo 'closed the connection' ;; mute) echo 'no answer from the bus within' ;; esac; }
+for mode in tcp ws close mute; do
   fport="$("$PY" -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));p=s.getsockname()[1];s.close();print(p)')"
   "$VPY" "$W/fake/bin/server.py" "$mode" --port "$fport" >/dev/null 2>&1 & FAKE=$!
   for i in $(seq 1 50); do "$PY" -c 'import socket,sys; s=socket.socket(); s.settimeout(0.2); sys.exit(0 if s.connect_ex(("127.0.0.1",int(sys.argv[1])))==0 else 1)' "$fport" && break; sleep 0.1; done
@@ -136,7 +139,7 @@ PYEOF
   t=$(date +%s)
   timeout 40 env INTER_SESSION_DATA_DIR="$W/fdata" INTER_SESSION_PORT="$fport" BUS_SEND_RETRY_S=0 \
     "$PY" "$BS" --name bsr --to nobody --text probe >"$W/fo" 2>"$W/fe" </dev/null; rc=$?; dt=$(( $(date +%s) - t ))
-  [ $rc -eq 1 ] && [ $dt -le 12 ] && /usr/bin/grep -qF "$(want "$mode")" "$W/fe" && [ "$(/usr/bin/grep -c . "$W/fe")" = 1 ] \
+  [ $rc -eq 1 ] && [ $dt -le 20 ] && /usr/bin/grep -qF "$(want "$mode")" "$W/fe" && [ "$(/usr/bin/grep -c . "$W/fe")" = 1 ] \
     && ! /usr/bin/grep -q Traceback "$W/fe" && ! /usr/bin/grep -q 'sent ->' "$W/fo" \
     && ok "9 [$mode] bounded: rc 1 after ${dt}s, one line: $(head -c 70 "$W/fe")" || no "9 [$mode] rc=$rc after ${dt}s: $(head -3 "$W/fe")"
   kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null; FAKE=""

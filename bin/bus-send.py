@@ -83,9 +83,15 @@ _last_refusal: dict = {}
 # are daemon loops. Each step (handshake, welcome, send, close) now has its own limit; a step that
 # times out sends nothing and exits 1 with one stderr line.
 _STEP_S = 5.0
-# The server sends no acknowledgement for a successful send. Until a `list_ok` (see _await_outcome)
-# or an `error` arrives, this is how long a send waits; nothing within it counts as sent, as before.
-_ACK_S = 2.0
+# The server sends no acknowledgement for a successful send. Until a `pong` (see _await_outcome)
+# or an `error` arrives, this is how long a send waits. The server decides a direct message within
+# twice its send timeout (once waiting behind other frames, once for the write) and reports a
+# failed delivery before it answers the `ping`, so the wait outlasts that; a success is answered
+# at once. Nothing within it is an error (delivery unknown), not a success: a bus that does not
+# answer has confirmed nothing. An older skill has neither name: 5 s was its only bound.
+_send_timeout = getattr(shared, "send_timeout_s", None)
+_ACK_S = 2 * float(_send_timeout() if callable(_send_timeout)
+                   else getattr(shared, "SEND_TIMEOUT_S", 5.0)) + 1.0
 
 
 def _is_absent_refusal() -> bool:
@@ -215,24 +221,26 @@ async def _await_outcome(ws):
     """The send's `error` frame, or None once it went through.
 
     The server answers a successful send with nothing, so every success used to wait out the whole
-    _ACK_S. It handles one connection's frames in order, so a `list` sent right behind the send is
-    answered only after the send was handled: `list_ok` means sent, an `error` before it is the send's
+    _ACK_S. It handles one connection's frames in order, so a `ping` sent right behind the send is
+    answered only after the send was handled: `pong` means sent, an `error` before it is the send's
     refusal. Frames pushed to this peer meanwhile (peer_joined, msg) are skipped. No answer within
-    _ACK_S counts as sent, as before."""
+    _ACK_S is returned as a `no_answer` error: the message may or may not have been delivered."""
+    silent = {"op": "error", "code": "no_answer",
+              "message": f"no answer from the bus within {_ACK_S:g}s; delivery unknown"}
     try:
-        await asyncio.wait_for(ws.send(json.dumps({"op": "list"})), timeout=_STEP_S)
+        await asyncio.wait_for(ws.send(json.dumps({"op": "ping"})), timeout=_STEP_S)
     except asyncio.TimeoutError:
-        return None
+        return silent
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _ACK_S
     while True:
         left = deadline - loop.time()
         if left <= 0:
-            return None
+            return silent
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=left)
         except asyncio.TimeoutError:
-            return None
+            return silent
         try:
             frame = json.loads(raw)
         except ValueError:
@@ -241,7 +249,7 @@ async def _await_outcome(ws):
             continue
         if frame.get("op") == "error":
             return frame
-        if frame.get("op") == "list_ok":
+        if frame.get("op") == "pong":
             return None
 
 

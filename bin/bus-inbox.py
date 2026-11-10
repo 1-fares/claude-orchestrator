@@ -87,7 +87,17 @@ def _cc_pid() -> int:
         rest = b" ".join(argv[1:]).decode(errors="replace").lower()
         if exe == "claude" or exe.startswith("claude-"):
             return pid
-        if exe in ("node", "node.exe") and ("/claude" in rest or "claude-code" in rest or "/.claude/" in rest):
+        # The native build runs as <dir>/claude/versions/<version>: argv[0] can be the version
+        # number, so the process name and the executable path are checked as well.
+        comm = stat[stat.find("(") + 1:stat.rfind(")")].lower()
+        try:
+            target = os.readlink(f"/proc/{pid}/exe")
+        except OSError:
+            target = ""
+        if comm == "claude" or "/claude/versions/" in target \
+                or (argv and b"/claude/versions/" in argv[0]):
+            return pid
+        if exe in ("node", "node.exe", "bun") and ("/claude" in rest or "claude-code" in rest or "/.claude/" in rest):
             return pid
         pid = int(stat.rsplit(")", 1)[1].split()[1])
     return -1
