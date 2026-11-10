@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# team-status.sh: one-glance status view for the team. Reads .team/active (roles
+# team-status.sh: one-glance status view for the team. Reads $TEAM_DIR/active (roles
 # the launcher spawned) for liveness, tmux for window + idle time, and the /is
 # messages.log for each role's last message. No bus auth needed, so it runs from
 # anywhere (the orchestrator can also run /is list for the live bus roster).
@@ -17,6 +17,8 @@ esac; done
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"
+# shellcheck source=bin/lib/roster.sh
+. "$repo/bin/lib/roster.sh"   # is_claude: this run's claude by what it executes, as the teardown scripts judge it
 active="$TEAM_DIR/active"
 msglog="$HOME/.claude/data/inter-session/messages.log"
 
@@ -26,7 +28,7 @@ else
   echo "team: $TEAM_SESSION   bus port: $TEAM_PORT"
 fi
 if [ ! -f "$active" ] || [ ! -s "$active" ]; then
-  echo "no roles recorded (.team/active empty). Launch with bin/launch-team.sh."
+  echo "no roles recorded ($active empty). Launch with bin/launch-team.sh."
   exit 0
 fi
 
@@ -84,8 +86,7 @@ if [ "$mobile" = 1 ]; then
   printf '%-12s %-3s %-5s %s\n' ROLE A IDLE HEALTH
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${role:-}" ] || continue
-    if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then
-      alive=y; else alive=X; fi
+    if is_claude "$pid"; then alive=y; else alive=X; fi
     idle="-"
     if [ -n "${wid:-}" ] && act="$(tmux display-message -p -t "$wid" '#{window_activity}' 2>/dev/null)" && [ -n "$act" ]; then
       idle="$(fmt_age "$act")"
@@ -98,8 +99,7 @@ fi
 printf '%-14s %-8s %-6s %-8s %-7s %-9s %s\n' ROLE PID ALIVE WINDOW IDLE HEALTH LAST
 while IFS=$'\t' read -r pid wid role; do
   [ -n "${role:-}" ] || continue
-  if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= 2>/dev/null | grep -q '[c]laude'; then
-    alive=yes; else alive=NO; fi
+  if is_claude "$pid"; then alive=yes; else alive=NO; fi
   win="-"; idle="-"
   if [ -n "${wid:-}" ] && act="$(tmux display-message -p -t "$wid" '#{window_activity}' 2>/dev/null)" && [ -n "$act" ]; then
     win="$wid"; idle="$(fmt_age "$act")"

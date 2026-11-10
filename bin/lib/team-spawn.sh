@@ -1,6 +1,7 @@
 # team-spawn.sh: the single-role spawn path, sourced (not executed) by
 # launch-team.sh (initial team) and add-role.sh (B9 mid-run grow), so a role is
-# brought up identically however the team grows.
+# brought up identically however the team grows. start-orchestrator.sh and
+# communicator.sh source it for model_for, record_role_model and the daemon set.
 #
 # Requires team-env.sh already sourced (TEAM_DIR, TEAM_SESSION, INTER_SESSION_PORT,
 # the tmux() wrapper). The caller MUST set these globals before calling start_one:
@@ -12,9 +13,14 @@
 # Optional, propagated into the spawned session if set in the caller's env:
 #   INTER_SESSION_PORT, INTER_SESSION_IDLE_MINUTES, TEAM_RUN_ID
 
-if ! declare -F proc_pid_is_run_daemon >/dev/null 2>&1; then
+if ! declare -F proc_pid_is_run_daemon proc_pid_is_run_claude >/dev/null 2>&1; then
   # shellcheck source=bin/lib/pid-identity.sh
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pid-identity.sh"
+fi
+# roster.sh: role_is_live, start_one's no-double-spawn guard. Function definitions only.
+if ! declare -F role_is_live >/dev/null 2>&1; then
+  # shellcheck source=bin/lib/roster.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/roster.sh"
 fi
 
 # Resolve a goal argument to an absolute path the spawned session can read: try
@@ -50,7 +56,8 @@ resolve_goal() {
 #   TEAM_MODEL_TOP       model for the top tier (default fable)
 #   TEAM_MODEL_DEFAULT   model for the mid tier / unmatched roles (default opus)
 # Values are claude --model aliases (fable/opus/sonnet/haiku) or full model ids.
-# An empty value => inherit the user's CLI default.
+# An empty value counts as unset: it falls through to the tier default, so model_for
+# never prints an empty model and every launch passes --model.
 model_for() {
   local role="$1" var
   var="TEAM_MODEL_$(printf '%s' "$role" | tr 'a-z-' 'A-Z_')"
@@ -122,12 +129,21 @@ reap_dead_keep_live() {
   local _tmp="$TEAM_DIR/active.$$"; : > "$_tmp"
   local _pid _wid _role
   # `|| [ -n "$_pid" ]` so a final line without a trailing newline is not dropped.
-  # Keep an entry only if its pid is alive AND still a claude process: a recycled
-  # pid (claude exited, OS reused the number) must be treated as dead, never kept.
+  # Keep an entry only if its pid is still THIS run's claude (pid-identity.sh
+  # proc_pid_is_run_claude: a claude by what it executes, native, npm or versions-path
+  # install, with this run's TEAM_RUN_ID/TEAM_DIR in its environ). A recycled pid must be
+  # treated as dead, never kept; "args contain claude" kept any process started from a
+  # path containing the word, such as this clone's own daemons.
+  # Also kept: a live pid whose window id is in this run's session (roster.sh
+  # wid_in_session). A pane pid is recorded while it is still the launching shell
+  # (bash -lc 'cd ... && exec claude ...'), which fails the claude check until the exec;
+  # a reap in that interval dropped a live role. Kills stay gated on the identity check;
+  # this changes only what the reap keeps.
   while IFS=$'\t' read -r _pid _wid _role || [ -n "${_pid:-}" ]; do
-    [ -n "${_pid:-}" ] && kill -0 "$_pid" 2>/dev/null \
-      && ps -p "$_pid" -o args= 2>/dev/null | grep -q '[c]laude' \
-      && printf '%s\t%s\t%s\n' "$_pid" "$_wid" "$_role" >> "$_tmp"
+    [ -n "${_pid:-}" ] || continue
+    if proc_pid_is_run_claude "$_pid" || { kill -0 "$_pid" 2>/dev/null && wid_in_session "$_wid"; }; then
+      printf '%s\t%s\t%s\n' "$_pid" "$_wid" "$_role" >> "$_tmp"
+    fi
   done < "$TEAM_DIR/active"
   mv "$_tmp" "$TEAM_DIR/active"
 }
@@ -137,9 +153,10 @@ start_one() {
   local role="$1"
   local base rolefile rolefile_abs model model_flag pf launch
   # Bus names must satisfy the /is regex; reject bad names deterministically
-  # rather than letting a bad spawn fail opaquely downstream.
-  if ! printf '%s' "$role" | grep -Eq '^[a-z0-9][a-z0-9-]{0,39}$'; then
-    echo "invalid bus name '$role' (must match ^[a-z0-9][a-z0-9-]{0,39}\$)" >&2; return 1
+  # rather than letting a bad spawn fail opaquely downstream. No leading or trailing
+  # hyphen: `reviewer-` would become roles/reviewer-.md and a bus name nobody types.
+  if ! printf '%s' "$role" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'; then
+    echo "invalid bus name '$role' (must match ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?\$)" >&2; return 1
   fi
   base="$(printf '%s' "$role" | sed 's/[0-9]*$//')"
   # An all-digits name (e.g. "123") passes the regex but strips to an empty base,
@@ -148,13 +165,22 @@ start_one() {
     echo "invalid role '$role': a name needs a non-digit part (the base maps to roles/<base>.md)" >&2
     return 1
   fi
+  # No double spawn. A role already live (this run's claude recorded in active, or a
+  # window of that name in the session, which also covers a pane still starting up) is
+  # skipped with return 0, so launch-team's `set -e` loop goes on to the next role. A
+  # second launch-team naming a running role used to start a second session for it.
+  local wins
+  wins="$(tmux list-windows -t "$session" -F '#{window_name}' 2>/dev/null)" || wins=""
+  if role_is_live "$role" || grep -qxF -- "$role" <<<"$wins"; then
+    echo "start_one: '$role' is already live; skipping (no double spawn)" >&2
+    return 0
+  fi
   rolefile="roles/$base.md"
   ensure_role_file "$base"
   rolefile_abs="$repo/$rolefile"
 
-  model="$(model_for "$role")"
-  model_flag=""
-  [ -n "$model" ] && model_flag="--model $model"
+  model="$(model_for "$role")"   # never empty (see model_for)
+  model_flag="--model $model"
   record_role_model "$role" "$model"
 
   # Write the initial prompt to a file; keeps shell quoting simple and the
@@ -217,11 +243,14 @@ EOF
   if tmux has-session -t "$session" 2>/dev/null; then
     info="$(tmux new-window -d -t "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
   else
-    info="$(tmux new-session -d -s "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")")"
+    # 9>&-: this call can START the tmux server, which keeps every fd it inherits. The
+    # callers hold the roster lock on fd 9 (exec 9>.roster.lock); a server holding it
+    # would keep the lock for its lifetime and block every later add-role/retire-role.
+    info="$(tmux new-session -d -s "$session" -P -F '#{pane_pid} #{window_id}' -n "$role" "bash -lc $(printf %q "$launch")" 9>&-)"
   fi
   pid="${info%% *}"; wid="${info##* }"
   printf '%s\t%s\t%s\n' "$pid" "$wid" "$role" >> "$TEAM_DIR/active"
-  echo "launched $role (pid $pid, role: $rolefile, model: ${model:-default}, workdir: $workdir_abs)"
+  echo "launched $role (pid $pid, role: $rolefile, model: $model, workdir: $workdir_abs)"
 }
 
 # Start the API watchdog for this team, once. Idempotent: if the recorded pid is
@@ -261,19 +290,14 @@ start_api_watchdog() {
   # lock on fd 9 (exec 9>...lock); a long-lived daemon that inherited it would
   # keep the open file description alive and the flock would never release,
   # deadlocking every later add/retire. The watchdog must not inherit that fd.
-  nohup "$repo/bin/api-watchdog.sh" >"$TEAM_DIR/api-watchdog.log" 2>&1 9>&- &
+  nohup "$repo/bin/api-watchdog.sh" >>"$TEAM_DIR/api-watchdog.log" 2>&1 9>&- &
   echo "api-watchdog started (pid $!, log: $TEAM_DIR/api-watchdog.log)"
 }
 
-# Start the compaction watchdog for this team, once. It keeps the orchestrator's
-# context off the auto-compact ceiling by compacting it early at idle task
-# boundaries, so the run spends most of its life in a small, cheap context instead
-# of repeatedly re-reading a near-full one (see bin/compaction-watchdog.sh). Set
-# COMPACT_WATCHDOG_DISABLED=1 to skip. Single-instance via pgrep (so it also will
-# not duplicate an instance brought up by an external keepalive, e.g. cron).
 # True (0) if a process holds the compaction-watchdog flock (one is running for
 # THIS team). Per-TEAM_DIR + atomic, replacing the old global pgrep that could not
 # tell two teams apart. Same subshell-acquire-and-release probe as the api one.
+# No caller since 2026-07-20: start_compaction_watchdog reaps and restarts instead.
 _compaction_watchdog_running() {
   local lk="$TEAM_DIR/compaction-watchdog.lock"
   if command -v flock >/dev/null 2>&1; then
@@ -314,6 +338,13 @@ _reap_prior_daemon() {
   rm -f "$pidf"
 }
 
+# Start the compaction watchdog for this team. It keeps the orchestrator's
+# context off the auto-compact ceiling by compacting it early at idle task
+# boundaries, so the run spends most of its life in a small, cheap context instead
+# of repeatedly re-reading a near-full one (see bin/compaction-watchdog.sh). Set
+# COMPACT_WATCHDOG_DISABLED=1 to skip. Not a no-op when one is running: a live
+# instance of this team is reaped first and a fresh one started; the daemon's own
+# per-TEAM_DIR flock keeps it single-instance.
 start_compaction_watchdog() {
   [ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
   [ -x "$repo/bin/compaction-watchdog.sh" ] || return 0
@@ -348,7 +379,7 @@ start_tmux_watchdog() {
       return 0
     fi
   fi
-  nohup "$repo/bin/tmux-watchdog.sh" >"$TEAM_DIR/tmux-watchdog.log" 2>&1 9>&- &
+  nohup "$repo/bin/tmux-watchdog.sh" >>"$TEAM_DIR/tmux-watchdog.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "tmux-watchdog started (pid $!, log: $TEAM_DIR/tmux-watchdog.log)"
 }
@@ -372,7 +403,7 @@ start_host_ram_watchdog() {
       return 0
     fi
   fi
-  nohup "$repo/bin/host-ram-watchdog.sh" >"$TEAM_DIR/host-ram-watchdog.log" 2>&1 9>&- &
+  nohup "$repo/bin/host-ram-watchdog.sh" >>"$TEAM_DIR/host-ram-watchdog.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "host-ram-watchdog started (pid $!, log: $TEAM_DIR/host-ram-watchdog.log)"
 }
@@ -395,7 +426,7 @@ start_disk_tmp_watchdog() {
       return 0
     fi
   fi
-  nohup "$repo/bin/disk-tmp-watchdog.sh" >"$TEAM_DIR/disk-tmp-watchdog.log" 2>&1 9>&- &
+  nohup "$repo/bin/disk-tmp-watchdog.sh" >>"$TEAM_DIR/disk-tmp-watchdog.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "disk-tmp-watchdog started (pid $!, log: $TEAM_DIR/disk-tmp-watchdog.log)"
 }
@@ -420,17 +451,11 @@ start_observer() {
       return 0
     fi
   fi
-  nohup "$repo/bin/observer.sh" >"$TEAM_DIR/observer.log" 2>&1 9>&- &
+  nohup "$repo/bin/observer.sh" >>"$TEAM_DIR/observer.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "observer started (pid $!, log: $TEAM_DIR/observer.log)"
 }
 
-# Ensure the team's supervisor daemons are up. Idempotent; each start_* honors
-# its own opt-out env var. This is the ONE canonical set (api-watchdog,
-# compaction-watchdog, tmux-watchdog, host-ram-watchdog, disk-tmp-watchdog, observer,
-# chrome-supervisor, intake-poller), shared by launch-team.sh (cold start), start-orchestrator.sh
-# (recovery path) and add-role.sh (mid-run grow), so no path leaves a different
-# set running.
 # Start the permission-mode watchdog for this team, once. Idempotent the same way
 # as the tmux watchdog. Set PERMISSION_MODE_WATCHDOG_DISABLED=1 to skip.
 #
@@ -456,11 +481,19 @@ start_permission_mode_watchdog() {
     fi
   fi
   PMW_SOCKET="$TEAM_TMUX" PMW_SESSION="$TEAM_SESSION" \
-    nohup "$repo/bin/permission-mode-watchdog.sh" >"$TEAM_DIR/permission-mode-watchdog.log" 2>&1 9>&- &
+    nohup "$repo/bin/permission-mode-watchdog.sh" >>"$TEAM_DIR/permission-mode-watchdog.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "permission-mode-watchdog started (pid $!, log: $TEAM_DIR/permission-mode-watchdog.log)"
 }
 
+# Ensure the team's supervisor daemons are up. Each start_* honors its own
+# opt-out env var. This is the ONE canonical set (api-watchdog,
+# compaction-watchdog, tmux-watchdog, permission-mode-watchdog, host-ram-watchdog,
+# disk-tmp-watchdog, observer, chrome-supervisor, intake-poller), shared by
+# launch-team.sh (cold start), start-orchestrator.sh (recovery path) and
+# add-role.sh (mid-run grow), so no path leaves a different set running. All are
+# no-ops when already running except the compaction watchdog, which
+# start_compaction_watchdog reaps and restarts on every call.
 ensure_team_daemons() {
   start_api_watchdog || true
   start_compaction_watchdog || true
@@ -494,7 +527,7 @@ start_chrome_supervisor() {
       return 0
     fi
   fi
-  nohup "$repo/bin/chrome-supervisor.sh" >"$TEAM_DIR/chrome-supervisor.log" 2>&1 9>&- &
+  nohup "$repo/bin/chrome-supervisor.sh" >>"$TEAM_DIR/chrome-supervisor.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "chrome-supervisor started (pid $!, log: $TEAM_DIR/chrome-supervisor.log)"
 }
@@ -536,7 +569,7 @@ start_intake_poller() {
   else
     pgrep -f "$poller" >/dev/null 2>&1 && { echo "intake-poller already running"; return 0; }
   fi
-  nohup python3 "$poller" --peer orchestrator >"$TEAM_DIR/intake-poller.log" 2>&1 9>&- &
+  nohup python3 "$poller" --peer orchestrator >>"$TEAM_DIR/intake-poller.log" 2>&1 9>&- &
   echo "$!" > "$pidf"
   echo "intake-poller started (pid $!, poller: $poller, log: $TEAM_DIR/intake-poller.log)"
 }

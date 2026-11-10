@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # role-activity.sh: classify a role pane's runtime activity from its tmux pane.
 # Output: one of `working`, `delegating:<N>`, `delegating`, `idle`. The
-# bin/dreamer.sh calls this
-# per role per tick to fill the per-role `activity` field in /state.json.
+# quiescence gate of bin/dreamer.sh calls this once per roster role and runs
+# only when every role reads `idle`.
 #
 # Distinguishes three behaviours the existing api-watchdog conflates:
 #   1. Role doing work itself                    -> `working`
@@ -31,15 +31,15 @@
 #     and no subagent line above it. That is `idle`.
 #
 # Exit 0 on classification (any of the four outputs). Exit non-zero on tmux
-# capture failure; the caller (server.py) falls back to the api-watchdog state.
+# capture failure; bin/dreamer.sh then treats the roster as not quiescent.
 #
 # Usage: bin/role-activity.sh <role-name>
-#   <role-name> matches the bus name (^[a-z0-9][a-z0-9-]{0,39}$) and looks up
+#   <role-name> matches the bus name (^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$) and looks up
 #   the role's tmux window via $TEAM_DIR/active. Env override below.
 #
 # Env:
 #   ROLE_ACTIVITY_CAPTURE   override path to a pre-captured pane buffer (used
-#                           by the smoke harness so it can feed in fixtures
+#                           by bin/tests/role-activity-test.sh to feed in fixtures
 #                           without spinning up a real tmux pane).
 #   TEAM_DIR, TEAM_SESSION, TEAM_TMUX, TEAM_TMUX_BIN  resolved via team-env.sh
 #                                                     when not pre-exported.
@@ -52,7 +52,7 @@ case "$role" in
   [a-z0-9]*) : ;;
   *) echo "invalid role name: '$role'" >&2; exit 2 ;;
 esac
-printf '%s' "$role" | grep -Eq '^[a-z0-9][a-z0-9-]{0,39}$' \
+printf '%s' "$role" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' \
   || { echo "invalid role name: '$role'" >&2; exit 2; }
 
 # Capture the pane: either from the env override (fixture) or via tmux.

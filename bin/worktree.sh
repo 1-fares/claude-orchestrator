@@ -7,8 +7,11 @@
 #
 # Usage:
 #   bin/worktree.sh add <unit> [base-ref]   # prints the new worktree path
-#   bin/worktree.sh remove <unit>
+#   bin/worktree.sh remove <unit> [--force]
 #   bin/worktree.sh list
+#
+# remove refuses a worktree git will not remove (uncommitted or untracked changes, a
+# lock) and prints git's reason. --force removes it anyway and DISCARDS those changes.
 
 set -euo pipefail
 
@@ -28,9 +31,21 @@ case "$cmd" in
     echo "$path"   # stdout: the path, so the caller can use it as --workdir
     ;;
   remove)
-    unit="${2:?usage: worktree.sh remove <unit>}"
+    unit="${2:?usage: worktree.sh remove <unit> [--force]}"
+    force=()
+    case "${3:-}" in
+      '') ;;
+      --force) force=(--force) ;;
+      *) echo "usage: worktree.sh remove <unit> [--force]" >&2; exit 1 ;;
+    esac
     path="$(dirname "$root")/${name}-wt-${unit}"
-    git worktree remove "$path" 2>/dev/null || git worktree remove --force "$path"
+    # No silent --force fallback: it discarded the uncommitted work of a dirty worktree.
+    if ! err="$(git worktree remove ${force[@]+"${force[@]}"} "$path" 2>&1)"; then
+      echo "worktree.sh: git did not remove $path:" >&2
+      printf '%s\n' "$err" | sed 's/^/  /' >&2
+      [ "${#force[@]}" -eq 0 ] && echo "  Commit or discard the changes there, or run: worktree.sh remove $unit --force (discards them)" >&2
+      exit 1
+    fi
     echo "removed worktree $path (branch unit/$unit kept for history)"
     ;;
   list)

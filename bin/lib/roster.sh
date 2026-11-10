@@ -3,10 +3,40 @@
 # sourced (TEAM_DIR). All edits to the ledger are write-to-temp-then-rename, so a
 # failed awk never truncates the ledger.
 
-# True if pid is (still) a claude process. The safety guard before any kill: a
-# stale active entry must never group-kill a recycled, unrelated pid. (Mirrors
-# stop-team.sh / cleanup.sh.)
-is_claude() { ps -p "$1" -o args= 2>/dev/null | grep -q '[c]laude'; }
+if ! declare -F proc_pid_is_run_claude >/dev/null 2>&1; then
+  # shellcheck source=bin/lib/pid-identity.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pid-identity.sh"
+fi
+
+# True if pid is (still) THIS run's claude process: a claude by what it executes
+# (native, npm or versions-path install) and this run's TEAM_RUN_ID/TEAM_DIR in its
+# environ (pid-identity.sh proc_pid_is_run_claude, the check stop-team.sh uses). Feeds
+# the cap count, the double-spawn check and auto-numbering, so a recycled pid must not
+# count. "args contain claude" counted any process started from a path containing the
+# word, such as this clone's own daemons.
+is_claude() { proc_pid_is_run_claude "$1"; }
+
+# True only if window id $1 belongs to THIS run's session ($TEAM_SESSION). Guards
+# window operations (send-keys, kill-window) on an id read from active: ids are per
+# tmux server, the team socket is shared by every run, and after a server restart
+# ids start again at @0, so a stale id can name another run's window.
+wid_in_session() {
+  local wins
+  [ -n "${1:-}" ] || return 1
+  tmux has-session -t "$TEAM_SESSION" 2>/dev/null || return 1
+  wins="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_id}' 2>/dev/null)" || return 1
+  grep -qxF -- "$1" <<<"$wins"
+}
+
+# True if a window named $1 exists in THIS run's session ($TEAM_SESSION), the test start_one
+# (bin/lib/team-spawn.sh) uses to skip a role as already present. A role whose line is missing
+# from active (never written, or dropped) still has its window, so role_is_live alone misses it.
+role_window_exists() {
+  local wins
+  [ -n "${1:-}" ] || return 1
+  wins="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_name}' 2>/dev/null)" || return 1
+  grep -qxF -- "$1" <<<"$wins"
+}
 
 _state_file() { echo "$TEAM_DIR/state.md"; }
 _active_file() { echo "$TEAM_DIR/active"; }
@@ -134,8 +164,9 @@ in_flight_units_for_role() {
 }
 
 # Number of live (still-running) role entries recorded in active. This is what the
-# team-size cap counts: the spawned worker roles. The orchestrator is the operator
-# session and is not recorded in active, so it does not count toward the cap.
+# team-size cap counts. Every live line counts: the worker roles, and also the
+# orchestrator (start-orchestrator.sh records its own line) and the communicator
+# (bin/communicator.sh records its line), so both count toward the cap.
 live_role_count() {
   local f n=0 pid wid role; f="$(_active_file)"
   [ -f "$f" ] || { echo 0; return 0; }
@@ -165,9 +196,10 @@ role_is_live() {
 }
 
 # Pick the next free auto-numbered name for a base (base1, base2, ...) that is not
-# already live. Prints the chosen name. $1 = base (no trailing digits).
+# already live and has no window in this run's session (start_one would skip such a
+# name and spawn nothing). Prints the chosen name. $1 = base (no trailing digits).
 next_role_number() {
   local base="$1" n=1
-  while role_is_live "$base$n"; do n=$((n + 1)); done
+  while role_is_live "$base$n" || role_window_exists "$base$n"; do n=$((n + 1)); done
   echo "$base$n"
 }

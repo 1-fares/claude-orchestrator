@@ -43,22 +43,24 @@ _preset_team_dir="${TEAM_DIR:-}"
 # and socket, and its cleanup (rm -rf "$TEAM_DIR", kill-session) then destroys
 # the live run — with an internally-consistent env the TEAM_DIR guard below
 # cannot see anything wrong. So: when any caller in the source chain is under
-# bin/tests/, require the throwaway names from bin/tests/lib/isolate.sh.
+# bin/tests/ or tests/ of this clone, require the throwaway names from
+# bin/tests/lib/isolate.sh.
 _te_caller_is_test=0
 # Resolve each caller to an absolute path and compare against THIS repo's
-# bin/tests/ — string-matching the raw BASH_SOURCE is both overbroad (a target
-# project's tests/foo.sh sourcing team-env for a gate is legitimate and must
-# not be killed) and holey (`cd bin/tests && bash ./foo.sh` yields './foo.sh').
+# bin/tests/ and tests/: string-matching the raw BASH_SOURCE is both overbroad
+# (a target project's tests/foo.sh sourcing team-env for a gate is legitimate
+# and must not be killed) and holey (`cd bin/tests && bash ./foo.sh` yields
+# './foo.sh').
 for _te_src in "${BASH_SOURCE[@]:-}"; do
   [ -e "$_te_src" ] || continue
   _te_abs="$(cd "$(dirname "$_te_src")" 2>/dev/null && pwd)/$(basename "$_te_src")"
-  case "$_te_abs" in "$TEAM_REPO/bin/tests/"*) _te_caller_is_test=1;; esac
+  case "$_te_abs" in "$TEAM_REPO/bin/tests/"*|"$TEAM_REPO/tests/"*) _te_caller_is_test=1;; esac
 done
 unset _te_abs 2>/dev/null || true
 if [ "$_te_caller_is_test" = 1 ]; then
   case "${TEAM_RUN_ID:-}" in
     test*|wdtest*|potest*) : ;;  # isolate.sh names + grandfathered per-test prefixes
-    *) echo "team-env: caller is under bin/tests/ but TEAM_RUN_ID='${TEAM_RUN_ID:-<unset>}' is not a test id." >&2
+    *) echo "team-env: caller is under bin/tests/ or tests/ but TEAM_RUN_ID='${TEAM_RUN_ID:-<unset>}' is not a test id." >&2
        echo "  Source bin/tests/lib/isolate.sh FIRST (it exports throwaway TEAM_RUN_ID/TEAM_TMUX)." >&2
        echo "  Refusing: an inherited live run id here is how a test's cleanup wiped a live run." >&2
        # exit, not return: on `return` the sourcing test would carry on with

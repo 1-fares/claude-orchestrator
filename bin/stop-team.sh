@@ -16,20 +16,28 @@
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$repo/bin/team-env.sh"
+# team-env.sh returns 1 when it refuses a pre-set TEAM_DIR (another run's, or a stray export);
+# nothing below may run on that unvalidated state.
+. "$repo/bin/team-env.sh" || exit 1
 # shellcheck source=bin/lib/pid-identity.sh
 . "$repo/bin/lib/pid-identity.sh" || exit 1
+# shellcheck source=bin/lib/roster.sh
+. "$repo/bin/lib/roster.sh" || exit 1   # wid_in_session (shared with retire-role.sh)
 session="$TEAM_SESSION"
 active="$TEAM_DIR/active"
 graceful=1
 [ "${1:-}" = "--no-graceful" ] && graceful=0
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 
-# A recorded role pid is signalled only if it is a claude process of THIS run (program position
-# claude, this run's TEAM_RUN_ID/TEAM_DIR in its environ). The old test, any process whose args
+# A recorded role pid is signalled only if it is a claude process of THIS run (a claude by what it
+# executes, this run's TEAM_RUN_ID/TEAM_DIR in its environ). The old test, any process whose args
 # contain "claude", passed `tail -f ~/.claude/...` or another run's role after a pid wrap, and the
-# kill below is a PROCESS-GROUP kill.
-is_claude() { proc_pid_is_run_daemon "$1" claude; }
+# kill below is a PROCESS-GROUP kill. is_claude comes from bin/lib/roster.sh:
+# proc_pid_is_run_claude "$1" (a claude by what it executes, with this run's environ).
+# A window id read from active is used (graceful pass, kill-window) only if wid_in_session
+# (bin/lib/roster.sh) finds it in THIS run's session: ids are per tmux server, the team
+# socket is shared by every run, and after a server restart a stale id names another
+# run's window.
 role_is_zombie() { /usr/bin/grep -q '^State:[[:space:]]*Z' "/proc/$1/status" 2>/dev/null; }
 # A role whose claude already exited (on pass 1's TERM, or before this run of stop-team) can leave
 # members in its process group that ignored TERM: a tool child, a stuck shell. Pass 2 used to skip
@@ -79,6 +87,7 @@ if [ -f "$active" ]; then
     while IFS=$'\t' read -r pid wid role; do
       [ -n "${wid:-}" ] || continue
       [ "${role:-}" = orchestrator ] && continue   # never send the stop prompt to the orchestrator
+      wid_in_session "$wid" || continue            # never type into another run's window
       tmux_submit "$wid" "stop: teardown, finish the current write and stop." || true
     done < "$active"
     sleep 4
@@ -108,7 +117,7 @@ if [ -f "$active" ]; then
     elif [ ! -d "/proc/$pid" ] || role_is_zombie "$pid"; then
       kill_exited_role_group "$pid" "$role"
     fi
-    [ -n "${wid:-}" ] && tmux kill-window -t "$wid" 2>/dev/null || true
+    wid_in_session "$wid" && tmux kill-window -t "$wid" 2>/dev/null || true
   done < "$active"
 fi
 
@@ -117,33 +126,45 @@ fi
 # panic.sh and team-spawn already use. `kill -0` alone signalled whatever process now holds the
 # number after a reboot or pid wrap. A refused pid gets one line naming
 # pid, file and why; the pidfile is ours (it lives in $TEAM_DIR) and stale either way, so it goes.
-# Order matters: the tmux watchdog BEFORE the compaction watchdog, so it is not self-healed back up
-# between the two kills. The resource watchdogs (host-ram, disk-tmp) also get
-# pkill -P: their backgrounded sleep child holds the per-TEAM_DIR flock fd and would otherwise block
-# a relaunch for one INTERVAL (missing from this list until 2026-07-20). observer and intake-poller
-# leaked past stop-team before 2026-06-01.
-stop_pidfile_daemon() {   # <name> [children]
-  local name="$1" kids="${2:-}" pidf="$TEAM_DIR/$1.pid" globs=()
+# Order matters: the tmux watchdog FIRST. While the session and active are up (they are, when the
+# orchestrator window stays) it self-heals the api-watchdog, compaction-watchdog, observer, intake
+# poller and permission-mode-watchdog, so stopping it after one of them can bring that one back.
+# Every daemon also gets pkill -P, as in panic.sh and cleanup.sh: a sleep child holds the per-TEAM_DIR
+# flock fd, and the api/compaction watchdogs defer their TERM trap until their foreground sleep
+# returns, so TERM alone leaves the lock held for up to one INTERVAL and blocks a relaunch (the
+# resource watchdogs were missing until 2026-07-20, permission-mode-watchdog until 2026-11-10).
+# observer and intake-poller leaked past stop-team before 2026-06-01.
+# The whole descendant tree is captured BEFORE the TERM: a daemon without a TERM trap (the
+# observer) dies at once, its children are re-parented, and pkill -P then finds nothing, so
+# a model call in progress (command-substitution subshell -> timeout -> claude -p) ran on.
+# Captured descendants are signalled only while they carry this run's environment. Then,
+# as in panic.sh and cleanup.sh, a re-check and SIGKILL for a daemon that survived TERM.
+stop_pidfile_daemon() {   # <name>
+  local name="$1" pidf="$TEAM_DIR/$1.pid" globs=() kids k
   [ -f "$pidf" ] || return 0
   mapfile -t globs < <(proc_run_daemon_globs "$name")
   if proc_pidfile_verdict "$pidf" "${globs[@]}"; then
+    kids="$(proc_descendants "$PM_PID")"
     kill -TERM "$PM_PID" 2>/dev/null || true
-    [ "$kids" = children ] && { pkill -TERM -P "$PM_PID" 2>/dev/null || true; }
+    pkill -TERM -P "$PM_PID" 2>/dev/null || true
+    for k in $kids; do proc_pid_has_run_env "$k" && kill -TERM "$k" 2>/dev/null; done
+    sleep 0.3
+    # Re-verify before escalating: a daemon that exited on TERM leaves a number that can be reused.
+    if proc_pid_is_run_daemon "$PM_PID" "${globs[@]}"; then
+      pkill -KILL -P "$PM_PID" 2>/dev/null || true
+      kill -KILL "$PM_PID" 2>/dev/null || true
+    fi
+    for k in $kids; do proc_pid_has_run_env "$k" && kill -KILL "$k" 2>/dev/null; done
     echo "stopped $name (pid $PM_PID)"; killed=1
   elif [ "$PM_WHY" != "not running" ]; then
     echo "skip $name: pid $PM_PID from $pidf $PM_WHY; not signalled, pidfile removed"
   fi
   rm -f "$pidf"
 }
-stop_pidfile_daemon api-watchdog
-stop_pidfile_daemon tmux-watchdog
-stop_pidfile_daemon compaction-watchdog
-for _rw in host-ram-watchdog disk-tmp-watchdog; do
-  stop_pidfile_daemon "$_rw" children
+for _d in tmux-watchdog api-watchdog compaction-watchdog permission-mode-watchdog \
+          host-ram-watchdog disk-tmp-watchdog chrome-supervisor observer intake-poller; do
+  stop_pidfile_daemon "$_d"
 done
-stop_pidfile_daemon chrome-supervisor
-stop_pidfile_daemon observer
-stop_pidfile_daemon intake-poller
 
 # Kill this team's /is bus server (scoped to TEAM_PORT), if we own it.
 srv_pidf="$HOME/.claude/data/inter-session/server.$TEAM_PORT.pid"
@@ -179,7 +200,25 @@ if [ -f "$active" ]; then
       echo "WARNING: $role (pid $pid) still alive" >&2; survivors=$((survivors+1))
     fi
   done < "$active"
-  [ "$survivors" -eq 0 ] && rm -f "$active" && echo "all roles stopped"
+  if [ "$survivors" -eq 0 ]; then
+    # Rewrite active, do not delete it: every line whose pid is still this run's claude is
+    # kept, or teardown tools and the next launch-team stop seeing it. That is
+    # the orchestrator this script leaves running, and a role that add-role.sh or
+    # launch-team.sh appended while this script waited for the roster lock: it was not
+    # in active when the passes above read it, so it was not stopped and is alive. The
+    # roles stopped above no longer pass the check. Under the roster lock, as add-role.sh
+    # and retire-role.sh, so an append made at the same moment is not lost.
+    {
+      if command -v flock >/dev/null 2>&1; then flock -w 30 9 || echo "note: roster lock busy for 30s; rewriting active anyway" >&2; fi
+      if keep="$(mktemp "$active.XXXXXX")"; then
+        while IFS=$'\t' read -r pid wid role || [ -n "${pid:-}" ]; do
+          [ -n "${pid:-}" ] && is_claude "$pid" && printf '%s\t%s\t%s\n' "$pid" "$wid" "$role"
+        done < "$active" > "$keep"
+        mv -f "$keep" "$active"
+      fi
+    } 9>"$TEAM_DIR/.roster.lock"
+    echo "all roles stopped"
+  fi
 fi
 
 [ "$killed" -eq 1 ] || echo "no running team found"

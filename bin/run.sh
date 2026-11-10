@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
 done
 if [ -z "$dir_arg" ] && [ -n "${1:-}" ]; then
   case "$1" in
-    /*|~|"~/"*|./*|../*) dir_arg="$1"; shift ;;
+    /*|"~"|"~/"*|./*|../*) dir_arg="$1"; shift ;;
     *) [ -e "$1" ] && { dir_arg="$1"; shift; } ;;
   esac
 fi

@@ -28,26 +28,21 @@ _tdg_norm() {
   printf '%s' "${p%/}"
 }
 
-# True (0) if <pid> is a claude process: its name (comm) or the program it runs
-# (argv0, the executable, or argv1 under node) is `claude`, the program sits in a
-# native install's claude/versions/ directory (exec'd by its real path, comm and
-# argv0 carry only the version), or it runs the claude-code package.
-# Never a match on the whole args line: a script started from a path that merely
-# contains "claude" (a clone in a directory named claude-orchestrator) is not a claude.
+# The claude test is shared with the roster and the kill sites (bin/lib/pid-identity.sh).
+if ! declare -F proc_pid_is_claude_shape >/dev/null 2>&1 \
+   && [ -f "$(dirname "${BASH_SOURCE[0]}")/pid-identity.sh" ]; then
+  # shellcheck source=bin/lib/pid-identity.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/pid-identity.sh"
+fi
+
+# True (0) if <pid> is a claude process of ANY run (proc_pid_is_claude_shape: what it
+# executes, never a word in its args, so a script started from a clone named
+# claude-orchestrator is not a claude). No run environ is required: this guard judges
+# other runs' directories too. Without the shared test (pid-identity.sh missing) a
+# live pid counts as claude, since this guard errs toward refusing.
 _tdg_pid_is_claude() {
-  local comm exe a0 a1 args
-  read -r comm _ < <(ps -p "$1" -o comm= 2>/dev/null)
-  [ "${comm##*/}" = claude ] && return 0
-  exe="$(readlink "/proc/$1/exe" 2>/dev/null)"
-  [ "${exe##*/}" = claude ] && return 0
-  case "$exe" in */claude/versions/*) return 0 ;; esac
-  args="$(ps -p "$1" -o args= 2>/dev/null)"
-  read -r a0 a1 _ <<<"$args"
-  [ "${a0##*/}" = claude ] && return 0
-  case "$a0" in */claude/versions/*) return 0 ;; esac
-  case "${a0##*/}" in node|nodejs) [ "${a1##*/}" = claude ] && return 0 ;; esac
-  case "$args" in */@anthropic-ai/claude-code/*) return 0 ;; esac
-  return 1
+  declare -F proc_pid_is_claude_shape >/dev/null 2>&1 || return 0
+  proc_pid_is_claude_shape "$1"
 }
 
 # True (0) if <path> is, or is inside, a team run dir: a path whose basename is
@@ -120,4 +115,51 @@ tdg_assert_scratch_team_dir() {
        echo "       A test must set TEAM_DIR to a mktemp -d. (2026-06-16 incident.)" >&2
        exit 1 ;;
   esac
+}
+
+# tdg_guard_rmrf_owned <path>: return 0 only if <path> is the run dir this session owns,
+# so the caller may remove it; print why and return 1 otherwise. Called by bin/reset.sh and
+# bin/cleanup.sh right before their `rm -rf "$TEAM_DIR"`. tdg_guard_rmrf above refuses every
+# live run dir, which is right for a test but would refuse reset.sh's purpose: deleting the
+# run dir of the run being reset. So the test here is ownership, not liveness.
+# Ownership is derived again from TEAM_REPO and TEAM_RUN_ID with team-env.sh's rule (legacy:
+# $TEAM_REPO/.team, per run: $TEAM_REPO/.team-$TEAM_RUN_ID). The second derivation is
+# independent on purpose: when it disagrees with the caller's TEAM_DIR (a value inherited from
+# another run, or an explicit TEAM_DIR_ALLOW_OVERRIDE=1 dir), the guard refuses instead of
+# choosing. Any path that is not the canonical dir is refused, including one that is not a
+# run dir at all: a guard that let an unrecognised path through could delete $HOME or /.
+# The canonical dir must also sit directly in TEAM_REPO once both are normalised, and a
+# TEAM_RUN_ID with a slash is refused: "x/../../y" resolves outside the clone, "x/../bin"
+# onto one of its directories, and both would otherwise equal their own canonical path.
+tdg_guard_rmrf_owned() {
+  local path="${1:-}" norm canon repo_norm
+  [ -n "$path" ] || { echo "tdg_guard_rmrf_owned: empty path; refusing" >&2; return 1; }
+  if [ -z "${TEAM_REPO:-}" ]; then
+    echo "REFUSING rm -rf '$path': TEAM_REPO is unset, so ownership cannot be established." >&2
+    echo "  Source bin/team-env.sh first." >&2
+    return 1
+  fi
+  case "${TEAM_RUN_ID:-}" in
+    */*) echo "REFUSING rm -rf '$path': TEAM_RUN_ID='$TEAM_RUN_ID' contains a slash, so it does not name a run dir." >&2
+         return 1 ;;
+  esac
+  norm="$(_tdg_norm "$path")"
+  if [ -n "${TEAM_RUN_ID:-}" ]; then canon="$TEAM_REPO/.team-$TEAM_RUN_ID"; else canon="$TEAM_REPO/.team"; fi
+  canon="$(_tdg_norm "$canon")"
+  repo_norm="$(_tdg_norm "$TEAM_REPO")"
+  if [ -z "$canon" ] || [ -z "$repo_norm" ] || [ "${canon%/*}" != "$repo_norm" ]; then
+    echo "REFUSING rm -rf '$path': the run dir does not resolve to a directory directly in the clone." >&2
+    echo "  resolves to: $canon" >&2
+    echo "  clone:       $repo_norm  (TEAM_REPO='$TEAM_REPO' TEAM_RUN_ID='${TEAM_RUN_ID:-}')" >&2
+    return 1
+  fi
+  if [ -z "$norm" ] || [ "$norm" != "$canon" ]; then
+    echo "REFUSING rm -rf '$path': it is not the run dir this session owns." >&2
+    echo "  target:    $norm" >&2
+    echo "  canonical: $canon  (TEAM_REPO='$TEAM_REPO' TEAM_RUN_ID='${TEAM_RUN_ID:-}')" >&2
+    echo "  A TEAM_DIR inherited from another run, or set by hand, is never removed here." >&2
+    echo "  Unset TEAM_DIR (and TEAM_DIR_ALLOW_OVERRIDE) and re-run." >&2
+    return 1
+  fi
+  return 0
 }

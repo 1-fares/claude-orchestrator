@@ -10,7 +10,7 @@ set -euo pipefail
 dir="${1:?usage: new-project.sh <dir>}"
 case "$dir" in
   "~")    dir="$HOME" ;;
-  "~/"*)  dir="$HOME/${dir#~/}" ;;
+  "~/"*)  dir="$HOME/${dir#\~/}" ;;
 esac
 
 if [ -d "$dir/.git" ]; then

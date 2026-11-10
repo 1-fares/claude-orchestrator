@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # team-logs.sh: durable, greppable per-role history from the /is messages.log
 # (the bus already persists every message). The log is the source of truth;
-# --sync materializes per-role files under .team/log/ for offline grepping.
+# --sync materializes per-role files under $TEAM_DIR/log/ for offline grepping.
 #
 # Usage:
 #   bin/team-logs.sh                 # last 40 messages among this team's roles
 #   bin/team-logs.sh <role> [n]      # last n (default 40) for one role
-#   bin/team-logs.sh --sync          # write .team/log/<role>.log per team role
+#   bin/team-logs.sh --sync          # write $TEAM_DIR/log/<role>.log per team role
 
 set -uo pipefail
 
@@ -49,7 +49,7 @@ PY
 case "${1:-}" in
   --sync)
     mkdir -p "$TEAM_DIR/log"
-    for r in $(roles_of_team); do render "$r" 100000 > "$TEAM_DIR/log/$r.log"; echo "wrote .team/log/$r.log"; done
+    for r in $(roles_of_team); do render "$r" 100000 > "$TEAM_DIR/log/$r.log"; echo "wrote $TEAM_DIR/log/$r.log"; done
     ;;
   "") render "" 40 ;;
   *)  render "$1" "${2:-40}" ;;

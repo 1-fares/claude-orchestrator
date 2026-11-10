@@ -19,7 +19,7 @@
 #
 # Usage:
 #   bin/cleanup.sh                  # dry run: report orphans + cruft, change nothing
-#   bin/cleanup.sh --force          # stop the team, reap orphans, remove .team/ + stale pidfiles
+#   bin/cleanup.sh --force          # stop the team, reap orphans, remove $TEAM_DIR + stale pidfiles
 #   bin/cleanup.sh --force --purge  # also remove project.conf, team.tmux.conf, and
 #                                   # untracked files under goals/ tasks/ roles/
 #
@@ -29,7 +29,9 @@
 set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/team-env.sh
-. "$repo/bin/team-env.sh"   # TEAM_SESSION, TEAM_TMUX, TEAM_PORT, tmux() wrapper
+# team-env.sh returns 1 when it refuses a pre-set TEAM_DIR (another run's, or a stray export);
+# nothing below, the rm of step 5 included, may run on that unvalidated state.
+. "$repo/bin/team-env.sh" || exit 1   # TEAM_SESSION, TEAM_TMUX, TEAM_PORT, tmux() wrapper
 # shellcheck source=bin/lib/pid-identity.sh
 . "$repo/bin/lib/pid-identity.sh" || exit 1
 
@@ -50,25 +52,24 @@ if [ "$DRY" = 0 ] && [ -n "${ORCH_HOME:-}" ] && [ "${RESET_CONFIRM:-}" != "yes" 
 fi
 tag(){ [ "$DRY" = 1 ] && printf '[would] %s\n' "$*" || printf '[done]  %s\n' "$*"; }
 
-descendants(){ local p c; for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
 killtree(){ # $* pids: TERM then KILL the process groups/pids (no-op in dry run)
   [ "$DRY" = 1 ] && return 0
   local p; for p in "$@"; do kill -TERM "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true; done
   sleep 1
   for p in "$@"; do kill -KILL "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null || true; done
 }
-# killtree_verified <root> <glob>... : killtree for a root pid read from a FILE (.team/active).
-# The root is re-verified with proc_pid_is_run_daemon before the delayed SIGKILL (it may have exited
+# killtree_verified <root> : killtree for a role's root pid read from a FILE (.team/active).
+# The root is re-verified with proc_pid_is_run_claude before the delayed SIGKILL (it may have exited
 # on TERM and its number been reused in the second between), and a descendant is SIGKILLed only if it
 # still carries this run's environment.
 killtree_verified() {
   [ "$DRY" = 1 ] && return 0
   local root="$1" p d; shift
-  d="$(descendants "$root")"
+  d="$(proc_descendants "$root")"
   kill -TERM "-$root" 2>/dev/null || kill -TERM "$root" 2>/dev/null || true
   for p in $d; do kill -TERM "$p" 2>/dev/null || true; done
   sleep 1
-  if proc_pid_is_run_daemon "$root" "$@"; then
+  if proc_pid_is_run_claude "$root"; then
     kill -KILL "-$root" 2>/dev/null || kill -KILL "$root" 2>/dev/null || true
   elif [ ! -d "/proc/$root" ] || /usr/bin/grep -q '^State:[[:space:]]*Z' "/proc/$root/status" 2>/dev/null; then
     # The root exited on TERM. Its group can still hold members that ignored TERM (orphans not in
@@ -83,21 +84,27 @@ killtree_verified() {
 }
 # reap_pidfile_daemon <name>: one of this run's pidfile daemons, gated like panic.sh's _reap_daemon.
 # A refused pid gets one line naming pid, file and why; the pidfile is ours ($TEAM_DIR) and stale.
+# The descendant tree is captured BEFORE the TERM, as in stop-team.sh: the observer has no TERM
+# trap and dies at once, so pkill -P afterwards misses its model call (subshell -> timeout ->
+# claude -p). A captured pid is signalled only while it carries this run's environment.
 reap_pidfile_daemon() {
-  local name="$1" pidf="$TEAM_DIR/$1.pid" globs=()
+  local name="$1" pidf="$TEAM_DIR/$1.pid" globs=() kids k
   [ -f "$pidf" ] || return 0
   mapfile -t globs < <(proc_run_daemon_globs "$name")
   if proc_pidfile_verdict "$pidf" "${globs[@]}"; then
     tag "kill $name (pid $PM_PID)"
     [ "$DRY" = 1 ] && return 0
+    kids="$(proc_descendants "$PM_PID")"
     kill -TERM "$PM_PID" 2>/dev/null || true
     pkill -TERM -P "$PM_PID" 2>/dev/null || true
+    for k in $kids; do proc_pid_has_run_env "$k" && kill -TERM "$k" 2>/dev/null; done
     sleep 1
     # Re-verify before escalating: a daemon that exited on TERM leaves a number that can be reused.
     if proc_pid_is_run_daemon "$PM_PID" "${globs[@]}"; then
       pkill -KILL -P "$PM_PID" 2>/dev/null || true
       kill -KILL "$PM_PID" 2>/dev/null || true
     fi
+    for k in $kids; do proc_pid_has_run_env "$k" && kill -KILL "$k" 2>/dev/null; done
   elif [ "$PM_WHY" != "not running" ]; then
     tag "skip $name: pid $PM_PID from $pidf $PM_WHY; not signalled, pidfile removed"
   fi
@@ -112,7 +119,7 @@ echo "== socket=$TEAM_TMUX session=$TEAM_SESSION bus-port=$TEAM_PORT  mode=$([ "
 if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
   tree=""
   for pp in $(tmux list-panes -s -t "$TEAM_SESSION" -F '#{pane_pid}' 2>/dev/null); do
-    tree="$tree $pp $(descendants "$pp")"
+    tree="$tree $pp $(proc_descendants "$pp")"
   done
   tag "kill tmux session $TEAM_SESSION and its pane trees:$tree"
   if [ "$DRY" = 0 ]; then killtree $tree; tmux kill-session -t "$TEAM_SESSION" 2>/dev/null || true; fi
@@ -124,10 +131,10 @@ fi
 if [ -f "$TEAM_DIR/active" ]; then
   while IFS=$'\t' read -r pid wid role; do
     [ -n "${pid:-}" ] || continue
-    # This run's claude only (program position claude + this run's environ): the old args grep for
-    # "claude" passed any process mentioning it, and the kill is a PROCESS-GROUP kill.
-    if proc_pid_is_run_daemon "$pid" claude; then
-      tag "reap recorded role '$role' (pid $pid)"; killtree_verified "$pid" claude
+    # This run's claude only (a claude by what it executes + this run's environ): the old args grep
+    # for "claude" passed any process mentioning it, and the kill is a PROCESS-GROUP kill.
+    if proc_pid_is_run_claude "$pid"; then
+      tag "reap recorded role '$role' (pid $pid)"; killtree_verified "$pid"
     elif [ -d "/proc/$pid" ]; then
       tag "skip recorded role '$role': pid $pid from $TEAM_DIR/active is alive but not this run's claude; not signalled"
     fi
@@ -169,7 +176,7 @@ for cp in "${_clients[@]:-}"; do
   a="$cp"; cl=""
   for _ in 1 2 3 4 5 6 7 8; do
     pa=$(ps -o ppid= -p "$a" 2>/dev/null | tr -d ' '); [ -n "$pa" ] || break
-    [ "$(ps -o comm= -p "$pa" 2>/dev/null)" = "claude" ] && { cl="$pa"; break; }
+    proc_pid_is_claude_shape "$pa" && { cl="$pa"; break; }   # any run: classify_role sorts them
     a="$pa"
   done
   [ -n "$cl" ] || continue
@@ -187,7 +194,7 @@ for _d in /proc/[0-9]*; do
     case "${_a[$((_i-1))]}" in */bus-inbox.py|bus-inbox.py) ;; *) break ;; esac
     role="${_a[$((_i+1))]:-}"; cl="${_a[$((_i+2))]:-}"
     case "$cl" in ''|*[!0-9]*) break ;; esac
-    [ "$(ps -o comm= -p "$cl" 2>/dev/null)" = claude ] || break
+    proc_pid_is_claude_shape "$cl" || break
     _pump_of[$cl]="${_d#/proc/}"
     classify_role "$cl" "$role"
     break
@@ -196,7 +203,7 @@ done
 if [ "${#signed[@]}" -gt 0 ]; then
   for o in "${signed[@]}"; do cl="${o%%:*}"; role="${o#*:}"
     tag "reap orphaned role '$role' (this clone; claude pid $cl + tree${_pump_of[$cl]:+; bus-inbox pump ${_pump_of[$cl]} + client})"
-    killtree "$cl" $(descendants "$cl") ${_pump_of[$cl]:+${_pump_of[$cl]} $(descendants "${_pump_of[$cl]}")}; done
+    killtree "$cl" $(proc_descendants "$cl") ${_pump_of[$cl]:+${_pump_of[$cl]} $(proc_descendants "${_pump_of[$cl]}")}; done
 else
   echo "   no signed orphans (launched by this clone's launch-team)"
 fi
@@ -218,14 +225,15 @@ if [ "${#unsigned[@]}" -gt 0 ]; then
 fi
 
 # 3b. Pidfile daemons: api-watchdog, tmux-watchdog (May-2026: detects a dead tmux server),
-# compaction-watchdog, host-ram-watchdog, disk-tmp-watchdog,
+# permission-mode-watchdog, compaction-watchdog, host-ram-watchdog, disk-tmp-watchdog,
 # chrome-supervisor, observer, intake-poller (detached nohup daemons that cleanup did not handle
 # before 2026-06-01, so they leaked past a cleanup/reset; the host-ram/disk-tmp
-# resource watchdogs were missing from this list until 2026-07-20). pkill -P reaps each daemon's
+# resource watchdogs were missing from this list until 2026-07-20, permission-mode-watchdog until
+# 2026-11-10: it loops forever, and step 5 removes its pidfile). pkill -P reaps each daemon's
 # backgrounded sleep child, which holds the per-TEAM_DIR flock fd and would otherwise block a
 # relaunch for one INTERVAL. Every pid is gated by reap_pidfile_daemon.
-for _d in api-watchdog tmux-watchdog compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
-          chrome-supervisor observer intake-poller; do
+for _d in api-watchdog tmux-watchdog permission-mode-watchdog compaction-watchdog host-ram-watchdog \
+          disk-tmp-watchdog chrome-supervisor observer intake-poller; do
   reap_pidfile_daemon "$_d"
 done
 
@@ -241,7 +249,12 @@ done
 
 # 5. Run state.
 if [ -d "$TEAM_DIR" ]; then
-  tag "remove .team/ (ledger, prompts, evidence, active)"
+  tag "remove $TEAM_DIR (ledger, prompts, evidence, active)"
+  # Only the run dir this session owns (bin/lib/team-dir-guard.sh); anything else is refused.
+  if [ "$DRY" = 0 ]; then
+    # shellcheck source=bin/lib/team-dir-guard.sh
+    . "$repo/bin/lib/team-dir-guard.sh" && tdg_guard_rmrf_owned "$TEAM_DIR" || exit 1
+  fi
   [ "$DRY" = 0 ] && rm -rf "$TEAM_DIR"
 fi
 

@@ -7,7 +7,7 @@
 # Use it for out-of-band control. Conventions roles honor (see CLAUDE.md):
 #   bin/team-broadcast.sh 'pause: stop work and wait'
 #   bin/team-broadcast.sh 'resume: continue'
-#   bin/team-broadcast.sh 'priority: re-read the goal in .team/state.md'
+#   bin/team-broadcast.sh 'priority: re-read the goal in $TEAM_DIR/state.md'
 #
 # Usage: bin/team-broadcast.sh '<message>'
 
@@ -18,7 +18,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 active="$TEAM_DIR/active"
 msg="${1:?usage: team-broadcast.sh '<message>'}"
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
-[ -f "$active" ] || { echo "no roles recorded (.team/active). Nothing to broadcast to." >&2; exit 1; }
+[ -f "$active" ] || { echo "no roles recorded ($active). Nothing to broadcast to." >&2; exit 1; }
 
 sent=0
 while IFS=$'\t' read -r pid wid role; do

@@ -98,6 +98,23 @@ check "delegating bare Task( no spinner" delegating \
   ⎿  Task(analyze X)
 $INPUT_BOX"
 
+# --- role names: the bus-name rule (no leading or trailing hyphen) ---
+name_rc() { # name expected-exit role
+  local rc
+  printf '%s' "$INPUT_BOX" > "$tmp/cap"
+  ROLE_ACTIVITY_CAPTURE="$tmp/cap" "$SCRIPT" "$3" >/dev/null 2>&1; rc=$?
+  if [ "$rc" = "$2" ]; then
+    pass=$((pass+1)); printf '  ok   %-42s -> exit %s\n' "$1" "$rc"
+  else
+    fail=$((fail+1)); printf '  FAIL %-42s -> exit %s, want %s\n' "$1" "$rc" "$2"
+  fi
+}
+name_rc "trailing hyphen refused (reviewer-)" 2 reviewer-
+name_rc "leading hyphen refused (-reviewer)" 2 -reviewer
+name_rc "inner hyphen accepted (peer-reviewer1)" 0 peer-reviewer1
+name_rc "one character accepted (a)" 0 a
+name_rc "41 characters refused" 2 "a$(printf 'b%.0s' $(seq 1 40))"
+
 echo
 echo "role-activity: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

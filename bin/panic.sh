@@ -14,7 +14,9 @@
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$repo/bin/team-env.sh"
+# team-env.sh returns 1 when it refuses a pre-set TEAM_DIR (another run's, or a stray export);
+# nothing below may run on that unvalidated state.
+. "$repo/bin/team-env.sh" || exit 1
 # IDENTITY CHECK, OR A LOUD FALLBACK. Every pid read from a file is
 # signalled only if it is THIS run's process (proc_pid_is_run_daemon: the program in program
 # position, this run's TEAM_RUN_ID/TEAM_DIR in its environ). This is the emergency stop, so it must
@@ -25,7 +27,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # pid-from-a-file below. The tmux pane trees need no identity check and are always killed.
 pm_mode=identity; pm_why=""
 # shellcheck source=bin/lib/pid-identity.sh
-if ! . "$repo/bin/lib/pid-identity.sh" 2>/dev/null || ! declare -F proc_pid_is_run_daemon proc_pid_is_run_bus_server >/dev/null; then
+if ! . "$repo/bin/lib/pid-identity.sh" 2>/dev/null || ! declare -F proc_pid_is_run_daemon proc_pid_is_run_claude proc_pid_is_run_bus_server >/dev/null; then
   pm_mode=args; pm_why="bin/lib/pid-identity.sh did not load"
 elif [ ! -r "/proc/$$/environ" ]; then
   pm_mode=args; pm_why="/proc/<pid>/environ is not readable on this host"
@@ -47,6 +49,10 @@ _args_match() {
 # _is_run <pid> <glob>...: this run's process running one of the globs.
 _is_run() {
   if [ "$pm_mode" = identity ]; then proc_pid_is_run_daemon "$@"; else _args_match "$@"; fi
+}
+# _is_run_claude <pid>: this run's claude, by what it executes (native, npm or versions-path install).
+_is_run_claude() {
+  if [ "$pm_mode" = identity ]; then proc_pid_is_run_claude "$1"; else _args_match "$1" claude; fi
 }
 # _owns_listen_port <pid> <port>: <pid> holds a LISTENING TCP socket on <port> -- the socket inode
 # from /proc/net/tcp{,6} (state 0A) is one of its fds. Library-free on purpose (it runs in the
@@ -80,14 +86,16 @@ _is_run_bus() {
 }
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 
-# Collect a pid and all its descendants.
-descendants() { local p c; for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
+# Collect a pid's descendants: proc_descendants from bin/lib/pid-identity.sh; this copy keeps the
+# pane sweep and the daemon reap working when the library did not load.
+declare -F proc_descendants >/dev/null 2>&1 \
+  || proc_descendants() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; proc_descendants "$c"; done; }
 
 killed=0
 tree=""
 if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
   for pp in $(tmux list-panes -s -t "$TEAM_SESSION" -F '#{pane_pid}' 2>/dev/null); do
-    tree="$tree $pp $(descendants "$pp")"
+    tree="$tree $pp $(proc_descendants "$pp")"
   done
   # signal process groups, then kill the session, then SIGKILL the captured tree
   for p in $tree; do kill -TERM "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true; done
@@ -104,7 +112,7 @@ if [ -f "$TEAM_DIR/active" ]; then
     [ -n "${pid:-}" ] || continue
     # A GROUP kill: gated on this run's claude, not "args contain claude" (a stale active line
     # after a reboot could name any process, and -pid takes its whole group).
-    if _is_run "$pid" claude; then
+    if _is_run_claude "$pid"; then
       kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
       echo "panic: killed $role (pid $pid)"; killed=1
     elif [ -d "/proc/$pid" ] && [ ! -r "/proc/$pid/environ" ]; then
@@ -116,21 +124,10 @@ if [ -f "$TEAM_DIR/active" ]; then
   rm -f "$TEAM_DIR/active"
 fi
 
-# API watchdog (if launch-team.sh started one).
-wd_pidf="$TEAM_DIR/api-watchdog.pid"
-if [ -f "$wd_pidf" ]; then
-  wd_pid="$(cat "$wd_pidf" 2>/dev/null || true)"
-  if [ -n "$wd_pid" ] && _is_run "$wd_pid" "bin/api-watchdog.sh"; then
-    kill -KILL "$wd_pid" 2>/dev/null || true
-    echo "panic: killed api-watchdog (pid $wd_pid)"; killed=1
-  elif [ -n "$wd_pid" ] && [ -d "/proc/$wd_pid" ]; then
-    echo "panic: stale api-watchdog pidfile: pid $wd_pid is not this run's api-watchdog; not signalled, pidfile removed"
-  fi
-  rm -f "$wd_pidf"
-fi
-
-# All detached nohup daemons: tmux-watchdog, chrome-supervisor, observer, the
+# All detached nohup daemons: api-watchdog, tmux-watchdog, chrome-supervisor, observer, the
 # intake poller, AND every resource watchdog (compaction / host-ram / disk-tmp).
+# The api-watchdog had its own block until 2026-11-10 that SIGKILLed the parent only: its
+# foreground `sleep 30` inherits the flock fd (fd 200) and kept the lock for up to 30 s.
 # The tmux pane-tree sweep above does NOT reach them, so panic must reap them by
 # pidfile or they leak past a panic. History: 2026-06-01 panic killed only the
 # api-watchdog and orphaned the rest; 2026-07-20 the reap list was
@@ -144,6 +141,11 @@ fi
 # INTERVAL -- long enough to block the resume's relaunch. So reap the CHILD too:
 # `kill -TERM` lets the daemon's own TERM/EXIT trap reap its sleep, and
 # `pkill -P` frees the lock at once for the pre-trap (older-code) instances.
+# The descendant tree is captured BEFORE the TERM, as in stop-team.sh: a daemon without a TERM
+# trap (the observer) dies at once, its children are re-parented, and pkill -P then finds
+# nothing, so a model call in progress (subshell -> timeout -> claude -p) ran on. A captured pid
+# is signalled while it carries this run's environment; without the identity check (fallback
+# mode) it is signalled as the pane trees are, by having been captured.
 # Script globs per daemon; the intake poller is project-configured (team-spawn start_intake_poller).
 _daemon_globs() {
   # The shared resolver (it also reads project.conf, as stop-team and cleanup do) when it loaded.
@@ -153,27 +155,34 @@ _daemon_globs() {
     *) printf '%s\n' "bin/$1.sh" ;;
   esac
 }
+_kid_signal() {   # <signal> <pid>: a descendant captured before its daemon's TERM
+  if [ "$pm_mode" = identity ]; then proc_pid_has_run_env "$2" || return 0; fi
+  kill "-$1" "$2" 2>/dev/null || true
+}
 _reap_daemon() {
-  local name="$1" pidf="$TEAM_DIR/$1.pid" pid globs=()
+  local name="$1" pidf="$TEAM_DIR/$1.pid" pid globs=() kids k
   [ -f "$pidf" ] || return 0
   mapfile -t globs < <(_daemon_globs "$name")
   pid="$(cat "$pidf" 2>/dev/null || true)"
   if [ -n "$pid" ] && _is_run "$pid" "${globs[@]}"; then
+    kids="$(proc_descendants "$pid")"
     kill -TERM "$pid" 2>/dev/null || true          # trap-aware exit (new code self-reaps its sleep)
     pkill -TERM -P "$pid" 2>/dev/null || true       # reap the sleep child -> frees the flock fd now
+    for k in $kids; do _kid_signal TERM "$k"; done
     sleep 0.3
     # Re-verify before escalating: a daemon that exited on TERM leaves a pid that can be reused.
     if _is_run "$pid" "${globs[@]}"; then
       pkill -KILL -P "$pid" 2>/dev/null || true     # force any survivor sleep
       kill -KILL "$pid" 2>/dev/null || true         # force the parent if it ignored TERM
     fi
+    for k in $kids; do _kid_signal KILL "$k"; done
     echo "panic: killed $name (pid $pid) + reaped its sleep child"; killed=1
   elif [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
     echo "panic: stale $name pidfile: pid $pid is not this run's $name; not signalled, pidfile removed"
   fi
   rm -f "$pidf"
 }
-for _d in compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
+for _d in api-watchdog compaction-watchdog host-ram-watchdog disk-tmp-watchdog \
           tmux-watchdog permission-mode-watchdog chrome-supervisor observer intake-poller; do
   _reap_daemon "$_d"
 done

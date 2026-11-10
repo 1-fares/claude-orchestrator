@@ -18,6 +18,9 @@
 #   COMMUNICATOR_DISABLED=1   skip-spawn no-op.
 #   CLAUDE_BIN=<path>         override the claude binary (default: claude on PATH).
 #                             The verify harness sets this to a stub.
+#   TEAM_ROLE_CMD=<path>      the role command bin/lib/team-spawn.sh starts every
+#                             role with; used here when CLAUDE_BIN is unset, so a
+#                             stub-backed team (tests/b9) gets a stub communicator.
 #
 # Idempotency: a second invocation skips when the tmux window already exists
 # (tmux mode) or when the operator runs --foreground from another shell while
@@ -50,6 +53,7 @@ team's dedicated socket. Reattaches if the window already exists.
 Env:
   COMMUNICATOR_DISABLED=1   skip-spawn no-op.
   CLAUDE_BIN=<path>         override the claude binary (default: claude).
+  TEAM_ROLE_CMD=<path>      used when CLAUDE_BIN is unset (the roles' command).
 EOF
 }
 
@@ -77,9 +81,11 @@ chmod 0700 "$TEAM_DIR/comm" 2>/dev/null || true
 role_file="$repo/roles/user-communicator.md"
 [ -f "$role_file" ] || { echo "role file missing: $role_file" >&2; exit 2; }
 
-claude_bin="${CLAUDE_BIN:-claude}"
+# CLAUDE_BIN first (this launcher's own override), then TEAM_ROLE_CMD (what
+# team-spawn.sh starts every other role with), then claude on PATH.
+claude_bin="${CLAUDE_BIN:-${TEAM_ROLE_CMD:-claude}}"
 command -v "$claude_bin" >/dev/null \
-  || { echo "$claude_bin not on PATH (use CLAUDE_BIN to override)" >&2; exit 1; }
+  || { echo "$claude_bin not on PATH (use CLAUDE_BIN or TEAM_ROLE_CMD to override)" >&2; exit 1; }
 
 # Pre-trust the clone so the interactive session skips the trust prompt.
 [ -x "$repo/bin/trust-workdir.sh" ] && "$repo/bin/trust-workdir.sh" "$repo" >/dev/null 2>&1 || true
@@ -95,8 +101,13 @@ Your bus identity is 'communicator'. The team's scripts live at \$ORCH_HOME
 \$TEAM_DIR/comm/.
 
 Do these in order:
-1. Join the bus via the /is Claude Code skill (a slash command, not a shell
-   binary, do NOT use Bash for this):   /is c communicator
+1. Join the bus (bus-inbox, never a Monitor on client.py, never /is c). Bash:
+      python3 \$ORCH_HOME/bin/bus-inbox.py start communicator
+   then arm the reader with Bash run_in_background:
+      python3 \$ORCH_HOME/bin/bus-inbox.py wait communicator 7200
+   Each time it completes, in ONE response: Read its output AND run that wait
+   again (CLAUDE.md "Join the bus first" has the rest). Send with /is s as below.
+   The role file below still says /is c; do this step instead.
 2. Read these files: \$ORCH_HOME/CLAUDE.md, $role_file
 3. Read the five state files listed in the role file under "Conversation
    persistence across TUI sessions" BEFORE greeting the operator:
@@ -109,16 +120,15 @@ Do these in order:
    ("communicator attached, conversation has <N> turns, <M> open questions")
    to the operator surface, and report to the orchestrator:
      /is s orchestrator 'status: communicator ready'
-5. Then act on incoming bus traffic and inbound.jsonl polls per the role spec.
+5. Then act on incoming bus traffic per the role spec.
    Stay in the role. Send anything longer than a sentence as a file pointer.
 EOF
 
 flags="--dangerously-skip-permissions"
 # Same tiered policy as every role (override: TEAM_MODEL_COMMUNICATOR /
 # TEAM_MODEL_TOP). The communicator is judgment-dense operator liaison work.
-comm_model="$(model_for communicator)"
-model_flag=""
-[ -n "$comm_model" ] && model_flag="--model $comm_model"
+comm_model="$(model_for communicator)"   # never empty (see model_for)
+model_flag="--model $comm_model"
 record_role_model communicator "$comm_model"
 
 if [ "$mode" = foreground ]; then
@@ -162,14 +172,22 @@ launch="$launch && exec $claude_bin $flags $model_flag \"\$(cat $(printf %q "$pf
 
 if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
   info="$(tmux new-window -d -t "$TEAM_SESSION" -P -F '#{pane_pid} #{window_id}' \
-            -n communicator "bash -lc $(printf %q "$launch")")"
+            -n communicator "bash -lc $(printf %q "$launch")")" || info=""
 else
   info="$(tmux new-session -d -s "$TEAM_SESSION" -P -F '#{pane_pid} #{window_id}' \
-            -n communicator "bash -lc $(printf %q "$launch")")"
+            -n communicator "bash -lc $(printf %q "$launch")")" || info=""
 fi
 pid="${info%% *}"
 wid="${info##* }"
+# No `set -e` here: a failed tmux call used to record an empty pid in active, print
+# "launched" and exit 0. Fail instead, with nothing recorded.
+case "$pid" in
+  ''|*[!0-9]*)
+    echo "communicator: tmux could not create the 'communicator' window (session '$TEAM_SESSION', socket '$TEAM_TMUX'); nothing recorded in active" >&2
+    exit 1 ;;
+esac
 # Record in $TEAM_DIR/active so stop-team.sh / cleanup.sh / api-watchdog see it
-# the same way as any other role pane.
-printf '%s\t%s\tcommunicator\n' "$pid" "$wid" >> "$TEAM_DIR/active"
+# the same way as any other role pane. Under the roster lock (add-role.sh,
+# retire-role.sh and launch-team.sh rewrite active).
+( if command -v flock >/dev/null 2>&1; then flock -w 30 9 || true; fi; printf '%s\t%s\tcommunicator\n' "$pid" "$wid" >> "$TEAM_DIR/active" ) 9>"$TEAM_DIR/.roster.lock"
 echo "launched communicator (pid $pid, window $wid, tmux: $TEAM_SESSION)"

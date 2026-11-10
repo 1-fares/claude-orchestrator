@@ -52,6 +52,7 @@ sleep 0.3
 printf '%s\t@0\tx\n' "$P_COMM" > "$SCRATCH/bycomm/active"; printf '%s\t@0\tx\n' "$P_ARGV0" > "$SCRATCH/byargv0/active"
 tdg_is_live_run_dir "$SCRATCH/bycomm" && ok "is_live_run_dir: a live process named claude (comm) flags" || bad "did not flag a live process named claude"
 tdg_is_live_run_dir "$SCRATCH/byargv0" && ok "is_live_run_dir: a live process with argv0 claude flags" || bad "did not flag a live process with argv0 claude"
+pkill -P "$P_COMM" 2>/dev/null   # its `sleep 30` child outlives a kill of the parent
 kill "$P_COMM" "$P_ARGV0" 2>/dev/null; wait "$P_COMM" "$P_ARGV0" 2>/dev/null
 # 2d) a native install exec'd by its real path (CLAUDE_BIN=~/.local/share/claude/versions/<v>): comm and argv0's
 #     basename are the version, so only the executable's location says claude. Both shapes flag: the versions path
@@ -67,6 +68,7 @@ tdg_is_live_run_dir "$SCRATCH/byver" && ok "is_live_run_dir: a claude exec'd by 
 if [ -e "/proc/$P_LINK/exe" ]; then
   tdg_is_live_run_dir "$SCRATCH/bylink" && ok "is_live_run_dir: a claude exec'd through a non-claude-named link flags (by its executable)" || bad "did not flag a claude exec'd through a link named runner"
 fi
+pkill -P "$P_VER" 2>/dev/null; pkill -P "$P_LINK" 2>/dev/null   # their `sleep 30` children
 kill "$P_VER" "$P_LINK" 2>/dev/null; wait "$P_VER" "$P_LINK" 2>/dev/null
 
 # 3) tdg_guard_rmrf: refuses the run dir, removes the plain dir.

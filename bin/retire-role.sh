@@ -23,7 +23,8 @@
 #   --reason "<why>"  justification recorded in the decision-log (advised)
 #   --force           retire even with in-flight units (re-files them as todo)
 #   --no-graceful     skip the "stop and save" pane pass; TERM/KILL straight away
-#   --no-ntfy         suppress the ntfy push even when NTFY_URL is set
+#   --no-ntfy         do not send the operator notice (class `info`: the daily
+#                     digest through bin/lib/notify.sh, never a push of its own)
 #
 # Requires: tmux.
 
@@ -33,21 +34,18 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/team-env.sh
 . "$repo/bin/team-env.sh"
 # shellcheck source=bin/lib/roster.sh
-. "$repo/bin/lib/roster.sh"
+. "$repo/bin/lib/roster.sh"   # also wid_in_session, and pid-identity.sh
+# shellcheck source=bin/lib/notify.sh
+. "$repo/bin/lib/notify.sh"
+NOTIFY_SOURCE=retire-role
 
 session="$TEAM_SESSION"
 active="$TEAM_DIR/active"
 
-# True only if window id $1 currently belongs to THIS run's session. Guards the
-# window operations so a stale active entry (e.g. after a tmux server restart,
-# when ids restart at @0) can never send-keys to, or kill, an unrelated window.
-# The pid-group kill is guarded separately by kill -0 + is_claude, so a role with
-# no matching window is still reaped by pid.
-wid_in_session() {
-  [ -n "${1:-}" ] || return 1
-  tmux has-session -t "$session" 2>/dev/null || return 1
-  tmux list-windows -t "$session" -F '#{window_id}' 2>/dev/null | grep -qx "$1"
-}
+# Window operations (the graceful pass, kill-window) are guarded by wid_in_session
+# (bin/lib/roster.sh): only a window of THIS run's session. The pid-group kill is
+# guarded separately by leader_is_ours, so a role with no matching window is still
+# reaped by pid.
 
 # Recursively list a pid's descendants. claude's /is client is setsid'd into its
 # OWN process group, so a leader process-group kill can miss it; we reap the
@@ -82,6 +80,13 @@ owned_by_this_run() {
   return 0
 }
 
+# A recorded LEADER (the pid in active, a process-GROUP kill) must also be a claude
+# process, by the identity check stop-team.sh uses (proc_pid_is_run_claude: a claude by
+# what it executes, any install, with this run's environ). The environment alone also matches every daemon and tool child of
+# this run, so a recycled leader pid now held by one of them was signalled. Descendants
+# (MCP servers, the /is client) are not claude and keep the environment check only.
+leader_is_ours() { owned_by_this_run "$1" && proc_pid_is_run_claude "$1"; }
+
 usage() {
   echo "usage: $0 <role> [--reason \"<why>\"] [--force] [--no-graceful] [--no-ntfy]" >&2
   exit 2
@@ -94,7 +99,7 @@ while [ $# -gt 0 ]; do
     --force)       force=1; shift ;;
     --no-graceful) graceful=0; shift ;;
     --no-ntfy)     no_ntfy=1; shift ;;
-    -h|--help)     sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '2,29p' "$0"; exit 0 ;;
     -*) echo "unknown arg: $1" >&2; usage ;;
     *)  [ -z "$role" ] && role="$1" || { echo "unexpected arg: $1" >&2; usage; }; shift ;;
   esac
@@ -160,7 +165,7 @@ fi
 declare -a desc_pids=()
 for pid in "${m_pids[@]}"; do
   [ -n "${pid:-}" ] || continue
-  if owned_by_this_run "$pid"; then
+  if leader_is_ours "$pid"; then
     while read -r d; do [ -n "$d" ] && desc_pids+=("$d"); done < <(descendants "$pid")
   fi
 done
@@ -178,7 +183,7 @@ fi
 # the captured descendants (and their own groups), so a setsid'd /is client dies.
 for pid in "${m_pids[@]}"; do
   [ -n "${pid:-}" ] || continue
-  if owned_by_this_run "$pid"; then
+  if leader_is_ours "$pid"; then
     kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
     echo "TERM $role (pid $pid)"
   fi
@@ -194,7 +199,7 @@ sleep 2
 # to this session's wids).
 for i in "${!m_pids[@]}"; do
   pid="${m_pids[$i]}"; wid="${m_wids[$i]}"
-  if owned_by_this_run "$pid"; then
+  if leader_is_ours "$pid"; then
     kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
     echo "KILL $role (pid $pid)"
   fi
@@ -210,7 +215,7 @@ done
 survivors=0
 for pid in "${m_pids[@]}"; do
   [ -n "${pid:-}" ] || continue
-  if owned_by_this_run "$pid"; then
+  if leader_is_ours "$pid"; then
     echo "WARNING: $role (pid $pid) still alive after KILL" >&2; survivors=$((survivors + 1))
   fi
 done
@@ -254,12 +259,11 @@ remaining="$(live_role_count)"
 echo "retired $role / $remaining live role(s) remain"
 echo "archived to: $retired_dir"
 
-# ntfy push (autonomous-mode roster-change notice).
-if [ "$no_ntfy" -eq 0 ] && [ -n "${NTFY_URL:-}" ]; then
-  curl -sS -m 5 -X POST \
-    -H "Title: team shrank: -$role" \
-    -d "retired $role (reason: $reason_txt). $remaining live role(s) remain." \
-    "$NTFY_URL" -o /dev/null 2>/dev/null \
-    && echo "ntfy: roster-change push sent" \
-    || echo "ntfy: push failed (non-fatal)" >&2
+# Operator notice. A role retire is class `info` (docs/OPERATOR-PAGING.md): it goes to
+# the daily digest through bin/lib/notify.sh and is never pushed on its own.
+if [ "$no_ntfy" -eq 0 ]; then
+  notify_operator info "team shrank: -$role" \
+    "retired $role (reason: $reason_txt). $remaining live role(s) remain." \
+    && echo "notify: roster change recorded for the operator digest" \
+    || echo "notify: could not record the roster change (non-fatal)" >&2
 fi

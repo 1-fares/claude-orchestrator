@@ -13,6 +13,24 @@
 #       session, bus server, role and daemon.
 #   S   stop-team.sh pass 2: a role whose claude already exited leaves members in its process group.
 #       The group is SIGKILLed when every live member is this run's, left (with one line) when not.
+# The spawn side, same identity rules (roles are a stand-in `claude` script, every daemon disabled):
+#   L   launch-team.sh: takes the roster lock (a line written under it by another holder is reaped
+#       after it, not lost), keeps a started tmux server off that lock, does not spawn a live role
+#       twice, reaps a live non-claude whose args contain "claude", keeps a live pane pid that is
+#       not yet claude (the launching shell before its exec) when its window is in this session,
+#       refuses `reviewer-`, names
+#       the launcher that starts a missing curated role, and carries on to the communicator and the
+#       curated-role check when the is-skill's list.py exits 1 ("not connected").
+#   A   add-role.sh / retire-role.sh: a blank --reason and `delta-` are refused; a non-claude line in
+#       active does not count toward the cap; add and retire are `info` notices (digest, no curl);
+#       retire does not signal a leader pid now held by one of this run's daemons; a name whose
+#       window exists without a live line in active is refused, and --auto-number skips it.
+#   CM  communicator.sh: a failed tmux call exits 1 and records nothing; the prompt no longer names
+#       inbound.jsonl; with CLAUDE_BIN unset it starts TEAM_ROLE_CMD.
+#   SO  start-orchestrator.sh honours CLAUDE_BIN with no claude on PATH.
+#   TS  team-status.sh: ALIVE is this run's claude by identity, not "claude" in the args line.
+#   D   team-spawn opens daemon logs in append mode: an old log is kept, and a log truncated by the
+#       rotation is not regrown with NUL bytes.   M  model_for never prints an empty model.
 #
 # ISOLATION as in pidfile-stop-cleanup.test.sh: the scripts run from a COPY of bin/ in a sandbox
 # repo, HOME is sandboxed (bus pidfile dir), TEAM_TMUX is a throwaway socket, stop-team runs
@@ -47,6 +65,9 @@ for n in tmux-watchdog chrome-supervisor pipe-daemon; do
   printf '#!/usr/bin/env bash\nwhile true; do sleep 1; done\n' > "$SB/d/bin/$n.sh"
 done
 printf 'import sys, time\nwhile True: time.sleep(1)\n' > "$SB/d/bin/server.py"
+# The api-watchdog's shape: a TERM trap that waits for a FOREGROUND sleep, which inherits the flock fd.
+# A SIGKILL of the parent alone (panic before 2026-11-10) orphans that sleep with the lock for 30 s.
+printf '#!/usr/bin/env bash\ntrap "exit 0" TERM\nwhile true; do sleep 30; done\n' > "$SB/d/bin/api-watchdog.sh"
 # A server.py that really LISTENS (panic's socket-ownership gate), on $LISTEN_PORT; no --port needed.
 mkdir -p "$SB/d/lbin"
 printf 'import os, socket, time\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\ns.bind(("127.0.0.1", int(os.environ["LISTEN_PORT"])))\ns.listen(1)\nwhile True: time.sleep(1)\n' > "$SB/d/lbin/server.py"
@@ -71,6 +92,12 @@ orphans(){ ps -eo pid=,pgid=,ppid=,stat= | awk -v g="$1" '$2==g && $1!=g && $3!=
 run_as_run(){ env -u TEAM_DIR -u TEAM_PORT -u INTER_SESSION_PORT -u TEAM_SESSION -u ORCH_HOME TEAM_RUN_ID="$RID" TEAM_TMUX="$SOCK" HOME="$SB/home" "$@" 2>&1; }
 reset_procs(){ local k; while read -r k; do pkill -9 -P "$k" 2>/dev/null; kill -9 "-$k" 2>/dev/null; kill -9 "$k" 2>/dev/null || true; done < "$KIDS"
                : > "$KIDS"; tmux -L "$SOCK" kill-server 2>/dev/null; sleep 0.3; }
+# settled <pid>...: wait (up to 5 s) until each started process runs its final program, not yet env,
+# setsid or the exec -a wrapper. An identity row read before that would judge the wrapper.
+settled(){ local p n c s; for n in 1 2 3 4 5 6 7 8 9 10; do c=0
+  for p in "$@"; do s="$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)"
+    case "$s" in ''|env\ *|*/env\ *|setsid\ *|*/setsid\ *|*'exec -a "$0" "$@"'*) c=1 ;; esac; done
+  [ "$c" = 0 ] && return 0; sleep 0.5; done; return 1; }
 
 echo "=== U: pid-identity units ($SRC) ==="
 u(){ env TEAM_RUN_ID="$RID" TEAM_DIR="$TD" bash -c '. "$1/bin/lib/pid-identity.sh"; shift; "$@"' _ "$R" "$@"; }
@@ -110,6 +137,33 @@ u proc_pid_is_run_bus_server "$SRV_EQ" "$PORT" && ok "--port= form: bus gate acc
 u proc_pid_is_run_bus_server "$SRV_SP" "$PORT" && ok "bus gate accepts --port $PORT" || no "bus gate --port N" ""
 u proc_pid_is_run_bus_server "$SRV_P1" "$PORT" && no "bus gate refuses another port" "" || ok "bus gate refuses this run's server on ANOTHER port"
 u proc_pid_is_run_bus_server "$SRV_FX" "$PORT" && no "bus gate refuses another run" "" || ok "bus gate refuses ANOTHER run's server on this port"
+# A claude is judged by what it executes: a script named claude, an npm install (argv[0] node, its
+# script in the @anthropic-ai/claude-code package), a native install exec'd by its claude/versions/
+# path. Never a process whose args merely contain the word or the package path.
+NPMCLI="$SB/d/pkg/node_modules/@anthropic-ai/claude-code/cli.js"
+mkdir -p "$SB/d/cl" "${NPMCLI%/*}"
+printf '#!/usr/bin/env bash\nwhile :; do sleep 1; done\n' > "$SB/d/cl/claude"; chmod +x "$SB/d/cl/claude"
+cp "$SB/d/cl/claude" "$NPMCLI"
+CL_SCRIPT="$(start "$RID" "$SB/d/cl/claude")"
+CL_BARE="$(start - "$SB/d/cl/claude")"
+CL_NODE="$(EXEC_A=node start "$RID" bash "$NPMCLI")"
+CL_NODE_BARE="$(EXEC_A=node start - bash "$NPMCLI")"
+CL_VER="$(EXEC_A="$SB/d/share/claude/versions/9.9.9" start "$RID" bash -c 'while :; do sleep 1; done')"
+CL_WORD="$(start "$RID" bash -c 'sleep 600; :' claude)"
+CL_PKGWORD="$(start "$RID" bash -c 'sleep 600; :' "$NPMCLI")"
+settled "$CL_SCRIPT" "$CL_BARE" "$CL_NODE" "$CL_NODE_BARE" "$CL_VER" "$CL_WORD" "$CL_PKGWORD" \
+  && ok "claude identity precondition: every stand-in runs its final program" || no "claude identity precondition: a stand-in did not settle within 5 s" ""
+u proc_pid_is_run_claude "$CL_SCRIPT" && ok "claude identity: a script named claude, this run's" || no "claude identity: script named claude" ""
+u proc_pid_is_run_claude "$CL_NODE" && ok "claude identity: node running .../@anthropic-ai/claude-code/cli.js (npm install), this run's" || no "claude identity: npm install" ""
+u proc_pid_is_run_claude "$CL_VER" && ok "claude identity: argv[0] under claude/versions/ (native install by its real path), this run's" || no "claude identity: versions path" ""
+u proc_pid_is_run_claude "$CL_BARE" && no "claude identity: a claude without this run's environ is refused" "" || ok "claude identity: a claude without this run's environ is not this run's"
+u proc_pid_is_run_claude "$CL_WORD" && no "claude identity: args containing the word claude are refused" "" || ok "claude identity: a shell whose args contain the word claude is not a claude"
+u proc_pid_is_claude_shape "$CL_WORD" && no "claude shape: args word refused" "" || ok "claude shape: a shell whose args contain the word claude is not a claude, in any run"
+u proc_pid_is_claude_shape "$CL_PKGWORD" && no "claude shape: package path outside node refused" "" || ok "claude shape: the package path as an argument of a non-node program is not a claude"
+tdg(){ env -u TEAM_RUN_ID -u TEAM_DIR bash -c '. "$1/bin/lib/team-dir-guard.sh"; _tdg_pid_is_claude "$2"' _ "$R" "$1"; }
+tdg "$CL_NODE_BARE" && ok "team-dir guard: an npm-installed claude with no run environ is a claude (other runs' dirs)" || no "team-dir guard: npm claude" ""
+tdg "$CL_SCRIPT" && ok "team-dir guard: a script named claude is a claude" || no "team-dir guard: script named claude" ""
+tdg "$CL_WORD" && no "team-dir guard: args word refused" "" || ok "team-dir guard: a shell whose args contain the word claude is not a claude"
 reset_procs
 
 # Panic scenario. Sets globals for the asserts.
@@ -119,22 +173,27 @@ panic_scenario(){
   [ -S "$(tmux_sock_path "$SOCK")" ] && SOCK_SEEN=1
   PANE="$(tmux -L "$SOCK" list-panes -s -t "$SESS" -F '#{pane_pid}' 2>/dev/null | head -1)"
   ROLE="$(EXEC_A=claude start "$RID" sleep 600)"                     # this run's role, detached
+  NPMROLE="$(EXEC_A=node start "$RID" bash "$NPMCLI")"               # this run's role, npm install
   ROLE_OTHER="$(EXEC_A=claude start "other-$$" sleep 600)"          # another run's claude
   SHELLC="$(start "$RID" bash -c 'sleep 600; :' claude)"             # args contain "claude"
   BARE="$(start - sleep 600)"                                        # no run env (sshd-like)
   TWD="$(start "$RID" bash "$SB/d/bin/tmux-watchdog.sh")"            # this run's daemon
+  AWD="$(start "$RID" bash "$SB/d/bin/api-watchdog.sh")"             # this run's daemon, foreground sleep
   FOREIGN="$(start "other-$$" bash "$SB/d/bin/chrome-supervisor.sh")" # another run's daemon
   SRV="$(start "$RID" python3 "$SB/d/bin/server.py" --fd 8 --host 127.0.0.1 --port "$PORT")"
   SRV_FX="$(start "other-$$" python3 "$SB/d/bin/server.py" --port "$PORT")"
-  sleep 0.6
-  printf '%s\t-\tbuilder\n%s\t-\tother\n%s\t-\tshellc\n' "$ROLE" "$ROLE_OTHER" "$SHELLC" > "$TD/active"
+  sleep 0.6; settled "$ROLE" "$NPMROLE" "$ROLE_OTHER"
+  AWD_KID="$(pgrep -P "$AWD" 2>/dev/null | head -1)"; [ -n "$AWD_KID" ] && echo "$AWD_KID" >> "$KIDS"
+  printf '%s\t-\tbuilder\n%s\t-\tnpmrole\n%s\t-\tother\n%s\t-\tshellc\n' "$ROLE" "$NPMROLE" "$ROLE_OTHER" "$SHELLC" > "$TD/active"
   echo "$TWD"     > "$TD/tmux-watchdog.pid"
+  echo "$AWD"     > "$TD/api-watchdog.pid"
   echo "$FOREIGN" > "$TD/chrome-supervisor.pid"
   echo "$BARE"    > "$TD/observer.pid"
 }
 panic_pre(){ local p bad=""
-  for p in $PANE $ROLE $ROLE_OTHER $SHELLC $BARE $TWD $FOREIGN $SRV $SRV_FX; do alive "$p" || bad="$bad $p"; done
+  for p in $PANE $ROLE $NPMROLE $ROLE_OTHER $SHELLC $BARE $TWD $AWD $FOREIGN $SRV $SRV_FX; do alive "$p" || bad="$bad $p"; done
   [ -n "$PANE" ] || bad="$bad no-pane"
+  [ -n "$AWD_KID" ] && alive "$AWD_KID" || bad="$bad awd-child"
   [ -z "$bad" ] && ok "$1 preconditions: session pane and all fixtures alive" || no "$1 preconditions" "dead:$bad"; }
 run_panic(){ run_as_run bash "$R/bin/panic.sh"; }
 
@@ -150,7 +209,10 @@ alive "$FOREIGN" && ok "P: chrome-supervisor.pid -> another run's daemon SURVIVE
 alive "$BARE" && ok "P: observer.pid -> process with no run env SURVIVES" || no "P: bare survives" ""
 alive "$PANE" && no "P: POSITIVE session pane killed" "" || ok "P: POSITIVE this run's tmux session pane KILLED"
 alive "$ROLE" && no "P: POSITIVE role killed" "" || ok "P: POSITIVE this run's role claude (from active) KILLED"
+alive "$NPMROLE" && no "P: POSITIVE npm-installed role killed" "" || ok "P: POSITIVE this run's npm-installed role (node .../@anthropic-ai/claude-code/cli.js) KILLED"
 alive "$TWD" && no "P: POSITIVE daemon killed" "" || ok "P: POSITIVE this run's tmux-watchdog KILLED"
+alive "$AWD" && no "P: POSITIVE api-watchdog killed" "" || ok "P: POSITIVE this run's api-watchdog KILLED"
+alive "$AWD_KID" && no "P: POSITIVE api-watchdog's foreground sleep (holds its flock fd) reaped" "" || ok "P: POSITIVE api-watchdog's foreground sleep child REAPED (pkill -P)"
 /usr/bin/grep -q "skip /is bus server: pid $SRV_FX" <<<"$out" && ok "P: one skip line names the refused bus pid" || no "P: bus skip line" ""
 /usr/bin/grep -q "skip other: pid $ROLE_OTHER" <<<"$out" && ok "P: one skip line names the refused role pid" || no "P: role skip line" ""
 /usr/bin/grep -q "WARNING identity check unavailable" <<<"$out" && no "P: no fallback warning when the check is available" "" || ok "P: no fallback warning when the identity check is available"
@@ -311,6 +373,208 @@ for tool in stop-team cleanup; do
   [ -z "$left" ] && ok "Z $tool: POSITIVE orphan in a zombie root's group KILLED" || no "Z $tool: zombie root's orphan killed" "alive:$left"
   reset_procs
 done
+
+echo "=== L/A/CM/SO/D/M: the spawn side ($SRC) ==="
+reset_procs
+mkdir -p "$TD" "$R/roles" "$R/goals" "$R/templates" "$SB/stub" "$SB/fakebin" "$SB/faketmux"
+: > "$TD/active"
+cp "$SRC/roles/_TEMPLATE.md" "$SRC/roles/user-communicator.md" "$R/roles/"
+cp "$SRC/templates/state.md" "$R/templates/"
+echo "# goal" > "$R/goals/g.md"
+STUB="$SB/stub/claude"     # the role stand-in: `claude` in program position, never exits
+printf '#!/usr/bin/env bash\nwhile :; do sleep 1; done\n' > "$STUB"
+printf '#!/bin/sh\necho "$*" >> "%s/curl.calls"\n' "$SB" > "$SB/fakebin/curl"
+printf '#!/bin/sh\nexit 1\n' > "$SB/faketmux/tmux"
+chmod +x "$STUB" "$SB/fakebin/curl" "$SB/faketmux/tmux"; : > "$SB/curl.calls"
+NOCL_PATH=""; IFS=: read -ra _pp <<<"$PATH"
+for d in "${_pp[@]}"; do [ -n "$d" ] && [ ! -e "$d/claude" ] && NOCL_PATH="${NOCL_PATH:+$NOCL_PATH:}$d"; done
+spawn_env=(env -u TEAM_DIR -u TEAM_PORT -u INTER_SESSION_PORT -u TEAM_SESSION -u ORCH_HOME -u CLAUDE_CONFIG_FILE -u MAX_TEAM_SIZE
+  TEAM_RUN_ID="$RID" TEAM_TMUX="$SOCK" HOME="$SB/home" TEAM_ROLE_CMD="$STUB" CLAUDE_BIN="$STUB"
+  NTFY_URL="http://127.0.0.1:9/unused" PATH="$SB/fakebin:$PATH"
+  API_WATCHDOG_DISABLED=1 COMPACT_WATCHDOG_DISABLED=1 TMUX_WATCHDOG_DISABLED=1 PERMISSION_MODE_WATCHDOG_DISABLED=1
+  HOST_RAM_WATCHDOG_DISABLED=1 DISK_TMP_WATCHDOG_DISABLED=1 OBSERVER_DISABLED=1 CHROME_SUPERVISOR_DISABLED=1
+  INTAKE_POLLER_DISABLED=1 COMMUNICATOR_DISABLED=1)
+sp(){ "${spawn_env[@]}" "$@" </dev/null 2>&1; }
+pid_of(){ awk -F'\t' -v r="$1" '$3==r {print $1}' "${2:-$TD/active}"; }
+lines_of(){ awk -F'\t' -v r="$1" '$3==r' "${2:-$TD/active}" | wc -l | tr -d ' '; }
+track(){ local p; for p in $(cut -f1 "${1:-$TD/active}" 2>/dev/null); do case "$p" in *[!0-9]*|'') ;; *) echo "$p" >> "$KIDS" ;; esac; done; }
+
+out="$(sp bash "$R/bin/launch-team.sh" "$R/goals/g.md" alpha1 beta1)"; rc=$?; track; show "$out"
+[ "$rc" = 0 ] && [ -n "$(pid_of alpha1)" ] && [ -n "$(pid_of beta1)" ] && ok "L: launch-team starts alpha1 and beta1 and records both" || no "L: cold launch" "rc=$rc"
+ue 'proc_pid_is_run_claude "$1"' "$(pid_of alpha1)" && ok "L: a recorded role is this run's claude by identity (the stand-in)" || no "L: stand-in identity" ""
+[ "$(cat "$TD/models/alpha1" 2>/dev/null)" = opus ] && ok "L: the role launched with an explicit model (opus)" || no "L: model recorded" "$(cat "$TD/models/alpha1" 2>&1)"
+srv="$(tmux -L "$SOCK" display-message -p '#{pid}' 2>/dev/null)"
+[ -n "$srv" ] && ! /usr/bin/grep -q 'roster\.lock' <<<"$(ls -l "/proc/$srv/fd" 2>/dev/null)" && ok "L: the tmux server started by start_one does not hold the roster lock" || no "L: tmux server keeps the roster lock fd" "server=$srv"
+flock -n "$TD/.roster.lock" true && ok "L: the roster lock is free after launch-team exits" || no "L: roster lock free" ""
+/usr/bin/grep -q "curated role 'orchestrator' not in active roster; this launcher does not start it" <<<"$out" && ok "L: a missing orchestrator names bin/start-orchestrator.sh" || no "L: orchestrator warning" ""
+/usr/bin/grep -q "curated role 'communicator' not in active roster; start it with bin/communicator.sh" <<<"$out" && ok "L: a missing communicator names bin/communicator.sh" || no "L: communicator warning" ""
+/usr/bin/grep -q 'add-role.sh orchestrator\|add-role.sh communicator' <<<"$out" && no "L: no add-role suggestion without goal and --reason" "" || ok "L: no unusable add-role suggestion"
+
+out="$(sp bash "$R/bin/launch-team.sh" "$R/goals/g.md" alpha1)"; rc=$?; track
+w="$(tmux -L "$SOCK" list-windows -t "$SESS" -F '#{window_name}' 2>/dev/null | /usr/bin/grep -cx alpha1)"
+[ "$rc" = 0 ] && [ "$(lines_of alpha1)" = 1 ] && [ "$w" = 1 ] && ok "L: a second launch naming a live role does not spawn it again" || no "L: no double spawn" "rc=$rc lines=$(lines_of alpha1) windows=$w"
+/usr/bin/grep -q "'alpha1' is already live; skipping" <<<"$out" && ok "L: says it skipped the live role" || no "L: skip line" "$out"
+
+SHELLC2="$(start "$RID" bash -c 'sleep 600; :' claude)"; sleep 0.3      # args contain "claude"; not claude
+printf '%s\t-\tshellc\n' "$SHELLC2" >> "$TD/active"
+( flock 9; sleep 3; printf 'HOLDER\t-\tholder\n' >> "$TD/active" ) 9>"$TD/.roster.lock" & HOLD=$!
+sleep 0.3
+out="$(sp bash "$R/bin/launch-team.sh" "$R/goals/g.md" gamma1)"; rc=$?; wait "$HOLD"; track
+/usr/bin/grep -q '^HOLDER' "$TD/active" && no "L: launch-team waits for the roster lock (it must reap the line the holder wrote)" "$(cat "$TD/active")" \
+  || ok "L: launch-team waited for the roster lock (the holder's line was reaped after it, not lost to a race)"
+[ "$(lines_of shellc)" = 0 ] && ok "L: reap drops a live process whose args only contain 'claude'" || no "L: reap by identity" "$(cat "$TD/active")"
+[ "$(lines_of alpha1)" = 1 ] && [ "$(lines_of beta1)" = 1 ] && [ "$(lines_of gamma1)" = 1 ] && ok "L: POSITIVE reap keeps this run's live roles; gamma1 added" || no "L: live roles kept" "$(cat "$TD/active")"
+# An npm-installed claude (argv[0] node) is live too: reading it as dead dropped live roles from
+# active, made the cap count zero and let the double-spawn guard start a second copy.
+NPMR="$(EXEC_A=node start "$RID" bash "$NPMCLI")"; settled "$NPMR"
+printf '%s\t-\tnpm1\n' "$NPMR" >> "$TD/active"
+r="$(sp bash -c '. "$1/bin/team-env.sh" && . "$1/bin/lib/team-spawn.sh" && reap_dead_keep_live; live_role_count; role_is_live npm1 && echo npm1-live' _ "$R")"
+[ "$(lines_of npm1)" = 1 ] && ok "L: reap keeps a live npm-installed role (node .../@anthropic-ai/claude-code/cli.js)" || no "L: npm role reaped as dead" "$(cat "$TD/active")"
+[ "$(head -1 <<<"$r")" = 4 ] && /usr/bin/grep -qx npm1-live <<<"$r" && ok "L: the npm-installed role counts toward the cap (4 live) and is live to the double-spawn guard" || no "L: npm role not live" "$r"
+kill -9 "$NPMR" 2>/dev/null; sleep 0.3
+# A pane pid is recorded while it is still the launching shell (bash -lc '... && exec claude ...'), not
+# yet a claude: a reap in that interval dropped a live role. A live pid whose window is in this run's
+# session is kept; a live non-claude whose window id is not in the session is still dropped.
+PREX_WID="$(tmux -L "$SOCK" new-window -d -t "$SESS" -n prexec1 -P -F '#{window_id}' "sleep 600" 2>/dev/null)"
+PREX="$(tmux -L "$SOCK" display-message -p -t "$PREX_WID" '#{pane_pid}' 2>/dev/null)"
+printf '%s\t%s\tprexec1\n' "$PREX" "$PREX_WID" >> "$TD/active"
+SHELLC4="$(start "$RID" bash -c 'sleep 600; :' claude)"; sleep 0.3
+printf '%s\t@99999\tshellc4\n' "$SHELLC4" >> "$TD/active"
+sp bash -c '. "$1/bin/team-env.sh" && . "$1/bin/lib/team-spawn.sh" && reap_dead_keep_live' _ "$R" >/dev/null
+[ -n "$PREX" ] && [ "$(lines_of prexec1)" = 1 ] && ok "L: reap keeps a live pane pid that is not yet claude when its window is in this session" || no "L: pre-exec pane kept" "pid=$PREX wid=$PREX_WID $(cat "$TD/active")"
+[ "$(lines_of shellc4)" = 0 ] && ok "L: reap drops a live non-claude whose window id is not in this session" || no "L: foreign window id dropped" "$(cat "$TD/active")"
+tmux -L "$SOCK" kill-window -t "$PREX_WID" 2>/dev/null
+
+out="$(sp bash "$R/bin/launch-team.sh" "$R/goals/g.md" reviewer-)"; rc=$?; track
+[ "$rc" != 0 ] && /usr/bin/grep -q "invalid bus name 'reviewer-'" <<<"$out" && ok "L: launch-team refuses a trailing hyphen (reviewer-)" || no "L: reviewer- refused" "rc=$rc"
+[ ! -e "$R/roles/reviewer-.md" ] && ok "L: no roles/reviewer-.md written" || no "L: roles/reviewer-.md written" ""
+r="$(sp bash -c '. "$1/bin/team-env.sh" && . "$1/bin/lib/team-spawn.sh" && start_one reviewer-; echo "rc=$?"' _ "$R")"
+/usr/bin/grep -q '^rc=1$' <<<"$r" && ok "L: start_one refuses reviewer- itself" || no "L: start_one reviewer-" "$r"
+
+out="$(sp bash "$R/bin/add-role.sh" "$R/goals/g.md" delta1 --reason "   ")"; rc=$?
+[ "$rc" = 2 ] && [ "$(lines_of delta1)" = 0 ] && ok "A: add-role refuses a blank --reason (exit 2, nothing spawned)" || no "A: blank reason" "rc=$rc $out"
+out="$(sp bash "$R/bin/add-role.sh" "$R/goals/g.md" delta- --reason x)"; rc=$?
+[ "$rc" = 1 ] && /usr/bin/grep -q "invalid bus name 'delta-'" <<<"$out" && ok "A: add-role refuses a trailing hyphen (delta-)" || no "A: delta- refused" "rc=$rc $out"
+SHELLC3="$(start "$RID" bash -c 'sleep 600; :' claude)"; sleep 0.3
+printf '%s\t-\tshellc3\n' "$SHELLC3" >> "$TD/active"
+: > "$SB/curl.calls"
+out="$(sp env MAX_TEAM_SIZE=4 bash "$R/bin/add-role.sh" "$R/goals/g.md" delta1 --reason "more hands")"; rc=$?; track; show "$out"
+[ "$rc" = 0 ] && [ "$(lines_of delta1)" = 1 ] && ok "A: cap 4 with 3 live roles: a non-claude line in active does not count, delta1 added" || no "A: cap counts by identity" "rc=$rc"
+[ ! -s "$SB/curl.calls" ] && ok "A: add-role does not push with curl" || no "A: curl called" "$(cat "$SB/curl.calls")"
+/usr/bin/grep -q 'team grew: +delta1' "$SB/notify.sink.state/digest" 2>/dev/null && ok "A: the add is an info line in the operator digest" || no "A: digest line" ""
+/usr/bin/grep -q 'team grew' "$SB/notify.sink" 2>/dev/null && no "A: info is never pushed" "" || ok "A: the add is not pushed"
+RECYC="$(env ORCH_HOME="$R" TEAM_RUN_ID="$RID" TEAM_DIR="$TD" setsid bash "$SB/d/bin/tmux-watchdog.sh" >/dev/null 2>&1 & echo $!)"
+echo "$RECYC" >> "$KIDS"; sleep 0.3
+printf '%s\t-\tzeta1\n' "$RECYC" >> "$TD/active"
+out="$(sp bash "$R/bin/retire-role.sh" zeta1 --no-graceful --reason gone)"; rc=$?
+alive "$RECYC" && ok "A: retire does not signal a leader pid now held by this run's daemon (same ORCH_HOME and run id)" || no "A: recycled leader survives" "$out"
+[ "$(lines_of zeta1)" = 0 ] && ok "A: the stale zeta1 line is removed" || no "A: zeta1 line removed" "$out"
+D1="$(pid_of delta1)"
+out="$(sp bash "$R/bin/retire-role.sh" delta1 --no-graceful --reason done)"; rc=$?; sleep 0.3
+[ "$rc" = 0 ] && [ -n "$D1" ] && ! alive "$D1" && [ "$(lines_of delta1)" = 0 ] && ok "A: POSITIVE retire stops this run's role and drops its line" || no "A: retire delta1" "rc=$rc $out"
+/usr/bin/grep -q 'team shrank: -delta1' "$SB/notify.sink.state/digest" 2>/dev/null && ok "A: the retire is an info line in the operator digest" || no "A: retire digest line" ""
+[ ! -s "$SB/curl.calls" ] && ok "A: retire-role does not push with curl" || no "A: retire curl called" "$(cat "$SB/curl.calls")"
+# A window of the name exists in this run's session, but active has no live line for it: start_one skips
+# the name, so add-role logged, recorded and announced an add that spawned nothing, and exited 0.
+tmux -L "$SOCK" new-window -d -t "$SESS" -n ghost1 "sleep 600" 2>/dev/null
+out="$(sp bash "$R/bin/add-role.sh" "$R/goals/g.md" ghost1 --reason "late window")"; rc=$?; track
+[ "$rc" = 1 ] && /usr/bin/grep -q "a window named 'ghost1' already exists" <<<"$out" && ok "A: add-role refuses a name whose window exists without a live line (exit 1)" || no "A: existing window refused" "rc=$rc $out"
+/usr/bin/grep -q 'added ghost1\|+ghost1' "$TD/state.md" 2>/dev/null && no "A: no decision-log or roster line for the refused add" "$(cat "$TD/state.md")" || ok "A: no decision-log or roster line for the refused add"
+/usr/bin/grep -q 'team grew: +ghost1' "$SB/notify.sink.state/digest" 2>/dev/null && no "A: no operator notice for the refused add" "" || ok "A: no operator notice for the refused add"
+out="$(sp bash "$R/bin/add-role.sh" "$R/goals/g.md" ghost --auto-number --reason "next free")"; rc=$?; track
+[ "$rc" = 0 ] && /usr/bin/grep -q 'auto-numbered role -> ghost2' <<<"$out" && [ "$(lines_of ghost2)" = 1 ] && ok "A: --auto-number skips the number whose window exists (ghost2 spawned)" || no "A: auto-number skips ghost1" "rc=$rc $out"
+
+before="$(cat "$TD/active")"
+out="$(sp env COMMUNICATOR_DISABLED=0 PATH="$SB/faketmux:$SB/fakebin:$PATH" bash "$R/bin/communicator.sh")"; rc=$?
+[ "$rc" = 1 ] && [ "$(cat "$TD/active")" = "$before" ] && ok "CM: a failed tmux call exits 1 and records nothing in active" || no "CM: failed new-window" "rc=$rc $out"
+/usr/bin/grep -q 'launched communicator' <<<"$out" && no "CM: no 'launched' line after a failure" "$out" || ok "CM: no 'launched' line after a failure"
+out="$(sp env COMMUNICATOR_DISABLED=0 bash "$R/bin/communicator.sh")"; rc=$?; track
+case "$(pid_of communicator)" in ''|*[!0-9]*) no "CM: POSITIVE communicator recorded with its pid" "rc=$rc $out" ;; *) [ "$rc" = 0 ] && ok "CM: POSITIVE communicator launched and recorded with its pid" || no "CM: rc" "$rc" ;; esac
+/usr/bin/grep -q 'inbound.jsonl' "$TD/communicator.prompt" && no "CM: the prompt no longer names inbound.jsonl" "" || ok "CM: the prompt no longer names inbound.jsonl"
+
+RID2="$RID-so"; TD2="$R/.team-$RID2"
+( PATH="$NOCL_PATH"; command -v claude >/dev/null ) && no "SO precondition: no claude on the stripped PATH" "" || ok "SO precondition: no claude on the stripped PATH"
+out="$(sp env TEAM_RUN_ID="$RID2" PATH="$SB/fakebin:$NOCL_PATH" bash "$R/bin/start-orchestrator.sh")"; rc=$?; track "$TD2/active"
+OP="$(pid_of orchestrator "$TD2/active" 2>/dev/null)"; sleep 0.5
+[ "$rc" = 0 ] && [ -n "$OP" ] && ok "SO: start-orchestrator runs with CLAUDE_BIN and no claude on PATH" || no "SO: CLAUDE_BIN honoured" "rc=$rc $out"
+/usr/bin/grep -qF "$STUB" "/proc/$OP/cmdline" 2>/dev/null && ok "SO: the orchestrator pane runs CLAUDE_BIN" || no "SO: pane runs CLAUDE_BIN" "$(tr '\0' ' ' < "/proc/$OP/cmdline" 2>&1)"
+
+# The is-skill's list.py exits 1 ("not connected") when the launching shell has no bus listener.
+# Under pipefail the communicator lookup used to end launch-team there, after the roles were up.
+RID4="$RID-nolist"; TD4="$R/.team-$RID4"; mkdir -p "$SB/home/.claude/skills/is/bin"
+cat > "$SB/home/.claude/skills/is/bin/list.py" <<EOF
+import sys
+open("$SB/list.calls", "a").write("called\n")
+sys.stderr.write("not connected; join the bus first\n")
+sys.exit(1)
+EOF
+out="$(sp env TEAM_RUN_ID="$RID4" COMMUNICATOR_DISABLED=0 bash "$R/bin/launch-team.sh" "$R/goals/g.md" eta1)"; rc=$?; track "$TD4/active"; show "$out"
+[ -s "$SB/list.calls" ] && ok "L precondition: launch-team ran the stand-in list.py, which exited 1" || no "L precondition: list.py not run" "$out"
+[ "$rc" = 0 ] && [ -n "$(pid_of eta1 "$TD4/active")" ] && ok "L: launch-team exits 0 when list.py reports 'not connected'" || no "L: a failed list.py ends launch-team" "rc=$rc"
+[ "$(lines_of communicator "$TD4/active")" = 1 ] && ok "L: ... and still starts the communicator" || no "L: communicator not started after list.py failed" "$(cat "$TD4/active" 2>&1)"
+/usr/bin/grep -q "curated role 'orchestrator' not in active roster" <<<"$out" && ok "L: ... and still runs the curated-role check" || no "L: curated-role check skipped after list.py failed" ""
+
+# communicator.sh starts TEAM_ROLE_CMD, the command every other role runs, when CLAUDE_BIN is unset
+# (tests/b9 sets only TEAM_ROLE_CMD). It used to need a claude on PATH and start the real one.
+RID5="$RID-rolecmd"; TD5="$R/.team-$RID5"
+out="$(sp env -u CLAUDE_BIN TEAM_RUN_ID="$RID5" COMMUNICATOR_DISABLED=0 PATH="$SB/fakebin:$NOCL_PATH" bash "$R/bin/communicator.sh")"; rc=$?; track "$TD5/active"
+CP="$(pid_of communicator "$TD5/active" 2>/dev/null)"; sleep 0.5
+[ "$rc" = 0 ] && [ -n "$CP" ] && ok "CM: communicator.sh runs with TEAM_ROLE_CMD, no CLAUDE_BIN and no claude on PATH" || no "CM: TEAM_ROLE_CMD honoured" "rc=$rc $out"
+/usr/bin/grep -qF "$STUB" "/proc/$CP/cmdline" 2>/dev/null && ok "CM: the communicator pane runs TEAM_ROLE_CMD (the stand-in)" || no "CM: pane runs TEAM_ROLE_CMD" "$(tr '\0' ' ' < "/proc/$CP/cmdline" 2>&1)"
+
+RID3="$RID-logs"; TD3="$R/.team-$RID3"; mkdir -p "$TD3" "$SB/dsave"
+dl="api-watchdog tmux-watchdog host-ram-watchdog disk-tmp-watchdog observer permission-mode-watchdog chrome-supervisor"
+for n in $dl; do
+  cp "$R/bin/$n.sh" "$SB/dsave/"
+  printf '#!/usr/bin/env bash\necho $$ >> "%s"\nwhile :; do echo "%s line"; sleep 0.2; done\n' "$KIDS" "$n" > "$R/bin/$n.sh"
+  echo OLD > "$TD3/$n.log"
+done
+printf 'import time\nwhile True:\n    print("poller line", flush=True)\n    time.sleep(0.2)\n' > "$SB/poller.py"; echo OLD > "$TD3/intake-poller.log"
+out="$(env -u TEAM_DIR -u TEAM_PORT -u INTER_SESSION_PORT -u TEAM_SESSION TEAM_RUN_ID="$RID3" TEAM_TMUX="$SOCK" HOME="$SB/home" INTAKE_POLLER="$SB/poller.py" \
+  bash -c '. "$1/bin/team-env.sh" && repo="$1" && . "$1/bin/lib/team-spawn.sh" && start_api_watchdog && start_tmux_watchdog && start_host_ram_watchdog \
+    && start_disk_tmp_watchdog && start_observer && start_permission_mode_watchdog && start_chrome_supervisor && start_intake_poller' _ "$R" 2>&1 9>&-)"
+cat "$TD3/intake-poller.pid" >> "$KIDS" 2>/dev/null; sleep 0.8
+kept=""; for n in $dl intake-poller; do [ "$(head -1 "$TD3/$n.log")" = OLD ] || kept="$kept $n"; done
+[ -z "$kept" ] && ok "D: every daemon log keeps its old content (opened with >>)" || no "D: logs truncated at start" "$kept $out"
+for n in $dl intake-poller; do : > "$TD3/$n.log"; done; sleep 0.8
+# Readiness, not only a fixed sleep: under load a stand-in can be slow to write its next line. Wait up
+# to 5 s more until every log has regrown.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  silent=""; for n in $dl intake-poller; do [ -s "$TD3/$n.log" ] || silent="$silent $n"; done
+  [ -z "$silent" ] && break; sleep 0.5
+done
+nul=""; for n in $dl intake-poller; do
+  # Count the NUL bytes in one read: comparing two sizes read one after the other failed whenever
+  # the daemon wrote a line between the reads (seen under load).
+  [ -s "$TD3/$n.log" ] && [ "$(tr -cd '\000' < "$TD3/$n.log" | wc -c)" = 0 ] \
+    || nul="$nul $n($(wc -c < "$TD3/$n.log") bytes, $(tr -cd '\000' < "$TD3/$n.log" | wc -c) NUL)"; done
+[ -z "$nul" ] && ok "D: a log truncated by the rotation keeps growing without NUL bytes" || no "D: NUL-filled or silent logs" "$nul"
+for n in $dl; do cp "$SB/dsave/$n.sh" "$R/bin/$n.sh"; done
+
+# team-status.sh decides ALIVE as the teardown scripts do: this run's claude by what it executes, not
+# "claude" somewhere in the args line.
+RID6="$RID-status"; TD6="$R/.team-$RID6"; mkdir -p "$TD6"
+TS_ROLE="$(EXEC_A=claude start "$RID6" sleep 600)"
+TS_WORD="$(start "$RID6" bash -c 'sleep 600; :' claude)"
+TS_OTHER="$(EXEC_A=claude start "other-$$" sleep 600)"
+settled "$TS_ROLE" "$TS_WORD" "$TS_OTHER"
+printf '%s\t-\tts-role\n%s\t-\tts-word\n%s\t-\tts-other\n' "$TS_ROLE" "$TS_WORD" "$TS_OTHER" > "$TD6/active"
+out="$(sp env TEAM_RUN_ID="$RID6" bash "$R/bin/team-status.sh")"; show "$out"
+col(){ awk -v r="$1" -v c="$2" '$1==r {print $c}' <<<"$out"; }
+[ "$(col ts-role 3)" = yes ] && ok "TS: this run's claude reads ALIVE yes" || no "TS: role alive" "$out"
+[ "$(col ts-word 3)" = NO ] && ok "TS: a shell whose args contain 'claude' reads ALIVE NO" || no "TS: args word" "$out"
+[ "$(col ts-other 3)" = NO ] && ok "TS: another run's claude named in active reads ALIVE NO" || no "TS: other run's claude" "$out"
+out="$(sp env TEAM_RUN_ID="$RID6" bash "$R/bin/team-status.sh" --mobile)"
+[ "$(col ts-role 2)/$(col ts-word 2)/$(col ts-other 2)" = "y/X/X" ] && ok "TS --mobile: y for this run's claude, X for the other two" || no "TS --mobile" "$out"
+
+empty=""
+for role in orchestrator communicator reviewer1 tester2 architect1 analyst1 devops1 copy-editor1 paralegal1 doc-integrator1 relay1 poller1 implementer1 novel-role1; do
+  var="TEAM_MODEL_$(printf '%s' "$role" | tr 'a-z-' 'A-Z_')"
+  m="$(env TEAM_MODEL_TOP= TEAM_MODEL_DEFAULT= "$var=" bash -c '. "$1/bin/lib/team-spawn.sh" && model_for "$2"' _ "$R" "$role")"
+  [ -n "$m" ] || empty="$empty $role"
+done
+[ -z "$empty" ] && ok "M: model_for prints a model for every tier even with every override set empty" || no "M: empty model for" "$empty"
+reset_procs
 
 # The socket FILE is this test's too: it existed while the server ran, and is gone after.
 tmux_kill_unlink tmux "$SOCK"

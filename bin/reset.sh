@@ -14,7 +14,12 @@
 
 set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-. "$repo/bin/team-env.sh"
+# team-env.sh returns 1 when it refuses a pre-set TEAM_DIR that differs from the canonical
+# run dir, and leaves TEAM_DIR at the caller's value. There is no `set -e`, so without the
+# check everything below, the rm included, ran on that unvalidated TEAM_DIR.
+. "$repo/bin/team-env.sh" || exit 1
+# shellcheck source=bin/lib/team-dir-guard.sh
+. "$repo/bin/lib/team-dir-guard.sh" || exit 1
 
 # Role tripwire: a team role session (ORCH_HOME is exported into every role by
 # the spawn path) must never reset the run it belongs to — that is an operator
@@ -27,6 +32,16 @@ if [ -n "${ORCH_HOME:-}" ] && [ "${RESET_CONFIRM:-}" != "yes" ]; then
   exit 96
 fi
 
-"$repo/bin/panic.sh"
+# panic.sh exits non-zero when the session is still up or processes of its pane trees
+# survived. The run dir is then kept so that the operator can inspect it. panic.sh has
+# already deleted active and the daemon pidfiles, so once the session is gone a second
+# reset.sh finds nothing more to stop and removes the dir.
+if ! "$repo/bin/panic.sh"; then
+  echo "reset: panic.sh did not stop everything (see above); $TEAM_DIR NOT removed." >&2
+  echo "  Stop the survivors (bin/cleanup.sh shows them), then run bin/reset.sh again." >&2
+  exit 1
+fi
+# Only the run dir this session owns; anything else is refused with the reason.
+tdg_guard_rmrf_owned "$TEAM_DIR" || exit 1
 rm -rf "$TEAM_DIR"
 echo "reset: team stopped, $TEAM_DIR cleared. Goals and task briefs kept."

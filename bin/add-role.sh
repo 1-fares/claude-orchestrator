@@ -4,8 +4,9 @@
 # up identically to one launched at the start.
 #
 # Policy: the orchestrator may add freely up to the team-size cap, but every add
-# is justified (decision-log line), surfaced (roster line + stdout notice), and,
-# in autonomous runs, pushed over ntfy.
+# is justified (decision-log line), surfaced (roster line + stdout notice), and
+# reported to the operator as an `info` notice (bin/lib/notify.sh: the daily
+# digest, never a push of its own; docs/OPERATOR-PAGING.md).
 #
 # Guardrails enforced here:
 #   1. Soft cap: refuse once the per-run cap of live roles is reached. The cap is
@@ -14,22 +15,24 @@
 #      file > default 12; a value of none/unlimited/off/0 (or non-numeric) means
 #      uncapped (the check is skipped). It is the real backstop against runaway
 #      spawning when enforced.
-#   2. No double-spawn: refuse a bus name that is already live.
+#   2. No double-spawn: refuse a bus name that is already live, or that already has
+#      a window in this run's session (start_one would skip it and spawn nothing).
 #   3. Reuse-before-spawn: warn if an idle same-base role already exists, so the
 #      orchestrator considers reusing it before growing the roster.
 #   4. Justification: a decision-log + roster line is always written.
 #
 # Usage:
-#   bin/add-role.sh [--workdir DIR] <goal-file> <role> [--task <brief>]
-#                   [--reason "<why>"] [--auto-number] [--no-ntfy]
+#   bin/add-role.sh [--workdir DIR] <goal-file> <role> --reason "<why>"
+#                   [--task <brief>] [--auto-number] [--no-ntfy]
 #
 #   --workdir DIR    working tree the role operates on (default: this clone)
 #   --task <brief>   path to a tasks/<unit>.md brief to assign; recorded in the
 #                    decision-log. (The handoff itself goes over /is from the
 #                    orchestrator; a shell script cannot authenticate to the bus.)
-#   --reason "<why>" justification recorded in the decision-log (strongly advised)
+#   --reason "<why>" justification for the decision-log, roster line and operator
+#                    notice (required; empty or blank is refused)
 #   --auto-number    treat <role> as a base and pick the next free <base>N
-#   --no-ntfy        suppress the ntfy push even when NTFY_URL is set
+#   --no-ntfy        do not send the operator notice
 #
 # Refuses if no team session is live (use bin/launch-team.sh or bin/run.sh to
 # start one). Targets ONLY this run's TEAM_SESSION; never another session.
@@ -45,6 +48,9 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/lib/team-spawn.sh"
 # shellcheck source=bin/lib/roster.sh
 . "$repo/bin/lib/roster.sh"
+# shellcheck source=bin/lib/notify.sh
+. "$repo/bin/lib/notify.sh"
+NOTIFY_SOURCE=add-role
 
 session="$TEAM_SESSION"
 flags="--dangerously-skip-permissions"
@@ -69,7 +75,7 @@ resolve_cap() {
 }
 
 usage() {
-  echo "usage: $0 [--workdir DIR] <goal-file> <role> [--task <brief>] [--reason \"<why>\"] [--auto-number] [--no-ntfy]" >&2
+  echo "usage: $0 [--workdir DIR] <goal-file> <role> --reason \"<why>\" [--task <brief>] [--auto-number] [--no-ntfy]" >&2
   exit 2
 }
 
@@ -82,7 +88,7 @@ while [ $# -gt 0 ]; do
     --reason)     [ $# -ge 2 ] || usage; reason="$2"; shift 2 ;;
     --auto-number) auto_number=1; shift ;;
     --no-ntfy)    no_ntfy=1; shift ;;
-    -h|--help)    sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,35p' "$0"; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do positional+=("$1"); shift; done ;;
     -*) echo "unknown arg: $1" >&2; usage ;;
     *)  positional+=("$1"); shift ;;
@@ -91,11 +97,11 @@ done
 [ "${#positional[@]}" -eq 2 ] || usage
 goal="${positional[0]}"; role="${positional[1]}"
 
-# --reason is MANDATORY: it lands in the ntfy roster-change push, the decision-log,
-# and the roster line, so a missing reason silently degrades every surface to
-# "no reason given". Every caller (the orchestrator's grow + any auto-respawn path)
-# must supply it; an unset reason now fails fast instead of defaulting through.
-[ -n "$reason" ] || { echo "add-role: --reason \"<why>\" is required (it feeds the ntfy, decision-log, and roster)." >&2; exit 2; }
+# --reason is MANDATORY: it lands in the operator notice, the decision-log, and the
+# roster line, so a missing reason silently degrades every surface to "no reason
+# given". Every caller (the orchestrator's grow + any auto-respawn path) must supply
+# it; an unset, empty or blank (whitespace-only) reason fails fast.
+[ -n "${reason//[[:space:]]/}" ] || { echo "add-role: --reason \"<why>\" is required and must not be blank (it feeds the operator notice, decision-log, and roster)." >&2; exit 2; }
 
 command -v tmux >/dev/null || { echo "tmux not installed" >&2; exit 1; }
 command -v "${TEAM_ROLE_CMD:-claude}" >/dev/null || { echo "${TEAM_ROLE_CMD:-claude} not on PATH" >&2; exit 1; }
@@ -136,13 +142,22 @@ if [ "$auto_number" -eq 1 ]; then
 fi
 
 # Validate the (possibly auto-numbered) bus name.
-printf '%s' "$role" | grep -Eq '^[a-z0-9][a-z0-9-]{0,39}$' \
-  || { echo "invalid bus name '$role' (must match ^[a-z0-9][a-z0-9-]{0,39}\$)" >&2; exit 1; }
+printf '%s' "$role" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' \
+  || { echo "invalid bus name '$role' (must match ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?\$)" >&2; exit 1; }
 
 # Guardrail 2: no double-spawn of a live bus name.
 if role_is_live "$role"; then
   echo "role '$role' is already live on this team; refusing to double-spawn." >&2
   echo "  (use --auto-number to add another instance, or pick a distinct name)" >&2
+  exit 1
+fi
+# A window of that name with no live line in active (the line was never written, or was
+# dropped): start_one skips the name, so going on would log, record and announce an add
+# that spawned nothing.
+if role_window_exists "$role"; then
+  echo "a window named '$role' already exists in session '$session' but '$role' has no live entry in $TEAM_DIR/active;" >&2
+  echo "  refusing: start_one would skip it and nothing would be spawned. Inspect the window" >&2
+  echo "  (bin/attach.sh), close it, or pick a distinct name (--auto-number skips it)." >&2
   exit 1
 fi
 
@@ -185,10 +200,10 @@ start_one "$role"
 # silently diverge from launch-team.sh / start-orchestrator.sh.
 ensure_team_daemons
 
-# Justify + surface (always). Reason defaults to a generic note if not given.
+# Justify + surface (always; --reason is required above).
 # The role is already live and recorded in active (the teardown source of truth),
 # so a ledger-write failure must not abort: warn and continue.
-reason_txt="${reason:-no reason given}"
+reason_txt="$reason"
 brief_txt=""; [ -n "$task_brief" ] && brief_txt=" brief: $task_brief"
 decision_log_append "added $role (reason: $reason_txt;${brief_txt:- } via add-role)" \
   || echo "warning: could not write decision-log line (role IS live and recorded in active)" >&2
@@ -202,12 +217,11 @@ if [ -n "$task_brief" ]; then
   echo "  hand it over the bus from the orchestrator: /is s $role --file $task_brief"
 fi
 
-# ntfy push (autonomous-mode roster-change notice). Plain POST, no action buttons.
-if [ "$no_ntfy" -eq 0 ] && [ -n "${NTFY_URL:-}" ]; then
-  curl -sS -m 5 -X POST \
-    -H "Title: team grew: +$role" \
-    -d "added $role (reason: $reason_txt). $new_count live role(s), cap ${cap:-uncapped}." \
-    "$NTFY_URL" -o /dev/null 2>/dev/null \
-    && echo "ntfy: roster-change push sent" \
-    || echo "ntfy: push failed (non-fatal)" >&2
+# Operator notice. A role add is class `info` (docs/OPERATOR-PAGING.md): it goes to the
+# daily digest through bin/lib/notify.sh and is never pushed on its own.
+if [ "$no_ntfy" -eq 0 ]; then
+  notify_operator info "team grew: +$role" \
+    "added $role (reason: $reason_txt). $new_count live role(s), cap ${cap:-uncapped}." \
+    && echo "notify: roster change recorded for the operator digest" \
+    || echo "notify: could not record the roster change (non-fatal)" >&2
 fi

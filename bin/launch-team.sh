@@ -24,10 +24,11 @@
 # The bare role name is the bus name, so the orchestrator addresses it directly:
 #   /is s implementer1 ...
 #
-# Concurrent teams: to run more than one team at once, give each team its own bus
-# by exporting INTER_SESSION_PORT before launching (and in the orchestrator
-# session too). This launcher propagates INTER_SESSION_PORT and
-# INTER_SESSION_IDLE_MINUTES into the spawned sessions. See README "Future work".
+# Concurrent teams: each bin/run.sh invocation sets its own TEAM_RUN_ID, from
+# which team-env.sh derives a separate bus port, tmux session and TEAM_DIR (see
+# README "Parallel runs in one clone"). This launcher propagates TEAM_RUN_ID,
+# TEAM_DIR, INTER_SESSION_PORT and INTER_SESSION_IDLE_MINUTES into the spawned
+# sessions.
 #
 # Sessions start with --dangerously-skip-permissions so they run unattended.
 # Only use this in a trusted local environment. Sessions are interactive (not
@@ -44,7 +45,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/team-env.sh"   # sets TEAM_SESSION, TEAM_PORT, INTER_SESSION_PORT
 # shellcheck source=bin/lib/team-spawn.sh
 . "$repo/bin/lib/team-spawn.sh"  # model_for, ensure_role_file, pre_trust_workdir,
-                                 # reap_dead_keep_live, start_one, start_api_watchdog
+                                 # reap_dead_keep_live, start_one, ensure_team_daemons
 session="$TEAM_SESSION"
 flags="--dangerously-skip-permissions"
 
@@ -116,6 +117,16 @@ mkdir -p "$TEAM_DIR"
 # workspace-trust prompt (auto-skipped only in -p mode, which roles can't use).
 pre_trust_workdir "$workdir_abs"
 
+# Serialize reap -> spawn -> record against add-role.sh and retire-role.sh, which take
+# the same lock: reap_dead_keep_live rewrites active through a temp file, so without
+# it an add-role append in the same instant was lost and that role became invisible to
+# teardown. Held on fd 9 until the spawn loop ends; flock is util-linux, so without it
+# launch proceeds unlocked, as add-role does.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$TEAM_DIR/.roster.lock"
+  flock -w 30 9 || { echo "could not acquire roster lock within 30s (another launch/add/retire running?)" >&2; exit 1; }
+fi
+
 # Reap dead entries from a previous run so teardown never group-kills a recycled
 # pid; keep live entries so a second launch can add roles to a running team.
 reap_dead_keep_live
@@ -123,16 +134,19 @@ reap_dead_keep_live
 # Validate every role up front so a bad name never leaves a half-spawned team.
 # A missing role file is created on the fly (see ensure_role_file), not an error.
 for role in "$@"; do
-  printf '%s' "$role" | grep -Eq '^[a-z0-9][a-z0-9-]{0,39}$' \
-    || { echo "invalid bus name '$role' (must match ^[a-z0-9][a-z0-9-]{0,39}\$)" >&2; exit 1; }
+  printf '%s' "$role" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' \
+    || { echo "invalid bus name '$role' (must match ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?\$)" >&2; exit 1; }
   b="$(printf '%s' "$role" | sed 's/[0-9]*$//')"
   ensure_role_file "$b"
 done
 
 for role in "$@"; do
-  start_one "$role"
+  start_one "$role"   # skips a role that is already live (no double spawn)
   sleep 1   # stagger starts to ease the rate limit on a cold team
 done
+# Release the roster lock: the rest (daemons, communicator.sh, which takes the lock
+# for its own active line) is outside the critical section.
+exec 9>&-
 
 echo
 echo "Roles running in tmux session '$session' on the team socket '$TEAM_TMUX'."
@@ -142,7 +156,9 @@ echo "Watch:  bin/team-status.sh    Attach:  tmux -L $TEAM_TMUX attach -t $sessi
 # stalls, detect stuck roles), compaction-watchdog (compact the orchestrator
 # early at idle task boundaries so it never drifts to the expensive near-full
 # auto-compact ceiling), tmux-watchdog (dead tmux server detection + forensic
-# snapshots), observer (periodic model-backed right-sizing advice; recommends,
+# snapshots), permission-mode-watchdog (hold every pane in the launched
+# permission mode), host-ram-watchdog and disk-tmp-watchdog (host resource
+# alerts), observer (periodic model-backed right-sizing advice; recommends,
 # never acts), chrome-supervisor (reap Chrome/MCP debris, un-wedge a role stuck
 # on a hung chrome MCP call), intake-poller (optional project-provided external
 # intake). The set is defined once in team-spawn.sh and shared with
@@ -194,11 +210,13 @@ start_communicator() {
   # Idempotency: prefer the bus as the source of truth (the role file says the
   # bus enforces uniqueness). Fall back to the tmux window check inside
   # communicator.sh when the is-skill is not on disk. Either way a repeat
-  # invocation is a no-op.
+  # invocation is a no-op. list.py exits 1 ("not connected") when this shell has
+  # no bus listener; under pipefail that would end the launcher here, after the
+  # roles are up, so a failed lookup counts as "no communicator on the bus".
   local is_list="$HOME/.claude/skills/is/bin/list.py" existing_id=""
   if [ -f "$is_list" ]; then
     existing_id="$(python3 "$is_list" 2>/dev/null \
-                     | awk '$1 == "communicator" {print $NF; exit}')"
+                     | awk '$1 == "communicator" {print $NF; exit}')" || existing_id=""
     if [ -n "$existing_id" ]; then
       echo "communicator already running on the bus (peer id $existing_id)"
       return 0
@@ -220,7 +238,13 @@ if [ -f "$TEAM_DIR/active" ]; then
   for c in "${CURATED_MINIMUM[@]}"; do
     if ! awk -F'\t' -v r="$c" '$3 == r {found=1} END {exit !found}' \
             "$TEAM_DIR/active" 2>/dev/null; then
-      echo "WARN: curated role '$c' not in active roster; spawn it with bin/add-role.sh $c"
+      # Each curated role has its own launcher; add-role.sh would start it with a
+      # worker's prompt (and needs a goal and --reason besides).
+      case "$c" in
+        communicator) echo "WARN: curated role 'communicator' not in active roster; start it with bin/communicator.sh" ;;
+        orchestrator) echo "WARN: curated role 'orchestrator' not in active roster; this launcher does not start it. bin/start-orchestrator.sh does (bin/run.sh calls it), and refuses while session '$session' exists: start the orchestrator first, then let it run this launcher" ;;
+        *) echo "WARN: curated role '$c' not in active roster" ;;
+      esac
     fi
   done
 else

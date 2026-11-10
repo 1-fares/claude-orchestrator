@@ -29,7 +29,8 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/lib/team-spawn.sh
 . "$repo/bin/lib/team-spawn.sh"
 flags="--dangerously-skip-permissions"
-command -v claude >/dev/null || { echo "claude not on PATH" >&2; exit 1; }
+# CLAUDE_BIN overrides the claude binary, as in bin/communicator.sh; both launch modes use it.
+command -v "${CLAUDE_BIN:-claude}" >/dev/null || { echo "${CLAUDE_BIN:-claude} not on PATH (use CLAUDE_BIN to override)" >&2; exit 1; }
 
 # ensure_team_daemons comes from team-spawn.sh: the one canonical daemon set,
 # shared with launch-team.sh and add-role.sh so the recovery path and the
@@ -39,9 +40,8 @@ command -v claude >/dev/null || { echo "claude not on PATH" >&2; exit 1; }
 # (model_for in team-spawn.sh; override with TEAM_MODEL_ORCHESTRATOR or
 # TEAM_MODEL_TOP). Recorded under $TEAM_DIR/models/ so the observer and the
 # compaction watchdog (model-aware thresholds) read ground truth from disk.
-orch_model="$(model_for orchestrator)"
-orch_model_flag=""
-[ -n "$orch_model" ] && orch_model_flag="--model $orch_model"
+orch_model="$(model_for orchestrator)"   # never empty (see model_for)
+orch_model_flag="--model $orch_model"
 
 mode=tmux
 [ "${1:-}" = "--foreground" ] && { mode=foreground; shift; }
@@ -50,10 +50,10 @@ goal="${1:-}"
 # A previous run's roles still in tmux? Warn before starting another.
 if command -v tmux >/dev/null && tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
   wins="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_name}' 2>/dev/null | paste -sd, -)"
-  echo "Note: a team tmux session '$TEAM_SESSION' already exists (windows: $wins)."
-  echo "If that is a previous run, reset first so it does not get confusing:"
-  echo "  bin/reset.sh"
-  echo "Then re-run this. (Continuing would add to that session.)"
+  echo "Note: a team tmux session '$TEAM_SESSION' already exists (windows: $wins)." >&2
+  echo "If that is a previous run, reset first so it does not get confusing:" >&2
+  echo "  bin/reset.sh" >&2
+  echo "Then re-run this. (Continuing would add to that session.)" >&2
   exit 1
 fi
 
@@ -166,7 +166,8 @@ if [ "$mode" = foreground ]; then
   # view see the orchestrator like any other role. exec replaces the shell so
   # the current pid ($$) becomes claude's pid. tmux_window column is '-' for
   # the foreground variant (no team-tmux pane).
-  printf '%s\t%s\torchestrator\n' "$$" "-" >> "$TEAM_DIR/active"
+  # Under the roster lock (add-role.sh, retire-role.sh and launch-team.sh rewrite active).
+  ( if command -v flock >/dev/null 2>&1; then flock -w 30 9 || true; fi; printf '%s\t%s\torchestrator\n' "$$" "-" >> "$TEAM_DIR/active" ) 9>"$TEAM_DIR/.roster.lock"
   # exec replaces this shell; the nohup'd daemons survive it. Start them first.
   ensure_team_daemons
   exec ${CLAUDE_BIN:-claude} $flags $orch_model_flag "$(cat "$pf")"
@@ -175,9 +176,12 @@ fi
 # Default (tmux) mode: orchestrator as window 0 of the team session; roles join
 # as windows 1, 2, ... so Ctrl-b <number> switches between them in one session.
 command -v tmux >/dev/null || { echo "tmux not installed (use --foreground)" >&2; exit 1; }
-launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT")"
+# TEAM_DIR is exported explicitly, as start_one does for roles: a new session on
+# a tmux server that another run started inherits THAT run's environment
+# (TEAM_DIR included), and team-env.sh then refuses the mismatch on every call.
+launch="cd $(printf %q "$repo") && export ORCH_HOME=$(printf %q "$repo") INTER_SESSION_PORT=$(printf %q "$TEAM_PORT") TEAM_DIR=$(printf %q "$TEAM_DIR")"
 [ -n "${TEAM_RUN_ID:-}" ] && launch="$launch TEAM_RUN_ID=$(printf %q "$TEAM_RUN_ID")"
-launch="$launch && exec claude $flags $orch_model_flag \"\$(cat $(printf %q "$pf"))\""
+launch="$launch && exec $(printf %q "${CLAUDE_BIN:-claude}") $flags $orch_model_flag \"\$(cat $(printf %q "$pf"))\""
 # Detach the tmux server from this shell's systemd user-session scope. May 2026
 # incident: every transient `tmux-spawn-*.scope` got cleaned up simultaneously
 # by the user manager, taking the whole team down. setsid puts the new tmux
@@ -186,11 +190,13 @@ launch="$launch && exec claude $flags $orch_model_flag \"\$(cat $(printf %q "$pf
 # work too but requires DBus inside WSL and is brittler.
 #
 # Important: setsid invokes the binary directly, so it skips the `tmux()`
-# shell-function wrapper defined in team-env.sh that adds `-L $TEAM_TMUX`. We
-# must pass `-L` here explicitly via the real tmux binary, or the new session
-# lands on the default socket. `TEAM_TMUX_BIN` is exported by team-env.sh.
+# shell-function wrapper defined in team-env.sh that adds `-L $TEAM_TMUX` and
+# `-f $TEAM_TMUX_CONF`. We must pass both here explicitly via the real tmux
+# binary, or the new session lands on the default socket, or a server started
+# here loads ~/.tmux.conf (and its plugins) instead of the team config.
+# `TEAM_TMUX_BIN` is exported by team-env.sh.
 if command -v setsid >/dev/null 2>&1; then
-  setsid "$TEAM_TMUX_BIN" -L "$TEAM_TMUX" new-session -d -s "$TEAM_SESSION" \
+  setsid "$TEAM_TMUX_BIN" -L "$TEAM_TMUX" -f "$TEAM_TMUX_CONF" new-session -d -s "$TEAM_SESSION" \
     -n orchestrator "bash -lc $(printf %q "$launch")" </dev/null >/dev/null 2>&1
 else
   tmux new-session -d -s "$TEAM_SESSION" -n orchestrator "bash -lc $(printf %q "$launch")"
@@ -205,7 +211,7 @@ o_info="$("$TEAM_TMUX_BIN" -L "$TEAM_TMUX" display-message \
 if [ -n "$o_info" ]; then
   o_pid="${o_info%% *}"
   o_wid="${o_info##* }"
-  printf '%s\t%s\torchestrator\n' "$o_pid" "$o_wid" >> "$TEAM_DIR/active"
+  ( if command -v flock >/dev/null 2>&1; then flock -w 30 9 || true; fi; printf '%s\t%s\torchestrator\n' "$o_pid" "$o_wid" >> "$TEAM_DIR/active" ) 9>"$TEAM_DIR/.roster.lock"
 fi
 # Ensure the supervisor daemons are up (covers the recovery path where launch-team
 # is not re-run). Idempotent.

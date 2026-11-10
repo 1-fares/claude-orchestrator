@@ -5,11 +5,17 @@
 # state.
 #
 # Isolation & safety:
-#   - Runs under a dedicated TEAM_RUN_ID, so the team gets its own derived bus
-#     port (9500-9899), tmux session, and state dir (.team-<id>/). It never uses
-#     the default /is bus (9473).
+#   - Sources bin/tests/lib/isolate.sh first: a throwaway TEAM_RUN_ID and tmux
+#     socket, never inherited ones, so the team gets its own derived bus port
+#     (9500-9899), tmux server and session, and state dir (.team-<id>/). It
+#     never uses the default /is bus (9473) or the live `orchestrator` socket.
 #   - Roles are the stub at tests/b9/bin/claude (TEAM_ROLE_CMD), so NO real
-#     claude starts and NO /is bus server is ever spawned.
+#     claude starts and NO /is bus server is ever spawned. Every team daemon
+#     except the api-watchdog is disabled: the observer calls a real
+#     `claude -p`, and the teardown below stops only the api-watchdog. The
+#     communicator is disabled too: with CLAUDE_BIN unset bin/communicator.sh
+#     would start TEAM_ROLE_CMD (the stub), but the live-role counts below
+#     assume only the roles this suite launches.
 #   - Aborts before doing anything if the derived port is 9473 (the default bus).
 #   - An EXIT trap always tears the test team down.
 #
@@ -23,8 +29,15 @@ repo="$(cd "$here/../.." && pwd)"
 stub="$here/bin/claude"
 [ -x "$stub" ] || { chmod +x "$stub" 2>/dev/null || { echo "stub not executable: $stub" >&2; exit 2; }; }
 
-export TEAM_RUN_ID="${TEAM_RUN_ID:-b9test}"
+# shellcheck source=/dev/null
+. "$repo/bin/tests/lib/isolate.sh"   # throwaway TEAM_RUN_ID/TEAM_TMUX, before team-env
+# shellcheck source=/dev/null
+. "$repo/bin/tests/lib/tmux-socket.sh"
 export TEAM_ROLE_CMD="$stub"
+export COMMUNICATOR_DISABLED=1 COMPACT_WATCHDOG_DISABLED=1 TMUX_WATCHDOG_DISABLED=1 \
+       PERMISSION_MODE_WATCHDOG_DISABLED=1 HOST_RAM_WATCHDOG_DISABLED=1 \
+       DISK_TMP_WATCHDOG_DISABLED=1 OBSERVER_DISABLED=1 CHROME_SUPERVISOR_DISABLED=1 \
+       INTAKE_POLLER_DISABLED=1
 unset NTFY_URL   # never push to the operator's real ntfy topic during tests
 GOAL="goals/repo-bugfix.md"
 [ -f "$repo/$GOAL" ] || GOAL="goals/_TEMPLATE.md"
@@ -33,6 +46,7 @@ GOAL="goals/repo-bugfix.md"
 # helpers for inspection.
 # shellcheck source=/dev/null
 . "$repo/bin/team-env.sh"
+isolate_assert
 # shellcheck source=/dev/null
 . "$repo/bin/lib/roster.sh"
 
@@ -79,9 +93,16 @@ cleanup(){
   if [ -f "$TEAM_DIR/active" ]; then
     while IFS=$'\t' read -r p w r || [ -n "${p:-}" ]; do [ -n "${p:-}" ] && { kill -KILL "-$p" 2>/dev/null; kill -KILL "$p" 2>/dev/null; }; done < "$TEAM_DIR/active"
   fi
-  [ -f "$TEAM_DIR/api-watchdog.pid" ] && kill -KILL "$(cat "$TEAM_DIR/api-watchdog.pid" 2>/dev/null)" 2>/dev/null
-  tmux kill-session -t "$TEAM_SESSION" 2>/dev/null
-  pkill -KILL -f "$stub" 2>/dev/null   # sweep any stray stub roles from this suite
+  # The watchdog's foreground `sleep` holds its flock fd: kill it with the parent.
+  local wd; wd="$(cat "$TEAM_DIR/api-watchdog.pid" 2>/dev/null)"
+  [ -n "$wd" ] && { pkill -KILL -P "$wd" 2>/dev/null; kill -KILL "$wd" 2>/dev/null; }
+  tmux_kill_unlink "$TEAM_TMUX_BIN" "$TEAM_TMUX"   # isolate.sh's own server (teams A and B) + socket file
+  # Sweep stray stub roles of THIS run only (teams A and B); a concurrent run of the
+  # suite in this clone uses the same stub path under another TEAM_RUN_ID.
+  local q
+  for q in $(pgrep -f "$stub" 2>/dev/null); do
+    tr '\0' '\n' < "/proc/$q/environ" 2>/dev/null | grep -qxE "TEAM_RUN_ID=${TEAM_RUN_ID}[BCD]?" && kill -KILL "$q" 2>/dev/null
+  done
   rm -rf "$TEAM_DIR"
   # Remove role files the suite created (anything in roles/ not in the snapshot).
   local now f
@@ -96,7 +117,7 @@ trap cleanup EXIT
 cleanup >/dev/null 2>&1; trap cleanup EXIT
 
 echo; echo "--- T1: add-role refuses when no team is live"
-out="$(add "$GOAL" implementer1)"; rc=$?
+out="$(add "$GOAL" implementer1 --reason 'no team probe')"; rc=$?
 expect_ne_rc 0 "$rc" "T1 rc nonzero"
 expect_contains "$out" "no live team" "T1 explains no live team"
 
@@ -138,22 +159,22 @@ expect_file_has "$TEAM_DIR/state.md" "added tester1" "T4 decision-log line"
 expect_file_has "$TEAM_DIR/state.md" "+tester1" "T4 roster line"
 
 echo; echo "--- T5: double-spawn refused"
-out="$(add "$GOAL" tester1)"; rc=$?
+out="$(add "$GOAL" tester1 --reason 'double-spawn probe')"; rc=$?
 expect_ne_rc 0 "$rc" "T5 rc nonzero"
 expect_contains "$out" "already live" "T5 explains already live"
 
 echo; echo "--- T6: invalid bus name refused"
-out="$(add "$GOAL" 'Bad_Name')"; rc=$?
+out="$(add "$GOAL" 'Bad_Name' --reason 'bad name probe')"; rc=$?
 expect_ne_rc 0 "$rc" "T6 rc nonzero"
 expect_contains "$out" "invalid bus name" "T6 explains invalid name"
 
 echo; echo "--- T7: missing goal refused"
-out="$(add "/no/such/goal.md" lawyer1)"; rc=$?
+out="$(add "/no/such/goal.md" lawyer1 --reason 'missing goal probe')"; rc=$?
 expect_ne_rc 0 "$rc" "T7 rc nonzero"
 expect_contains "$out" "goal file not found" "T7 explains missing goal"
 
 echo; echo "--- T8: bad task brief refused"
-out="$(add "$GOAL" lawyer1 --task /no/such/brief.md)"; rc=$?
+out="$(add "$GOAL" lawyer1 --task /no/such/brief.md --reason 'missing brief probe')"; rc=$?
 expect_ne_rc 0 "$rc" "T8 rc nonzero"
 expect_contains "$out" "task brief not found" "T8 explains missing brief"
 
@@ -169,11 +190,11 @@ expect_eq $((before+1)) "$(live_role_count)" "T9 live count +1"
 
 echo; echo "--- T10: soft cap via MAX_TEAM_SIZE env"
 cur="$(live_role_count)"
-out="$( cd "$repo" && MAX_TEAM_SIZE="$cur" ./bin/add-role.sh "$GOAL" capguard1 2>&1 )"; rc=$?
+out="$( cd "$repo" && MAX_TEAM_SIZE="$cur" ./bin/add-role.sh "$GOAL" capguard1 --reason 'cap probe' 2>&1 )"; rc=$?
 expect_ne_rc 0 "$rc" "T10 refused at cap"
 expect_contains "$out" "at the cap" "T10 explains cap"
 expect_eq "$cur" "$(live_role_count)" "T10 no role added at cap"
-out="$( cd "$repo" && MAX_TEAM_SIZE="$((cur+1))" ./bin/add-role.sh "$GOAL" capguard1 2>&1 )"; rc=$?
+out="$( cd "$repo" && MAX_TEAM_SIZE="$((cur+1))" ./bin/add-role.sh "$GOAL" capguard1 --reason 'cap probe' 2>&1 )"; rc=$?
 expect_rc 0 "$rc" "T10 allowed at cap+1" "$out"
 sleep 1
 expect_eq "$((cur+1))" "$(live_role_count)" "T10 role added under raised cap"
@@ -181,7 +202,7 @@ expect_eq "$((cur+1))" "$(live_role_count)" "T10 role added under raised cap"
 echo; echo "--- T10b: soft cap via \$TEAM_DIR/max-team-size file, uncapped, and precedence"
 cur="$(live_role_count)"
 echo "$cur" > "$TEAM_DIR/max-team-size"           # file cap = current live count
-out="$(add "$GOAL" capfile1)"; rc=$?
+out="$(add "$GOAL" capfile1 --reason 'file cap probe')"; rc=$?
 expect_ne_rc 0 "$rc" "T10b file cap refuses at limit"
 expect_contains "$out" "cap $cur" "T10b refusal cites the file cap"
 echo "none" > "$TEAM_DIR/max-team-size"           # uncapped
@@ -191,7 +212,7 @@ expect_contains "$out" "uncapped" "T10b notice says uncapped"
 sleep 1
 # precedence: env MAX_TEAM_SIZE beats the file (file says uncapped, env enforces)
 now="$(live_role_count)"
-out="$( cd "$repo" && MAX_TEAM_SIZE="$now" ./bin/add-role.sh "$GOAL" capfile2 2>&1 )"; rc=$?
+out="$( cd "$repo" && MAX_TEAM_SIZE="$now" ./bin/add-role.sh "$GOAL" capfile2 --reason 'cap precedence probe' 2>&1 )"; rc=$?
 expect_ne_rc 0 "$rc" "T10b env MAX_TEAM_SIZE overrides the file (refuses though file=none)"
 rm -f "$TEAM_DIR/max-team-size"                   # back to default 12 for later tests
 # retire the cap-probe roles so the roster stays small for the rest of the suite
@@ -282,7 +303,7 @@ fi
 [ -f "$HOME/.claude/data/inter-session/server.$TEAM_PORT.pid" ] && fail "T17 no bus pidfile for team port" || pass "T17 no bus pidfile for team port"
 
 echo; echo "--- T18: digit-only role name rejected (would strip to empty base -> roles/.md)"
-out="$(add "$GOAL" 123)"; rc=$?
+out="$(add "$GOAL" 123 --reason 'digit-only probe')"; rc=$?
 expect_ne_rc 0 "$rc" "T18 rc nonzero"
 expect_contains "$out" "non-digit" "T18 explains empty base"
 [ -f "$repo/roles/.md" ] && { fail "T18 no junk roles/.md created"; rm -f "$repo/roles/.md"; } || pass "T18 no junk roles/.md created"
@@ -326,8 +347,12 @@ echo; echo "--- T21: roster liveness ignores a recycled (non-claude) pid (unit, 
 ) && pass "T21 non-claude pid not counted live" || fail "T21 non-claude pid not counted live"
 
 echo; echo "--- T22/T23: cross-team isolation (a retire in team A must never touch team B)"
-RIDB="b9testB"
-bport=$(printf '%s\0%s' "$repo" "$RIDB" | cksum | cut -d' ' -f1); bport=$((9500 + bport % 400))
+# Team B's id derives from this run's throwaway id (no fixed name a concurrent
+# run could share); the first suffix whose port differs from team A's is used.
+for RIDB in "${TEAM_RUN_ID}B" "${TEAM_RUN_ID}C" "${TEAM_RUN_ID}D"; do
+  bport=$(printf '%s\0%s' "$repo" "$RIDB" | cksum | cut -d' ' -f1); bport=$((9500 + bport % 400))
+  [ "$bport" != "$TEAM_PORT" ] && break
+done
 if [ "$bport" = "$TEAM_PORT" ]; then
   fail "T22 precondition: team B port ($bport) collides with team A ($TEAM_PORT); pick another RIDB"
 else
@@ -360,7 +385,10 @@ else
   role_is_live intruder && fail "T23 intruder entry removed from team A active" || pass "T23 intruder entry removed from team A active"
 
   # Tear down team B (stop-team kills B's own session; sweep + rm as a safety net).
-  ( cd "$repo" && TEAM_RUN_ID="$RIDB" ./bin/stop-team.sh --no-graceful ) >/dev/null 2>&1
+  # Same env clearing as the launch: with team A's TEAM_DIR inherited, team-env
+  # refuses the override and stop-team stopped nothing of team B.
+  ( cd "$repo" && env -u INTER_SESSION_PORT -u TEAM_PORT -u TEAM_DIR -u TEAM_SESSION \
+      TEAM_RUN_ID="$RIDB" ./bin/stop-team.sh --no-graceful ) >/dev/null 2>&1
   if [ -f "$bdir/active" ]; then while IFS=$'\t' read -r p w r || [ -n "${p:-}" ]; do [ -n "${p:-}" ] && { kill -KILL "-$p" 2>/dev/null; kill -KILL "$p" 2>/dev/null; }; done < "$bdir/active"; fi
   rm -rf "$bdir"
 fi
