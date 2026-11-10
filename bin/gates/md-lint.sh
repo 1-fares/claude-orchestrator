@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # md-lint.sh: markdown well-formed and conformant via markdownlint-cli2.
-# Skips with a warning if neither npx nor markdownlint-cli2 is on PATH (a gate
-# that cannot run is not a gate that should fail; the orchestrator should know).
+# Exits 2 if neither npx nor markdownlint-cli2 is on PATH: a gate that could not
+# run must not read as a pass in a verify: line (verify-unit.sh would log it green).
 #
 # Usage:
 #   bin/gates/md-lint.sh <path-or-glob> [--config <file>]
@@ -22,8 +22,8 @@ if command -v markdownlint-cli2 >/dev/null; then
 elif command -v npx >/dev/null; then
   bin="npx --yes markdownlint-cli2"
 else
-  echo "md-lint: SKIP (markdownlint-cli2 not installed; install with: npm i -g markdownlint-cli2)" >&2
-  exit 0
+  echo "md-lint: FAIL, not run (markdownlint-cli2 not installed and no npx; install with: npm i -g markdownlint-cli2)" >&2
+  exit 2
 fi
 
 if [ -n "$cfg" ]; then

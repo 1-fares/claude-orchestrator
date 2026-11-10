@@ -19,7 +19,8 @@
 #
 # OUTPUT. One line per probe on stdout (PASS/FAIL name seconds), a summary, exit 1 on any
 # FAIL. Durable: $TEAM_DIR/reports/capability-probe.log (append) and
-# $TEAM_DIR/health/capability-probe.json (last result, read by the observer).
+# $TEAM_DIR/health/capability-probe.json (last full run, read by the observer;
+# a --only run does not write it).
 set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # team-env.sh derives the run dir itself and refuses a pre-set TEAM_DIR that differs, so
@@ -34,7 +35,7 @@ _td_pre="${TEAM_DIR:-}"; unset TEAM_DIR
 conf="${1:-${CAPABILITY_PROBE_CONF:-}}"; shift || true
 [ -n "$conf" ] && [ -f "$conf" ] || { echo "usage: capability-probe.sh <probes.conf> [--list|--only <name>|--no-notify]" >&2; exit 2; }
 mode=run; only=""; notify=1
-while [ $# -gt 0 ]; do case "$1" in --list) mode=list ;; --only) only="$2"; shift ;; --no-notify) notify=0 ;; esac; shift; done
+while [ $# -gt 0 ]; do case "$1" in --list) mode=list ;; --only) [ $# -ge 2 ] || { echo "capability-probe: --only needs a probe name" >&2; exit 2; }; only="$2"; shift ;; --no-notify) notify=0 ;; esac; shift; done
 
 td="${TEAM_DIR:-$repo/.team}"; mkdir -p "$td/reports" "$td/health" 2>/dev/null || true
 log="$td/reports/capability-probe.log"; json="$td/health/capability-probe.json"
@@ -55,7 +56,9 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < "$conf"
 [ "$mode" = list ] && exit 0
 rm -f "$td/health/.probe-err"
-printf '{"ts":"%s","pass":%s,"fail":%s,"failed":"%s","probes":[%s]}\n' "$(ts)" "$pass" "$fail" "${failed# }" "${results%,}" > "$json"
+# The JSON is the observer's record of the FULL probe set; a --only run must not
+# replace it, or one passing probe hides every other FAIL from audit check (i).
+[ -z "$only" ] && printf '{"ts":"%s","pass":%s,"fail":%s,"failed":"%s","probes":[%s]}\n' "$(ts)" "$pass" "$fail" "${failed# }" "${results%,}" > "$json"
 echo "capability-probe: pass=$pass fail=$fail${failed:+ failed:$failed}"
 printf '%s SUMMARY pass=%s fail=%s%s\n' "$(ts)" "$pass" "$fail" "${failed:+ failed:$failed}" >> "$log"
 if [ "$fail" -gt 0 ] && [ "$notify" = 1 ] && declare -F notify_operator >/dev/null 2>&1; then

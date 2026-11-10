@@ -31,6 +31,24 @@ art_path, rules_path = sys.argv[1], sys.argv[2]
 text = open(art_path, encoding="utf-8", errors="replace").read()
 rules = yaml.safe_load(open(rules_path, encoding="utf-8")) or {}
 fails = []
+# Headings are located in a copy with fenced code blocks (``` or ~~~) blanked out,
+# offsets preserved: a `# comment` line in a shell block is not a heading, and it
+# used to satisfy required_headings and split sections. An unclosed fence runs to
+# the end of the document (CommonMark).
+def mask_fences(s):
+    out, fence = [], None
+    for line in s.splitlines(keepends=True):
+        m = re.match(r" {0,3}(`{3,}|~{3,})", line)
+        if fence is None:
+            if not m:
+                out.append(line); continue
+            fence = m.group(1)
+        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                and not line.strip()[len(m.group(1)):].strip():
+            fence = None
+        out.append(re.sub(r"[^\n]", " ", line))
+    return "".join(out)
+masked = mask_fences(text)
 # Total word count
 words = re.findall(r"\b\w+\b", text)
 total = len(words)
@@ -39,7 +57,7 @@ if "min_words" in rules and total < rules["min_words"]:
 if "max_words" in rules and total > rules["max_words"]:
     fails.append(f"total words {total} > max {rules['max_words']}")
 # Required headings (exact match anywhere as a heading)
-heads = re.findall(r"^#{1,6}\s+(.+?)\s*$", text, re.M)
+heads = re.findall(r"^#{1,6}\s+(.+?)\s*$", masked, re.M)
 heads_set = {h.strip() for h in heads}
 for h in rules.get("required_headings", []) or []:
     if h not in heads_set:
@@ -52,7 +70,7 @@ if sec_rules:
     # is the heading text. The name must come from group(2): using group(1) here
     # made every section key a run of '#', so per-section ranges never matched.
     positions = [(m.start(), len(m.group(1)), m.group(2).strip(), m.end())
-                 for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", text, re.M)]
+                 for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", masked, re.M)]
     bodies = {}
     for i, (pos, lvl, name, end) in enumerate(positions):
         nxt = len(text)

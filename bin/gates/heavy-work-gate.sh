@@ -21,8 +21,9 @@ set -uo pipefail
 LABEL="heavy work"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --label) LABEL="${2:-heavy work}"; shift 2 ;;
-    -h|--help) sed -n '1,24p' "$0"; exit 0 ;;
+    --label) [ $# -ge 2 ] || { echo "heavy-work-gate: --label needs a value" >&2; exit 2; }
+             LABEL="$2"; shift 2 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "heavy-work-gate: unknown arg '$1'" >&2; exit 2 ;;
   esac
 done
@@ -39,14 +40,14 @@ ram="$(ram_used_pct < /proc/meminfo)"; swap="$(swap_used_pct < /proc/meminfo)"
 [ -n "$ram" ] || { echo "heavy-work-gate: could not parse RAM; refusing $LABEL to be safe" >&2; exit 1; }
 band="$(host_ram_band "$ram" "$swap")"   # FREEZE | WARN | "" — single-sourced with the watchdog
 [ -n "$band" ] || band="OK"
-RAM_MARKER="${HRW_MARKER:-${TEAM_DIR:-.}/health/host-ram-low.md}"
+RAM_MARKER="${HRW_MARKER:-${HRW_HEALTH_DIR:-${TEAM_DIR:-.}/health}/host-ram-low.md}"
 if [ "$band" = "OK" ] && [ -f "$RAM_MARKER" ]; then band="WARN(marker)"; fi
 
 # --- disk/tmp band (EDQUOT guard) ---
 root_pct="$(fs_used_pct /)"; tmp_pct="$(fs_used_pct /tmp)"
 dt_band="$(disk_tmp_band "${root_pct:-0}" "${tmp_pct:-0}")"   # FREEZE | WARN | "" — single-sourced with the watchdog
 [ -n "$dt_band" ] || dt_band="OK"
-DT_MARKER="${DTW_MARKER:-${TEAM_DIR:-.}/health/host-disk-tmp-low.md}"
+DT_MARKER="${DTW_MARKER:-${DTW_HEALTH_DIR:-${TEAM_DIR:-.}/health}/host-disk-tmp-low.md}"
 if [ "$dt_band" = "OK" ] && [ -f "$DT_MARKER" ]; then dt_band="WARN(marker)"; fi
 
 # --- decision: refuse if EITHER constraint trips ---

@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
     --n)     n="$2"; shift 2 ;;
     --gate)  gate="$2"; shift 2 ;;
     --model) model="$2"; shift 2 ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     --) shift; break ;;
     -*) echo "unknown arg: $1" >&2; exit 2 ;;
     *)  if [ -z "$art" ]; then art="$1"; else rub="$1"; fi; shift ;;
@@ -100,6 +100,9 @@ echo "# $gate  artifact=$art  rubric=$rub  n=$n  model=${model:-default}" > "$lo
 pass_votes=0; total=0
 for i in $(seq 1 "$n"); do
   echo "--- run $i ---" >> "$log"
+  # Every run counts toward the majority: a run with no verdict is not a pass,
+  # so 1 pass out of 3 runs (2 without JSON) must FAIL, not read as 1/1.
+  total=$((total+1))
   if [ -n "$model" ]; then
     # Prompt on stdin: the artifact can exceed the 128 KiB per-argument cap (E2BIG).
     out="$(claude -p --model "$model" <<<"$(prompt)" 2>>"$log" || true)"
@@ -112,7 +115,6 @@ for i in $(seq 1 "$n"); do
     echo "[no JSON returned for run $i]" >> "$log"; continue
   fi
   p="$(printf '%s' "$json" | jq -r '.pass // false' 2>/dev/null)"
-  total=$((total+1))
   [ "$p" = "true" ] && pass_votes=$((pass_votes+1))
 done
 

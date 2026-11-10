@@ -8,10 +8,10 @@
 # none. Source fetching is the LLM's responsibility (via its tools). Fast,
 # pragmatic; for source-fetching-strict checks, build a domain overlay.
 #
-# Usage: bin/gates/cite-support.sh <artifact> [--n K]
+# Usage: bin/gates/cite-support.sh <artifact> [--n K] [--model MODEL]
 
 set -euo pipefail
-art="${1:?usage: cite-support.sh <artifact> [--n K]}"
+art="${1:?usage: cite-support.sh <artifact> [--n K] [--model MODEL]}"
 shift || true
 [ -f "$art" ] || { echo "no artifact: $art" >&2; exit 2; }
 
@@ -37,4 +37,6 @@ FAIL otherwise. Score 0..5 based on how many claims have unsupported cites:
 Return pass:true only at score >= 4.
 EOF
 
-exec "$dir/llm-judge.sh" "$art" "$rubric" --gate cite-support --n "${1:-1}" "$@"
+# Not exec: the EXIT trap must run to remove the rubric temp file. Remaining
+# options (--n K, --model M) pass through unchanged; llm-judge defaults n to 1.
+"$dir/llm-judge.sh" "$art" "$rubric" --gate cite-support "$@"

@@ -39,7 +39,7 @@ if [ -f "$target" ]; then
   stem_re="$(printf '%s' "$stem" | sed 's/[][\\.^$*+?(){}|/]/\\&/g')"
   echo "# files that import/reference $target  (module stem: $stem)"
   self="./${target#./}"
-  scan "(import|require|include|from|use|#include)[^\n]*\\b${stem_re}\\b" \
+  scan "(import|require|include|from|use|#include).*\\b${stem_re}\\b" \
     | grep -v -e "^${target}:" -e "^${self}:" | tally
 else
   echo "# files referencing symbol '$target'  (word-boundary, heuristic)"

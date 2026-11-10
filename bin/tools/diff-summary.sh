@@ -19,7 +19,8 @@ if [ -z "$range" ]; then
 fi
 
 echo "# diff-summary: $range"
-stat="$(git diff --shortstat "$range" 2>/dev/null)"
+stat="$(git diff --shortstat "$range" 2>/dev/null)" || {
+  echo "diff-summary: git diff failed for range '$range' (unknown ref or no parent commit)" >&2; exit 2; }
 echo "${stat:-  (no changes)}"
 
 echo

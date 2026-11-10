@@ -3,10 +3,14 @@
 # what you want and where the code is; the orchestrator turns that into concrete
 # acceptance criteria, scope, team, and a verify command at its definition-of-
 # ready gate (and confirms with you before any work starts).
+# The brief uses the headings of goals/_TEMPLATE.md: this script fills Working
+# tree, What I want and Notes (constraints, team hint) and leaves Acceptance
+# criteria, Scope and Team empty for the orchestrator.
 #
 # Interactive:     bin/new-goal.sh
 # Non-interactive: bin/new-goal.sh --name N --workdir DIR --want "..." \
 #                     [--notes "..."] [--team "..."]
+# Writes goals/<N>.md in this clone; exit 2 on bad input, 1 if it exists.
 
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +23,7 @@ while [ $# -gt 0 ]; do
     --want)    want="$2"; shift 2 ;;
     --notes)   notes="$2"; shift 2 ;;
     --team)    team="$2"; shift 2 ;;
+    -h|--help) sed -n '2,13s/^# \{0,1\}//p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -52,11 +57,15 @@ ${workdir:-(this clone)}
 ## What I want
 $want
 
-## Notes / constraints
-${notes:-none}
+## Acceptance criteria
 
-## Team hint
-${team:-let the orchestrator decide}
+## Scope
+
+## Team
+
+## Notes
+Constraints: ${notes:-none}
+Team hint: ${team:-none; the orchestrator proposes the team}
 EOF
 
 echo "wrote $dest"

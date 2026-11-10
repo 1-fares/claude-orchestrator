@@ -15,7 +15,7 @@ heuristics where noted; treat their output as a lead, not proof.
 | :-- | :-- | :-- |
 | `probe-env.sh [DIR]` | Starting on an unfamiliar repo; filling a brief's `verify:` line | orchestrator, devops, implementer |
 | `impact-scan.sh <file\|symbol>` | Scoping a change; gauging blast radius before editing | implementer, reviewer |
-| `red-green.sh <red\|green> <unit> <cmd...>` | Capturing the tester's failing-then-passing evidence pair | tester |
+| `red-green.sh <red\|green> <unit> "<verify-cmd>"` | Capturing the tester's failing-then-passing evidence pair | tester |
 | `diff-summary.sh [range]` | Grasping a change without reading the whole diff | reviewer, integrator |
 
 Keep them dependency-light (POSIX bash; `jq`/`rg` used when present, degrade

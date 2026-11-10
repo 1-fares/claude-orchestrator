@@ -24,7 +24,7 @@ brief="$TEAM_DIR/tasks/$unit.md"
 
 cmd="$(grep -m1 '^verify:' "$brief" | sed 's/^verify:[[:space:]]*//')"
 [ -n "$cmd" ] && [ "$cmd" != "<command that builds, tests, and lints this unit; must exit 0>" ] \
-  || { echo "no usable 'verify:' command in tasks/$unit.md" >&2; exit 2; }
+  || { echo "no usable 'verify:' command in $brief" >&2; exit 2; }
 
 mkdir -p "$TEAM_DIR/verify"
 log="$TEAM_DIR/verify/$unit.log"

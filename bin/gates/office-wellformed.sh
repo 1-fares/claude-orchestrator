@@ -13,7 +13,9 @@ ext="${f##*.}"
 
 case "$ext" in
   docx)
-    uv run --with python-docx --quiet python - "$f" <<'PY'
+    # --no-project: run in a Python project's tree, plain `uv run` creates .venv
+    # and uv.lock there, which then show up as the unit's own changes.
+    uv run --no-project --with python-docx --quiet python - "$f" <<'PY'
 import sys
 from docx import Document
 d = Document(sys.argv[1])
@@ -24,7 +26,7 @@ print(f"office-wellformed: OK ({len(paras)} non-empty paragraphs)")
 PY
     ;;
   pptx)
-    uv run --with python-pptx --quiet python - "$f" <<'PY'
+    uv run --no-project --with python-pptx --quiet python - "$f" <<'PY'
 import sys
 from pptx import Presentation
 p = Presentation(sys.argv[1])

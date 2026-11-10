@@ -47,7 +47,7 @@ TD="$SCRATCH/.teamtest"; mkdir -p "$TD/observer"
   for i in $(seq -w 1 10); do echo "| BIGPAD-$i | $desc | worker | 2099-01-01 | OPEN |"; done; } > "$TD/state.md"
 run_obs() {
   env -u TEAM_RUN_ID PATH="$FAKEBIN:$PATH" TEAM_DIR="$TD" TEAM_DIR_ALLOW_OVERRIDE=1 TEAM_TMUX=obstest \
-    OBSERVER_ESCALATE_SINK="$SCRATCH/esc" OBSERVER_BUS_SEND="$FAKEBIN/bus-send" \
+    OBSERVER_ESCALATE_SINK="$SCRATCH/esc" OBSERVER_BUS_SEND="$FAKEBIN/bus-send" OBSERVER_FORCE_CALL_EVERY=1 \
     timeout 120 bash "$repo/bin/observer.sh" --once >"$SCRATCH/obs.out" 2>&1 || true
 }
 printf '%s\n' 'VERDICT: team=hold models=keep host=ok flags=none' 'HEADLINE: e2big stdin marker answer' 'ok' > "$PAYLOAD"
@@ -57,9 +57,15 @@ sz="$(wc -c < "$STDIN_COPY" 2>/dev/null || echo 0)"
 if [ "$sz" -gt 1000 ] && grep -q 'BIGPAD-01' "$STDIN_COPY" && [ "$(cat "$ARGV_LEN" 2>/dev/null || echo 999999)" -lt 4096 ]; then
   ok "(2) observer prompt reached claude on stdin ($sz bytes, unit-table row present), argv carries only the flags ($(cat "$ARGV_LEN") bytes)"
 else bad "(2) observer prompt not on stdin ($sz bytes on stdin, argv $(cat "$ARGV_LEN" 2>/dev/null) bytes)"; fi
-if grep -q 'e2big stdin marker answer' "$TD/observer/latest.md" 2>/dev/null && ! grep -q 'ADVICE FAILED' "$TD/observer/latest.md"; then
+if grep -q 'e2big stdin marker answer' "$TD/observer/latest.md" 2>/dev/null && ! grep -q 'MODEL CALL FAILED' "$TD/observer/latest.md"; then
   ok "(2) the pass recorded the model answer"
-else bad "(2) the pass did not record the model answer: $(grep -m1 -E 'HEADLINE|ADVICE' "$TD/observer/latest.md" 2>/dev/null)"; fi
+else bad "(2) the pass did not record the model answer: $(grep -m1 -E 'HEADLINE|MODEL CALL FAILED' "$TD/observer/latest.md" 2>/dev/null)"; fi
+# (2b) control for the check above: a failing call (rc 1) writes the failure heading (2) looks for.
+# OBSERVER_FORCE_CALL_EVERY=1 in run_obs: unchanged inputs would otherwise skip this second call.
+echo 1 > "$FAKE_RC"; run_obs; echo 0 > "$FAKE_RC"
+if grep -q '^## MODEL CALL FAILED' "$TD/observer/latest.md" 2>/dev/null; then
+  ok "(2b) control: a failed call writes 'MODEL CALL FAILED' to latest.md"
+else bad "(2b) control: a failed call wrote no 'MODEL CALL FAILED': $(head -c 300 "$TD/observer/latest.md" 2>/dev/null)"; fi
 
 # (3) llm-judge.sh with a 200 KiB artifact.
 head -c 204800 /dev/zero | tr '\0' 'a' > "$SCRATCH/artifact.txt"; echo 'JUDGE-TAIL-MARKER' >> "$SCRATCH/artifact.txt"

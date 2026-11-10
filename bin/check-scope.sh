@@ -24,17 +24,18 @@
 # The changed-set is therefore built from two independently-attributed halves.
 #
 # COMMITS, over `<base>..HEAD` (merge commits skipped; their content reaches the
-# range through their parents), in precedence order:
+# range through their parents). The first two sources are unioned (g3c):
 #   * An explicit commit list at $TEAM_DIR/commits/<unit> (one commit-ish per
-#     line; `#` comments and blanks ignored) attributes exactly those commits.
+#     line; `#` comments and blanks ignored) attributes those commits.
 #     Use it to retrofit attribution onto commits that were made without a
 #     trailer, and for any workflow that would rather record hashes than edit
 #     commit messages.
-#   * Otherwise, if ANY commit in the range carries a `Unit:` trailer, the range
-#     is treated as marked, and ONLY commits whose message has a trailer line
-#     `Unit: <unit>` (case-insensitive key) are attributed. Foreign commits,
-#     marked for another unit or unmarked, are ignored.
-#   * Otherwise every commit in the range is attributed. This is the
+#   * If ANY commit in the range carries a `Unit:` trailer, the range is
+#     treated as marked, and commits whose message has a trailer line
+#     `Unit: <unit>` (case-insensitive key) are attributed as well. Foreign
+#     commits, marked for another unit or unmarked, are ignored.
+#   * Only when neither of the above applies is every commit in the range
+#     attributed. This is the
 #     per-unit-worktree / single-unit case, where there is no foreign work to
 #     confuse, and it preserves the historic behaviour of this script.
 #   The trailer is the preferred mechanism because it survives rebase,
@@ -48,8 +49,8 @@
 #   * With a claim file at $TEAM_DIR/claims/<unit> (one path, directory or glob
 #     per line; `#` comments and blanks ignored), only staged, unstaged and
 #     untracked paths matching a claim are attributed.
-#   * With no claim file, but a marked commit range (i.e. the tree is shared and
-#     is using markers), NO uncommitted change is attributed: the script cannot
+#   * With no claim file, but a marked commit range or a commit list (i.e. the
+#     tree is shared and is using markers), NO uncommitted change is attributed: the script cannot
 #     tell whose it is, and guessing is what produced the false failures. A unit
 #     that wants its uncommitted work checked must claim it.
 #   * With neither claims nor markers (the worktree case), staged and unstaged
@@ -110,6 +111,11 @@ if [ -f "$treefile" ]; then
 fi
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not a git tree: $PWD" >&2; exit 2; }
+# Operate from the top level: `git ls-files --others` prints paths relative to the
+# cwd and only below it, while `git diff --name-only` prints top-level-relative
+# paths. From a subdirectory an untracked off-limits file was reported under a
+# different name than its pattern and escaped the check.
+cd "$(git rev-parse --show-toplevel)" || { echo "cannot cd to the top level of $PWD" >&2; exit 2; }
 
 # Baseline resolution, tracking where the base came from so an unresolvable value
 # is handled by origin: a stamp that does not resolve in this tree is the wrong
@@ -260,6 +266,11 @@ changed="$(printf '%s\n%s\n' "$commit_files" "$uncommitted" \
 off="$(grep -m1 '^off-limits:' "$brief" | sed 's/^off-limits:[[:space:]]*//')"
 scope="$(grep -m1 '^scope:' "$brief" | sed 's/^scope:[[:space:]]*//')"
 norm() { printf '%s' "$1" | tr ',' ' '; }
+# The pattern loops below split $(norm ...) on whitespace; pathname expansion must
+# stay off, or a glob such as config/*.yml becomes the files that exist in the cwd
+# now: a deleted off-limits file then escaped, and the verdict depended on which
+# unrelated files happened to be present. path_matches does its own glob match.
+set -f
 
 fail=0
 

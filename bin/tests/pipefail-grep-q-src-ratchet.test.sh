@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The pipefail-grep-q ratchet also scans shell sources outside bin/tests.
 # Drives bin/tests/pipefail-grep-q-ratchet.test.sh against fixture source trees (PGQ_SRC_ROOT /
-# PGQ_SRC_ALLOW), with the real bin/tests and its allowlist, and checks each rule both ways:
+# PGQ_SRC_ALLOW) and a fixture test directory (PGQ_TESTS_DIR / PGQ_ALLOW: 10 clean files, empty
+# allowlist), so a fixture row neither re-scans the real bin/tests nor fails on a defect there; the last
+# row scans the real tree with the real allowlists. It checks each rule both ways:
 #   - a pipefail daemon with `printf | grep -q` goes RED (the old pattern), and passes once allow-listed;
 #   - a bin/lib library is in scope with no pipefail line of its own (it is sourced into daemons);
 #   - a file with no pipefail, outside bin/lib, is not;
@@ -25,7 +27,12 @@ fresh() {
   for i in 1 2 3 4; do printf '#!/usr/bin/env bash\necho plain\n' > "$T/src/tests/p$i.sh"; done
   : > "$T/allow"
 }
-run() { out="$(PGQ_SRC_ROOT="$T/src" PGQ_SRC_ALLOW="$T/allow" bash "$RATCHET" 2>&1)"; rc=$?; }
+# fixture for the test-file scan, fixed for every row: 10 test files without a pipe into grep -q (the
+# ratchet demands at least 10) and an empty test allowlist.
+mkdir -p "$T/tests"
+for i in 1 2 3 4 5 6 7 8 9 10; do printf '#!/usr/bin/env bash\nset -uo pipefail\ngrep -q x <<<"$out"\n' > "$T/tests/t$i.test.sh"; done
+: > "$T/tallow"
+run() { out="$(PGQ_TESTS_DIR="$T/tests" PGQ_ALLOW="$T/tallow" PGQ_SRC_ROOT="$T/src" PGQ_SRC_ALLOW="$T/allow" bash "$RATCHET" 2>&1)"; rc=$?; }
 add() { printf '%s\n' "$2" >> "$T/src/$1"; }
 
 fresh; run

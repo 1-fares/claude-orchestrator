@@ -262,6 +262,27 @@ expect_exit 0 "union: both in-scope commits pass" "$out" "$rc"
 case "$out" in *"commits=2"*) ok "union attributes both commits (commits=2)" ;;
   *) bad "union attributes both commits (commits=2)" "output: $out" ;; esac
 
+# bin/worktree.sh remove, for the per-unit worktree layout: a worktree with uncommitted work is
+# refused with git's reason (the old silent --force fallback discarded that work); an explicit
+# --force removes it; a clean worktree is removed without --force.
+new_case worktree-remove
+seed
+wtsh="$repo/bin/worktree.sh"
+wp="$( cd "$WT" && bash "$wtsh" add wtu 2>/dev/null )"
+[ -n "$wp" ] && [ -d "$wp" ] && ok "worktree.sh add: unit worktree created" || bad "worktree.sh add" "path: $wp"
+echo work > "$wp/uncommitted.txt"
+out="$( cd "$WT" && bash "$wtsh" remove wtu 2>&1 )"; rc=$?
+[ "$rc" != 0 ] && [ -f "$wp/uncommitted.txt" ] && ok "worktree.sh remove: refuses a dirty worktree, the uncommitted file is kept" \
+  || bad "worktree.sh remove keeps a dirty worktree" "rc=$rc output: $out"
+case "$out" in *untracked*) ok "worktree.sh remove: prints git's reason" ;; *) bad "worktree.sh remove: git's reason" "output: $out" ;; esac
+out="$( cd "$WT" && bash "$wtsh" remove wtu --force 2>&1 )"; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$wp" ] && ok "worktree.sh remove --force: removes it on request" || bad "worktree.sh remove --force" "rc=$rc output: $out"
+wp="$( cd "$WT" && bash "$wtsh" add wtv 2>/dev/null )"
+out="$( cd "$WT" && bash "$wtsh" remove wtv 2>&1 )"; rc=$?
+[ "$rc" = 0 ] && [ -n "$wp" ] && [ ! -e "$wp" ] && ok "worktree.sh remove: a clean worktree is removed without --force" || bad "worktree.sh remove clean" "rc=$rc output: $out"
+out="$( cd "$WT" && bash "$wtsh" remove wtv --bogus 2>&1 )"; rc=$?
+[ "$rc" != 0 ] && ok "worktree.sh remove: an unknown third argument is a usage error" || bad "worktree.sh remove unknown arg" "rc=$rc output: $out"
+
 echo
 printf 'passed %d, failed %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

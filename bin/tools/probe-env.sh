@@ -9,7 +9,7 @@
 set -uo pipefail
 
 dir="${1:-.}"
-cd "$dir" 2>/dev/null || { echo "probe-env: not a directory: $dir" >&2; exit 2; }
+cd -- "$dir" 2>/dev/null || { echo "probe-env: not a directory: $dir" >&2; exit 2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 emit() { printf '%s: %s\n' "$1" "$2"; }
 
