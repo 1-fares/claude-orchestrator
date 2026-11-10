@@ -12,11 +12,13 @@
 # What it does (all under the run dir unless noted):
 #   1. state.md.bak-* thinning: keep the newest NJ_KEEP_BAKS, gzip the rest
 #      into dreams/archive/janitor/ and remove the originals.
-#   2. attachments/ expiry: files older than NJ_ATTACH_DAYS are DELETED —
-#      they were downloaded FROM the ticket tracker (bin/gh-attachments.sh)
-#      and remain re-downloadable there. 0 disables.
+#   2. attachments expiry: files older than NJ_ATTACH_DAYS under
+#      ${GH_ATTACHMENTS_DIR:-$HOME/scratch/gh-attachments} (where bin/gh-attachments.sh
+#      writes, outside every git work tree) are DELETED: they were downloaded FROM
+#      the ticket tracker and remain re-downloadable there. 0 disables.
 #   3. dreams/archive/ expiry: archive dirs older than NJ_ARCHIVE_DAYS are
-#      deleted. This is the one place raw dreamed evidence ever expires;
+#      deleted, and files in dreams/archive/janitor/ older than that, each by its
+#      own age. This is the one place raw dreamed evidence ever expires;
 #      default 90 days. 0 disables.
 #   4. Bus retention (ONLY when NJ_BUS_DIR is set; the bus lives outside the
 #      run dir and is ecosystem-specific): spill/ files older than
@@ -37,8 +39,9 @@
 #
 # Env: NJ_KEEP_BAKS=3 NJ_ATTACH_DAYS=30 NJ_ARCHIVE_DAYS=90
 #      NJ_BUS_DIR= NJ_BUS_KEEP_DAYS=21 NJ_BUS_LOG_MAX=16777216 NJ_BUS_KEEP_LINES=4000
-#      NJ_DOCKER_BUILDER_PRUNE=0 (rule 5; 1 enables)
-# Run id: $TEAM_RUN_ID, else newest .team-r* dir, else legacy .team/.
+#      NJ_DOCKER_BUILDER_PRUNE=0 (rule 5; 1 enables) GH_ATTACHMENTS_DIR= (rule 2)
+# Run dirs: with $TEAM_RUN_ID, that run's dir only (exit 1 if it is missing); without it
+# (cron), every .team/ and .team-<id>/ of this clone except test dirs (exit 1 if none).
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,44 +50,63 @@ apply=0
 case "${1:-}" in
   --apply) apply=1 ;;
   ""|--dry-run) ;;
-  -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
   *) echo "night-janitor: unknown flag $1" >&2; exit 2 ;;
 esac
 
-if [ -z "${TEAM_RUN_ID:-}" ]; then
-  latest="$(ls -1dt "$repo"/.team-r*/ 2>/dev/null | head -1)"
-  if [ -n "$latest" ]; then
-    TEAM_RUN_ID="$(basename "$latest" | sed 's/^\.team-//')"
-    export TEAM_RUN_ID
-  fi
+# Run dirs. A named run (TEAM_RUN_ID set) is cleaned alone, and its dir must exist: a missing
+# dir exits 1 with a message, so cron does not record a success that cleaned nothing. Without
+# TEAM_RUN_ID (the cron case) EVERY run dir of this clone is cleaned: legacy .team/ and each
+# .team-<id>/ whatever the id. Picking the newest .team-r* by mtime cleaned one arbitrary run
+# and never the others. A test's throwaway dir (.team-test*, .team-wdtest*, .team-potest*, the
+# ids bin/team-env.sh reserves for tests) belongs to a running test and is skipped. No run
+# dir at all also exits 1.
+run_dirs=()
+if [ -n "${TEAM_RUN_ID:-}" ]; then
+  # shellcheck disable=SC1091
+  . "$repo/bin/team-env.sh"
+  [ -d "$TEAM_DIR" ] || { echo "night-janitor: no run dir at $TEAM_DIR (TEAM_RUN_ID=$TEAM_RUN_ID)" >&2; exit 1; }
+  run_dirs=("$TEAM_DIR")
+else
+  for d in "$repo"/.team "$repo"/.team-*; do
+    [ -d "$d" ] || continue
+    case "${d##*/}" in .team-test*|.team-wdtest*|.team-potest*) continue ;; esac
+    run_dirs+=("$d")
+  done
+  [ "${#run_dirs[@]}" -gt 0 ] || { echo "night-janitor: no run dir under $repo (.team/ or .team-<id>/)" >&2; exit 1; }
 fi
-# shellcheck disable=SC1091
-. "$repo/bin/team-env.sh"
-[ -d "$TEAM_DIR" ] || { echo "night-janitor: no run dir at $TEAM_DIR"; exit 0; }
 
 keep_baks="${NJ_KEEP_BAKS:-3}"
 attach_days="${NJ_ATTACH_DAYS:-30}"
+# Where bin/gh-attachments.sh writes (same default): outside every git work tree.
+attach_dir="${GH_ATTACHMENTS_DIR:-${HOME:-/nonexistent}/scratch/gh-attachments}"
 archive_days="${NJ_ARCHIVE_DAYS:-90}"
 bus_dir="${NJ_BUS_DIR:-}"
 bus_keep_days="${NJ_BUS_KEEP_DAYS:-21}"
 bus_log_max="${NJ_BUS_LOG_MAX:-16777216}"
 bus_keep_lines="${NJ_BUS_KEEP_LINES:-4000}"
 stamp="$(date -u '+%Y%m%d-%H%M')"
-jlog="$TEAM_DIR/janitor.log"
+jlogs=()   # the janitor.log file(s) note() appends to under --apply; set per rule below
 
-# Returns the janitor.log write status under --apply, 0 in a dry run. It was `[ apply ] &&
-# printf`, which returns 1 in a dry run; the script ends on a note, so every dry run exited 1.
-# An if keeps a failed log write visible under --apply.
+# Returns the janitor.log write status under --apply (1 if any of the logs could not be
+# written), 0 in a dry run. It was `[ apply ] && printf`, which returns 1 in a dry run; the
+# script ends on a note, so every dry run exited 1. An if keeps a failed log write visible.
 note() {
   printf '%s\n' "$*"
   if [ "$apply" -eq 1 ]; then
-    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$jlog"
+    local l ts rc=0
+    ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    for l in "${jlogs[@]}"; do printf '%s %s\n' "$ts" "$*" >> "$l" || rc=1; done
+    return "$rc"
   fi
 }
 mode="DRY-RUN"; [ "$apply" -eq 1 ] && mode="APPLY"
-note "night-janitor [$mode] run=$TEAM_DIR"
 
-# 1. bak thinning ---------------------------------------------------------
+# Rules 1 and 3 act inside one run dir (TEAM_DIR) and are called once per run dir; rule 2
+# acts on the attachments root and runs once. The calls follow rule 3.
+
+# 1. bak thinning (per run dir) --------------------------------------------
+rule_baks() {
 jarch="$TEAM_DIR/dreams/archive/janitor"
 mapfile -t baks < <(ls -1t "$TEAM_DIR"/state.md.bak-* 2>/dev/null)
 if [ "${#baks[@]}" -gt "$keep_baks" ]; then
@@ -98,27 +120,48 @@ if [ "${#baks[@]}" -gt "$keep_baks" ]; then
 else
   note "bak: ${#baks[@]} present, <= keep($keep_baks), nothing to do"
 fi
+}
 
-# 2. attachments expiry ---------------------------------------------------
-if [ "$attach_days" -gt 0 ] && [ -d "$TEAM_DIR/attachments" ]; then
+# 2. attachments expiry (once, outside the run dirs) ----------------------
+rule_attachments() {
+if [ "$attach_days" -gt 0 ] && [ -d "$attach_dir" ]; then
   n=0; bytes=0
   while IFS= read -r f; do
     n=$((n+1)); bytes=$((bytes + $(stat -c%s "$f" 2>/dev/null || echo 0)))
     note "attachments: expire $(basename "$f")"
     [ "$apply" -eq 1 ] && rm -f "$f"
-  done < <(find "$TEAM_DIR/attachments" -type f -mtime "+$attach_days" 2>/dev/null)
+  done < <(find "$attach_dir" -type f -mtime "+$attach_days" 2>/dev/null)
   note "attachments: $n file(s), $bytes bytes past ${attach_days}d"
 else
   note "attachments: disabled or no dir"
 fi
+}
 
-# 3. dream-archive expiry -------------------------------------------------
+# 3. dream-archive expiry (per run dir) -----------------------------------
+# The dated <stamp>/ dirs expire by their own mtime. dreams/archive/janitor/ does not: rule 1
+# adds a gz to it on every thinning, which refreshes the directory's mtime, so judged as one
+# entry its old files never expired. Its files expire by their own age instead.
+rule_archive() {
 if [ "$archive_days" -gt 0 ] && [ -d "$TEAM_DIR/dreams/archive" ]; then
   while IFS= read -r d; do
     note "dream-archive: expire $(basename "$d")"
     [ "$apply" -eq 1 ] && rm -rf "$d"
-  done < <(find "$TEAM_DIR/dreams/archive" -mindepth 1 -maxdepth 1 -mtime "+$archive_days" 2>/dev/null)
+  done < <(find "$TEAM_DIR/dreams/archive" -mindepth 1 -maxdepth 1 ! -name janitor -mtime "+$archive_days" 2>/dev/null
+           find "$TEAM_DIR/dreams/archive/janitor" -mindepth 1 -maxdepth 1 -type f -mtime "+$archive_days" 2>/dev/null)
 fi
+}
+
+# Rules 1 and 3 for each run dir, logged to that dir's janitor.log. Rule 2 and the opt-in rules
+# 4 and 5 act outside the run dirs; they run once and are logged to every run dir's janitor.log.
+for run_dir in "${run_dirs[@]}"; do
+  TEAM_DIR="$run_dir"; jlogs=("$run_dir/janitor.log")
+  note "night-janitor [$mode] run=$TEAM_DIR"
+  rule_baks
+  rule_archive
+done
+jlogs=()
+for run_dir in "${run_dirs[@]}"; do jlogs+=("$run_dir/janitor.log"); done
+rule_attachments
 
 # 4. bus retention (opt-in) ----------------------------------------------
 if [ -n "$bus_dir" ] && [ -d "$bus_dir" ]; then

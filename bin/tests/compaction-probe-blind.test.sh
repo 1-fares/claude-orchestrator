@@ -66,7 +66,7 @@ case "$cmd" in
     printf '%s\n' "$*" >> "$FAKE_TD/keys"
     prev=""; for a in "$@"; do [ "$prev" = "-l" ] && printf '%s' "$a" >> "$FAKE_TD/box"; prev="$a"; done
     case " $* " in *" Enter "*|*" C-u "*) : > "$FAKE_TD/box" ;; esac
-    # only testrole's pane (orch-sess:1): the start-up canary probes window 0 and must not write the render
+    # only testrole's pane (orch-sess:1): a /context typed anywhere else must not write the render
     case "$*" in *"-t orch-sess:1 -l /context"*) : > "$FAKE_TD/context-pending" ;; esac
     case "$*" in *Enter*)
       if [ -e "$FAKE_TD/context-pending" ] && [ -e "$FAKE_TD/context-writes" ]; then
@@ -156,7 +156,7 @@ loop_until(){
   local cap="$1" what="$2" pred="$3" t0="$SECONDS" wp; shift 3
   rm -f "$TD/log" "$TD/keys" "$TD/bus" "$TD/bus-sent" "$TD/tripwire" "$TD/lock" "$TD/pid" "$TD/box"
   env "${envs[@]}" TI_KEY_PAUSE=0.01 TI_SUBMIT_WAIT=0.05 COMPACT_CHECK_INTERVAL=1 COMPACT_IDLE_SEC=0 COMPACT_PROBE_WAIT=0 \
-    COMPACT_PROBE_FAIL_ALARM=3 COMPACT_BLIND_BUS_EVERY=2 COMPACT_DEBOUNCE_SEC=900 COMPACT_CANARY_TRIES=0 "$@" \
+    COMPACT_PROBE_FAIL_ALARM=3 COMPACT_BLIND_BUS_EVERY=2 COMPACT_DEBOUNCE_SEC=900 "$@" \
     timeout "$cap" bash "$repo/bin/compaction-watchdog.sh" >/dev/null 2>&1 &
   wp=$!
   while kill -0 "$wp" 2>/dev/null && ! "$pred"; do sleep 0.2; done

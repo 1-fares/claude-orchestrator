@@ -54,11 +54,51 @@ EOF
 dream_sections_index "$tmp/ledger.md" > "$tmp/idx"
 check "index: 7 rows (prelude + 6 sections)" "$([ "$(wc -l < "$tmp/idx")" -eq 7 ]; echo $?)"
 check "index: prelude row present" "$(grep -q '(prelude)' "$tmp/idx"; echo $?)"
-# The undated '## roster' INHERITS the date context of the preceding dated
-# header (by design, for time-only sub-headers); a truly undated section only
-# occurs before any dated header.
+# The undated '## roster' is a SIBLING of the dated '## ...' headers before
+# it, not a sub-header: it must not borrow their date, or an open undated
+# section could be archived. Only a deeper header inherits (below).
 rosterdate="$(awk -F'\t' '$4 == "## roster" {print $3}' "$tmp/idx")"
-check "index: '## roster' inherits prior date context" "$([ "$rosterdate" -gt 0 ]; echo $?)"
+check "index: undated sibling '## roster' after dated headers is protected (0)" "$([ "$rosterdate" = "0" ]; echo $?)"
+
+# Inheritance is by nesting: a deeper header inherits from its nearest
+# shallower open header; a sibling or shallower header closes the context.
+cat > "$tmp/l3.md" <<'EOF'
+## 2026-07-01 - dated parent
+### 20:07 - time-only child
+#### detail under the child
+## unit: open-thing
+status: in-progress
+### note under the undated unit
+## 2026-07-02 - next dated parent
+### 09:00 - its child
+EOF
+d3() { dream_sections_index "$tmp/l3.md" | awk -F'\t' -v h="$1" '$4 == h {print $3}'; }
+e1="$(date -u -d 2026-07-01 +%s)"; e2="$(date -u -d 2026-07-02 +%s)"
+check "index: '### child' inherits its dated parent" "$([ "$(d3 '### 20:07 - time-only child')" = "$e1" ]; echo $?)"
+check "index: '#### grandchild' inherits through the undated child" "$([ "$(d3 '#### detail under the child')" = "$e1" ]; echo $?)"
+check "index: undated sibling '## unit:' after a dated '##' is protected (0)" "$([ "$(d3 '## unit: open-thing')" = "0" ]; echo $?)"
+check "index: child of the undated sibling stays protected (0)" "$([ "$(d3 '### note under the undated unit')" = "0" ]; echo $?)"
+check "index: a later dated parent and its child carry the new date" "$([ "$(d3 '## 2026-07-02 - next dated parent')" = "$e2" ] && [ "$(d3 '### 09:00 - its child')" = "$e2" ]; echo $?)"
+# An undated header that follows a newer dated sibling inside the same dated parent
+# takes the newer date: inheriting only the parent's older date would let it be
+# archived as stale. An undated parent still lends nothing.
+cat > "$tmp/l4.md" <<'EOF'
+## 2026-09-01 - dated parent
+### 2026-11-09 addendum
+### addendum detail
+## unit: undated parent
+### 2026-11-09 dated child
+### undated child after it
+EOF
+d4() { dream_sections_index "$tmp/l4.md" | awk -F'\t' -v h="$1" '$4 == h {print $3}'; }
+e4="$(date -u -d 2026-11-09 +%s)"
+check "index: undated '###' after a newer dated '###' takes the newer date" "$([ "$(d4 '### addendum detail')" = "$e4" ]; echo $?)"
+check "index: under an undated parent an undated '###' stays protected (0)" "$([ "$(d4 '### undated child after it')" = "0" ]; echo $?)"
+# An op on the undated sibling is rejected mechanically, not only by the prompt.
+printf '<<<DREAM-OP ARCHIVE>>>\n<<<HEADER>>>## unit: open-thing\n<<<END-OP>>>\n' > "$tmp/ops3"
+n3="$(dream_parse_ops "$tmp/ops3" "$tmp/opsdir3" 2>/dev/null)"
+dream_apply_ops "$tmp/l3.md" "$tmp/opsdir3" "$n3" "$(date -u +%s)" "$tmp/new3" "$tmp/arch3" "$tmp/rej3"
+check "apply: an op on the undated sibling is rejected (no derivable date)" "$([ $? -ne 0 ] && grep -q 'no derivable date' "$tmp/rej3"; echo $?)"
 freshdate="$(awk -F'\t' -v h="$fresh" '$4 == h {print $3}' "$tmp/idx")"
 check "index: fresh section dated today" "$([ "$freshdate" -gt $(( $(date -u +%s) - 86400 )) ]; echo $?)"
 

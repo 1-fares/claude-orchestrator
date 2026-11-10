@@ -16,10 +16,16 @@
 #
 # Bands + thresholds are single-sourced in bin/lib/disk-tmp.sh (disk_tmp_band), shared
 # with any heavy-work gate so alerting + blocking never drift. Adds hysteresis (hold the
-# band until BOTH filesystems drop below their RESUME floor).
+# band until BOTH filesystems drop below their RESUME floor). A band change goes to the
+# operator (bin/lib/notify.sh) and, as one bus message, to the orchestrator.
+#
+# Run-log rotation: each cycle also runs bin/rotate-team-logs.sh. This daemon is that
+# script's only caller, so DISK_TMP_WATCHDOG_DISABLED=1 also stops run-log rotation.
 #
 # Env: DISK_TMP_WATCHDOG_DISABLED=1 | DTW_*_PCT (see lib) | DTW_INTERVAL (default 120s —
-#      disk fills slower than RAM) | DTW_LOG | DTW_HEALTH_DIR | DTW_MARKER | NTFY_URL.
+#      disk fills slower than RAM) | DTW_LOG | DTW_HEALTH_DIR | DTW_MARKER | NTFY_URL |
+#      DTW_BUS_SEND (default bin/bus-send.py) | DTW_BUS_TO (default orchestrator) |
+#      DTW_BUS_TIMEOUT (default 10s).
 set -uo pipefail
 # Original invocation args, captured before any parsing, so self-reload can re-exec
 # this daemon with the same flags (bin/lib/self-reload.sh).
@@ -98,6 +104,34 @@ write_marker() {  # <band> <root%> <tmp%>
   } > "$MARKER.tmp.$$" 2>/dev/null && mv -f "$MARKER.tmp.$$" "$MARKER" 2>/dev/null || rm -f "$MARKER.tmp.$$" 2>/dev/null || true
 }
 
+# A band change must reach the team, not only the phone: WARN is notify class info, which is
+# filed into the next working-day digest, so the notification alone tells nobody to reclaim
+# space. Each change therefore also goes to the orchestrator as ONE bus message through
+# bin/bus-send.py. Bounded by `timeout`: bus-send.py has no connect or receive timeout of its
+# own, and a bus that accepts and never answers would otherwise stop the disk polling. stdin
+# is /dev/null so nothing can read the loop's stdin; BUS_SEND_RETRY_S=0 because the timeout
+# would cut a retry anyway. A failed send is logged and otherwise ignored.
+DTW_BUS_SEND="${DTW_BUS_SEND:-$repo/bin/bus-send.py}"
+DTW_BUS_TO="${DTW_BUS_TO:-orchestrator}"
+DTW_BUS_TIMEOUT="${DTW_BUS_TIMEOUT:-10}"
+bus_send() {  # <text>
+  local err rc=0
+  err="$(BUS_SEND_RETRY_S=0 timeout "$DTW_BUS_TIMEOUT" "$DTW_BUS_SEND" --name disk-tmp-watchdog \
+           --to "$DTW_BUS_TO" --text "$1" </dev/null 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ "$rc" -eq 124 ] && err="timed out after ${DTW_BUS_TIMEOUT}s"
+    log "bus send to $DTW_BUS_TO failed (rc=$rc${err:+: ${err##*$'\n'}}); band change not delivered on the bus"
+  fi
+  return 0
+}
+
+# band_change_notify <text>: the two deliveries of one band change, the operator's phone
+# (notify.sh policy) and the orchestrator (bus). Called only on a change, never per poll.
+band_change_notify() {
+  notify "$1"
+  bus_send "status: $1"
+}
+
 if [ "${DTW_TEST:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
 
 log "start: warn />=${DTW_ROOT_WARN_PCT}% or tmp>=${DTW_TMP_WARN_PCT}%; freeze />=${DTW_ROOT_FREEZE_PCT}% or tmp>=${DTW_TMP_FREEZE_PCT}%; interval=${INTERVAL}s marker=${MARKER}"
@@ -111,19 +145,20 @@ while :; do
   if [ "$new_band" != "$cur_band" ]; then
     case "$new_band" in
       FREEZE) log "BAND -> FREEZE (/ ${root}% / tmp ${tmp}%)"; write_marker FREEZE "$root" "$tmp"
-              notify "🔴 [disk-tmp/${TEAM_RUN_ID:-legacy}] FREEZE: / ${root}% used, /tmp ${tmp}% used. Writes near failing (EDQUOT class) — heavy work refused, stop launching now." ;;
+              band_change_notify "🔴 [disk-tmp/${TEAM_RUN_ID:-legacy}] FREEZE: / ${root}% used, /tmp ${tmp}% used. Writes near failing (EDQUOT class); heavy work refused, stop launching now." ;;
       WARN)   log "BAND -> WARN (/ ${root}% / tmp ${tmp}%)"; write_marker WARN "$root" "$tmp"
-              notify "🟠 [disk-tmp/${TEAM_RUN_ID:-legacy}] WARN: / ${root}% used, /tmp ${tmp}% used. Heavy work (test suites/puppeteer/mongo-mem/ETL/builds) refused until reclaimed (docker prune + stale /tmp clear)." ;;
+              band_change_notify "🟠 [disk-tmp/${TEAM_RUN_ID:-legacy}] WARN: / ${root}% used, /tmp ${tmp}% used. Heavy work (test suites/puppeteer/mongo-mem/ETL/builds) refused until reclaimed (docker prune + stale /tmp clear)." ;;
       "")     log "BAND -> CLEAR (/ ${root}% / tmp ${tmp}%); headroom restored"
               rm -f "$MARKER" 2>/dev/null || true
-              [ -n "$cur_band" ] && notify "🟢 [disk-tmp/${TEAM_RUN_ID:-legacy}] CLEAR: / ${root}% / /tmp ${tmp}%; heavy work allowed again." ;;
+              [ -n "$cur_band" ] && band_change_notify "🟢 [disk-tmp/${TEAM_RUN_ID:-legacy}] CLEAR: / ${root}% / /tmp ${tmp}%; heavy work allowed again." ;;
     esac
     cur_band="$new_band"
   else
     log "/ ${root}% / tmp ${tmp}% band=${cur_band:-clear}"
   fi
-  # Opportunistic: keep the run logs bounded (their bloat feeds the very disk pressure
-  # this daemon guards). Cheap stat-only scan; only acts on a log past its size cap.
+  # Keep the run logs bounded (their bloat feeds the very disk pressure this daemon
+  # guards). This is the only place rotate-team-logs.sh runs. One find; it acts only on
+  # a log past its size cap.
   [ -x "$repo/bin/rotate-team-logs.sh" ] && "$repo/bin/rotate-team-logs.sh" >/dev/null 2>&1 || true
   _dtw_sleep "$INTERVAL"
 done

@@ -197,6 +197,3 @@ ti_send() {
   fi
   return 1
 }
-
-# After Escape has closed a modal: the box is left in vim NORMAL, where the next typed text is read as commands.
-ti_restore_insert() { ti_force_insert "$1" && ti_clear "$1"; }

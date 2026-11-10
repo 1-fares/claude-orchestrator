@@ -5,6 +5,11 @@
 # walk away. It is a safety net against runaway /goal loops and ping-pong, not a
 # normal part of an attended run.
 #
+# Started by hand only. No launcher runs it: launch-team.sh, start-orchestrator.sh,
+# add-role.sh (ensure_team_daemons) and tmux-watchdog.sh do not start it, and it
+# writes no pidfile, so stop-team.sh, panic.sh and cleanup.sh do not stop it either.
+# It exits by itself after stopping the team; otherwise stop it with kill.
+#
 # Usage: bin/watchdog.sh [--max-minutes N] [--max-messages M] [--interval S]
 #   defaults: 120 minutes, 2000 messages, 30s poll. Run backgrounded, e.g.:
 #   nohup bin/watchdog.sh --max-minutes 90 >/tmp/team-watchdog.log 2>&1 &
@@ -33,8 +38,11 @@ while [ $# -gt 0 ]; do
 done
 
 msglog="$HOME/.claude/data/inter-session/messages.log"
-start="$(date +%s)"
-base="$(wc -l < "$msglog" 2>/dev/null || echo 0)"
+# A self-reload re-execs this script; the exported baseline keeps the ceiling counted
+# from the first start, not from the last reload.
+start="${_WD_START_EPOCH:-$(date +%s)}"
+base="${_WD_BASE_LINES:-$(wc -l < "$msglog" 2>/dev/null || echo 0)}"
+export _WD_START_EPOCH="$start" _WD_BASE_LINES="$base"
 echo "watchdog: ceiling ${max_min}min / ${max_msg}msgs, polling every ${interval}s"
 
 while true; do

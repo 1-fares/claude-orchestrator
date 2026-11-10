@@ -73,7 +73,13 @@ AWAIT_RE='Enter to select|Enter to confirm|Do you want to proceed|Would you like
 # usage limits: a role whose ordinary output discusses "usage limit reached"
 # (this team maintains this very file) must never trigger the recovery
 # injection. Both option lines appear in every observed dialog instance.
-USAGE_RE='wait for limit to reset|Add funds to continue with usage credits'
+# The third alternative is the inline banner shown instead of the dialog,
+# "You've hit your weekly limit · resets <when>": without it a role stopped on
+# the banner classified as healthy-idle "active" and was never retried. It must
+# start the line (after blanks or the "⎿" result marker) and end in "· resets":
+# grep tests each line, so prose or a comment that quotes the banner mid-line,
+# and bare phrases such as "hit your weekly limit", do not match.
+USAGE_RE='wait for limit to reset|Add funds to continue with usage credits|^[[:space:]⎿]*You.ve hit your [a-z]+ limit · resets'
 
 # Per-second-volatile chrome that must be stripped before fingerprinting a pane,
 # or the fingerprint changes every tick even when the role is wedged: the

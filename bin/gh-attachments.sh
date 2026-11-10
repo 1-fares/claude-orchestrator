@@ -12,10 +12,14 @@
 #   gh-attachments.sh <issue-or-pr-url>
 #   gh-attachments.sh <owner>/<repo> <number>
 #
-# Output dir (first that applies):
-#   $GH_ATTACHMENTS_DIR/<owner>-<repo>-<num>/
-#   $TEAM_DIR/attachments/<owner>-<repo>-<num>/
-#   ./gh-attachments/<owner>-<repo>-<num>/
+# Output dir: ${GH_ATTACHMENTS_DIR:-$HOME/scratch/gh-attachments}/<owner>-<repo>-<num>/
+# (dirs 700, files 600). Ticket attachments are personal data and never go inside a git
+# work tree: the former fallbacks ($TEAM_DIR/attachments, then ./gh-attachments) put them
+# into whatever tree the script was run from. An output dir that resolves into a git
+# repository (symlinks followed, gitignored paths such as a run dir included, a bare repo
+# too) is REFUSED with exit 2 before any network call or write.
+# GH_ATTACHMENTS_RESOLVE_ONLY=1 prints the resolved dir and stops (no network, no write).
+# bin/night-janitor.sh expires files under the same root (NJ_ATTACH_DAYS).
 #
 # Deps: gh (authenticated), curl, file. Engine-generic; no project specifics.
 #
@@ -25,6 +29,7 @@
 # touching your normal gh auth; otherwise the ambient `gh auth token` is used.
 
 set -uo pipefail
+umask 077
 
 die() { echo "gh-attachments: $*" >&2; exit 1; }
 command -v gh   >/dev/null 2>&1 || die "gh not found"
@@ -50,6 +55,36 @@ else
 fi
 [[ "$num" =~ ^[0-9]+$ ]] || die "number must be numeric: $num"
 
+# --- output dir: resolved and checked BEFORE any network call or write ---
+_home="${HOME:-$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)}"
+root="${GH_ATTACHMENTS_DIR:-${_home:?no HOME}/scratch/gh-attachments}"
+case "$root" in /*) : ;; *) root="$PWD/$root" ;; esac
+outdir="$root/${owner}-${repo}-${num}"
+# Where the files would really land: the deepest existing part of the path (a dangling
+# symlink counts and is followed), with symlinks resolved.
+_real="$outdir"
+for _i in 1 2 3 4 5 6 7 8; do
+  _probe="$_real"
+  while [ ! -e "$_probe" ] && [ ! -L "$_probe" ] && [ "$_probe" != / ]; do _probe="$(dirname "$_probe")"; done
+  _real="$(readlink -f -- "$_probe")" || { echo "gh-attachments: REFUSED -- cannot resolve $_probe; nothing written" >&2; exit 2; }
+  [ -e "$_real" ] && break
+done
+# Ask git about THAT path only. An inherited GIT_DIR/GIT_WORK_TREE would make git answer for
+# another repository, so they are dropped. A bare repo or a .git dir counts as inside, and a
+# git that cannot answer (for example "dubious ownership") is a refusal, not a pass.
+_gitq() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
+            -u GIT_CEILING_DIRECTORIES -u GIT_DISCOVERY_ACROSS_FILESYSTEM -u GIT_NAMESPACE git -C "$_real" "$@"; }
+_ans="$(_gitq rev-parse --is-inside-work-tree --is-inside-git-dir 2>&1)"; _grc=$?
+if [ "$_grc" -ne 0 ] && ! grep -qi 'not a git repository' <<<"$_ans"; then
+  echo "gh-attachments: REFUSED -- cannot tell whether $_real is inside a git repository (git: ${_ans%%$'\n'*}). Nothing written." >&2
+  exit 2
+fi
+if grep -qx true <<<"$_ans"; then
+  echo "gh-attachments: REFUSED -- $outdir resolves into a git repository ($_real; work tree: $(_gitq rev-parse --show-toplevel 2>/dev/null || echo bare)). Attachments never go inside a repository; set GH_ATTACHMENTS_DIR outside every git tree. Nothing written." >&2
+  exit 2
+fi
+if [ "${GH_ATTACHMENTS_RESOLVE_ONLY:-0}" = 1 ]; then echo "gh-attachments: output dir $outdir"; exit 0; fi
+
 # Auth token for the fallback header. Prefer a DEDICATED download token
 # (GH_ATTACHMENTS_TOKEN) when set -- a classic read-only PAT that can fetch
 # non-image user-attachments/files, which a fine-grained PAT 404s on -- WITHOUT
@@ -57,24 +92,21 @@ fi
 token="${GH_ATTACHMENTS_TOKEN:-$(gh auth token 2>/dev/null || true)}"
 [ -n "$token" ] || die "no token (set GH_ATTACHMENTS_TOKEN or run: gh auth login)"
 
-# --- output dir ---
-root="${GH_ATTACHMENTS_DIR:-}"
-if [ -z "$root" ]; then
-  if [ -n "${TEAM_DIR:-}" ]; then root="$TEAM_DIR/attachments"; else root="$PWD/gh-attachments"; fi
-fi
-outdir="$root/${owner}-${repo}-${num}"
-mkdir -p "$outdir" || die "cannot create $outdir"
+mkdir -p -m 700 "$root" && mkdir -p -m 700 "$outdir" || die "cannot create $outdir"
 
 # --- gather body_html from the issue/PR body + all comments ---
 # The issues endpoint serves the conversation body + comments for BOTH issues and
 # PRs. (PR review/diff comments are a separate endpoint and rarely carry attachments.)
-html="$(
-  gh api "repos/$owner/$repo/issues/$num" \
-     -H "Accept: application/vnd.github.full+json" --jq '.body_html' 2>/dev/null
-  gh api --paginate "repos/$owner/$repo/issues/$num/comments" \
-     -H "Accept: application/vnd.github.full+json" --jq '.[].body_html' 2>/dev/null
-)"
-[ -n "$html" ] || echo "gh-attachments: note: empty body_html (ticket may have no text)" >&2
+# A failed call (wrong number, no access, gh not logged in) must not read as
+# "no attachments found" with exit 0; gh prints its own error on stderr.
+body="$(gh api "repos/$owner/$repo/issues/$num" \
+     -H "Accept: application/vnd.github.full+json" --jq '.body_html')" \
+  || die "gh api failed for $owner/$repo#$num"
+comments="$(gh api --paginate "repos/$owner/$repo/issues/$num/comments" \
+     -H "Accept: application/vnd.github.full+json" --jq '.[].body_html')" \
+  || die "gh api failed reading the comments of $owner/$repo#$num"
+html="$body"$'\n'"$comments"
+[ -n "$body$comments" ] || echo "gh-attachments: note: empty body_html (ticket may have no text)" >&2
 
 # --- extract attachment urls (dedup, keep first-seen order) ---
 # Forms: signed jwt image/video urls (download with NO auth) + the plain
@@ -142,9 +174,7 @@ if [ "$fail" -gt 0 ]; then
         echo "  GitHub does not authenticate user-attachments downloads with a fine-grained"
         echo "  PAT, so plain file attachments 404. Images/videos still work (no-auth jwt),"
         echo "  but files need a CLASSIC read-only PAT (ghp_...). Provide one WITHOUT changing"
-        echo "  your normal gh auth: put a classic ghp_ token (one line) in the gitignored"
-        echo "  secret file \$TEAM_REPO/.secrets/gh-attachments-token (team-env.sh exports it"
-        echo "  as GH_ATTACHMENTS_TOKEN), or export GH_ATTACHMENTS_TOKEN directly, then re-run."
+        echo "  your normal gh auth: export GH_ATTACHMENTS_TOKEN=<classic ghp_ token>, then re-run."
       } >&2
       ;;
   esac

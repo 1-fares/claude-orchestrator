@@ -43,6 +43,33 @@ chmod 400 "$R/.team-rA/janitor.log"
 if [ -w "$R/.team-rA/janitor.log" ]; then ok "unwritable log case skipped (running as root)"; else
   rc_is 1 "--apply with an unwritable janitor.log fails" jan rA --apply; fi
 chmod 600 "$R/.team-rA/janitor.log"
+
+# A named run whose dir is missing is a failure with a message, not a success that cleaned nothing.
+rc_is 1 "named run dir missing" jan rMissing --apply
+/usr/bin/grep -q 'night-janitor: no run dir at .*\.team-rMissing' "$SB/out" && ok "missing run dir is named in the message" || bad "missing run dir message"
+[ ! -e "$R/.team-rMissing" ] && ok "the missing run dir was not created" || bad "the missing run dir was created"
+
+# Without TEAM_RUN_ID (cron) every run dir is cleaned, whatever its id, and a test's dir is skipped.
+mkbaks(){ local d="$1" i; mkdir -p "$d"; for i in 1 2 3 4 5; do echo "bak $i" > "$d/state.md.bak-2026010${i}-000000"; touch -d "$((10 - i)) days ago" "$d/state.md.bak-2026010${i}-000000"; done; }
+nbaks(){ local n=0 f; for f in "$1"/state.md.bak-*; do [ -f "$f" ] && n=$((n+1)); done; echo "$n"; }
+mkbaks "$R/.team-rA"; mkbaks "$R/.team-other-id"; mkbaks "$R/.team"; mkbaks "$R/.team-test999"
+: > "$R/.team-backup.log"   # a file named like a run dir is not one
+rc_is 0 "cron --apply over several run dirs" jan - --apply
+for d in .team-rA .team-other-id .team; do
+  [ "$(nbaks "$R/$d")" -eq 3 ] && ok "cron: $d thinned to 3 baks" || bad "cron: $d has $(nbaks "$R/$d") baks, want 3"
+  /usr/bin/grep -q "night-janitor \[APPLY\] run=$R/$d\$" "$R/$d/janitor.log" && ok "cron: $d has its own run line in its janitor.log" || bad "cron: $d janitor.log run line"
+  /usr/bin/grep -q 'night-janitor \[APPLY\] done' "$R/$d/janitor.log" && ok "cron: $d janitor.log has the done line" || bad "cron: $d janitor.log done line"
+done
+[ "$(nbaks "$R/.team-test999")" -eq 5 ] && ok "cron: test run dir .team-test999 left alone" || bad "cron: test run dir touched"
+[ ! -e "$R/.team-test999/janitor.log" ] && ok "cron: no janitor.log in the test run dir" || bad "cron: janitor.log written in the test run dir"
+
+# A clone with no run dir at all: exit 1, not a silent success.
+R2="$SB/repo2"; mkdir -p "$R2"; cp -a "$SRC/bin" "$R2/bin"
+env -u TEAM_RUN_ID -u TEAM_DIR -u TEAM_DIR_ALLOW_OVERRIDE -u NJ_BUS_DIR -u NJ_DOCKER_BUILDER_PRUNE \
+  HOME="$SB/home" GH_ATTACHMENTS_DIR="$SB/attach" TEAM_TMUX="ttnj$$" bash "$R2/bin/night-janitor.sh" --apply >"$SB/out" 2>&1
+rc=$?
+[ "$rc" -eq 1 ] && /usr/bin/grep -q 'night-janitor: no run dir under' "$SB/out" && ok "no run dir at all: rc 1 with a message" \
+  || bad "no run dir at all: rc $rc, want 1 ($(tail -1 "$SB/out"))"
 echo
 echo "night-janitor-rc: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

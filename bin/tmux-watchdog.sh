@@ -21,10 +21,11 @@
 #   stopped by bin/stop-team.sh / panic.sh / cleanup.sh
 #
 # Output:
-#   $TEAM_DIR/health/tmux.json     {state: ok|crashed, last_seen, since}
+#   $TEAM_DIR/health/tmux.json     {state: ok|crashed|idle, last_seen, since}
+#                                  (idle = session gone and $TEAM_DIR/active empty)
 #   $TEAM_DIR/audit/tmux.log       chronological events
 #   $TEAM_DIR/tmux-watchdog.pid    pidfile
-#   ntfy push on state transitions (if NTFY_URL is set)
+#   a page on a team crash; daemon self-heals are filed as info (bin/lib/notify.sh)
 #
 # Snapshots (forensics):
 #   Every SNAPSHOT_INTERVAL_S the watchdog captures each tmux window's
@@ -43,7 +44,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
-. "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+. "$repo/bin/lib/self-reload.sh"
 self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
 
 interval=${TMUX_WATCHDOG_INTERVAL_S:-15}
@@ -252,10 +253,47 @@ ensure_intake_poller() {
   else
     pgrep -f "$poller" >/dev/null 2>&1 && return 0
   fi
-  nohup python3 "$poller" --peer orchestrator >"$TEAM_DIR/intake-poller.log" 2>&1 9>&- &
+  # Append: the log of the run that died is the evidence of why it died.
+  nohup python3 "$poller" --peer orchestrator >>"$TEAM_DIR/intake-poller.log" 2>&1 9>&- &
   echo "$!" > "$TEAM_DIR/intake-poller.pid"
   echo "$(iso) SELF-HEAL: intake-poller was down; restarted (pid $!)" >> "$af"
   notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] intake-poller was down; tmux-watchdog restarted it (pid $!)"
+}
+
+# Keep the host-RAM and disk/tmp resource watchdogs alive. They write the markers the
+# heavy-work gate reads and notify on resource bands; after a crash they came back only
+# at the next launch, add-role or start-orchestrator. Liveness via each daemon's own
+# flock (the lock path it uses itself); each daemon writes its own pidfile. Without
+# flock, the pidfile plus a command-line check, as team-spawn.sh does. The log is
+# appended to, not truncated. Opt-out: HOST_RAM_WATCHDOG_DISABLED=1,
+# DISK_TMP_WATCHDOG_DISABLED=1.
+# _ensure_resource_watchdog <name> <lock-file>
+_ensure_resource_watchdog() {
+  local name="$1" lk="$2" pidf oldpid
+  [ -x "$repo/bin/$name.sh" ] || return 0
+  if command -v flock >/dev/null 2>&1; then
+    if ! ( exec 203>"$lk" && flock -n 203 ) 2>/dev/null; then return 0; fi
+  else
+    pidf="$TEAM_DIR/$name.pid"
+    if [ -f "$pidf" ]; then
+      oldpid="$(cat "$pidf" 2>/dev/null || true)"
+      if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null \
+           && grep -q "bin/$name\.sh" <<<"$(ps -p "$oldpid" -o args= 2>/dev/null)"; then
+        return 0
+      fi
+    fi
+  fi
+  nohup "$repo/bin/$name.sh" >>"$TEAM_DIR/$name.log" 2>&1 9>&- &
+  echo "$(iso) SELF-HEAL: $name was down; restarted (pid $!)" >> "$af"
+  notify "🟠 [orchestrator/${TEAM_RUN_ID:-legacy}] $name was down; tmux-watchdog restarted it (pid $!)"
+}
+ensure_host_ram_watchdog() {
+  [ "${HOST_RAM_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  _ensure_resource_watchdog host-ram-watchdog "${HRW_LOCK:-$TEAM_DIR/host-ram-watchdog.lock}"
+}
+ensure_disk_tmp_watchdog() {
+  [ "${DISK_TMP_WATCHDOG_DISABLED:-0}" = "1" ] && return 0
+  _ensure_resource_watchdog disk-tmp-watchdog "${DTW_LOCK:-$TEAM_DIR/disk-tmp-watchdog.lock}"
 }
 
 while true; do
@@ -272,11 +310,13 @@ while true; do
     write_state ok "$nowts" "$since"
     # While the team is actually running, keep the supervisor daemons alive
     # (self-heal): api + compaction watchdogs, the observer, the intake
-    # poller (the team's only inbound channel), and the permission-mode watchdog.
+    # poller (the team's only inbound channel), the permission-mode watchdog,
+    # and the host-RAM and disk/tmp resource watchdogs.
     if active_has_entries; then
       ensure_api_watchdog; ensure_compaction_watchdog
       ensure_observer; ensure_intake_poller
       ensure_permission_mode_watchdog
+      ensure_host_ram_watchdog; ensure_disk_tmp_watchdog
     fi
     # Periodic forensic snapshot.
     if [ $((nowts - last_snap)) -ge "$snap_interval" ]; then
@@ -288,7 +328,7 @@ while true; do
       if [ "$prev_state" != "crashed" ]; then
         since=$nowts
         echo "$(iso "$nowts") CRASH: tmux session $TEAM_SESSION is GONE but active/ has live entries ($(wc -l < "$TEAM_DIR/active") roles); team is down" >> "$af"
-        notify_operator page "TEAM CRASH: tmux session died" "[orchestrator/${TEAM_RUN_ID:-legacy}] TEAM CRASH: tmux session $TEAM_SESSION died. Roles lost. Bus may still be running. Recover with: TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/start-orchestrator.sh goals/<goal>.md"
+        notify_operator page "TEAM CRASH: tmux session died" "[orchestrator/${TEAM_RUN_ID:-legacy}] TEAM CRASH: tmux session $TEAM_SESSION died. Roles lost. Bus may still be running. Recover with: ${TEAM_RUN_ID:+TEAM_RUN_ID=$TEAM_RUN_ID }bin/start-orchestrator.sh goals/<goal>.md"
         # Drop a marker file so the operator-watching session notices.
         {
           echo "# tmux session crashed"
@@ -302,7 +342,7 @@ while true; do
           echo
           echo "Last snapshots in \$TEAM_DIR/snapshots/."
           echo "Recover with:"
-          echo "  TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/start-orchestrator.sh goals/<goal>.md"
+          echo "  ${TEAM_RUN_ID:+TEAM_RUN_ID=$TEAM_RUN_ID }bin/start-orchestrator.sh goals/<goal>.md"
         } > "$TEAM_DIR/CRASH-DETECTED.md.tmp.$$" \
           && mv -f "$TEAM_DIR/CRASH-DETECTED.md.tmp.$$" "$TEAM_DIR/CRASH-DETECTED.md"
       fi

@@ -17,7 +17,8 @@
 # kill precursor was avail~1% WITH swap~95%; RAM pressure was the cause, swap its
 # symptom, so swap escalates only when RAM is also under pressure (a pure swap-trip
 # false-positives on a healthy host — swap~89% at RAM~42% is benign). The watchdog adds
-# hysteresis (hold WARN until RAM < RESUME_PCT). It only alerts + marks; it never kills.
+# hysteresis (hold WARN until RAM < RESUME_PCT, or, while swap stays high, until RAM <
+# SWAP_AMP_RAM_PCT - 5; see band_for). It only alerts + marks; it never kills.
 #
 # Env: HOST_RAM_WATCHDOG_DISABLED=1 | HRW_WARN_PCT | HRW_FREEZE_PCT | HRW_RESUME_PCT |
 #      HRW_SWAP_HI_PCT | HRW_SWAP_AMP_RAM_PCT (see lib) |
@@ -81,12 +82,18 @@ notify() { notify_legacy "$@"; }
 # band_for <ram_used> <swap_used> <cur_band> -> FREEZE | WARN | "" (CLEAR). Delegates
 # the raw verdict to host_ram_band (lib, RAM-primary + swap-amplifier), then layers
 # hysteresis: when the raw verdict clears, hold the current band until RAM drops below
-# RESUME_PCT (avoids flapping at the WARN edge).
+# RESUME_PCT (avoids flapping at the WARN edge). The swap-amplified WARN enters at
+# SWAP_AMP_RAM_PCT (70), below RESUME_PCT (75), so the RAM-only hold never covers it and
+# RAM moving around 70% with swap full flipped WARN/CLEAR every cycle (each flip rewrites
+# or removes the marker and sends a notification). While swap stays >= SWAP_HI_PCT, the
+# band is also held at WARN (never FREEZE: the swap path does not raise FREEZE) until RAM
+# falls below SWAP_AMP_RAM_PCT - 5.
 band_for() {
   local r="$1" s="$2" cur="${3:-}" raw
   raw="$(host_ram_band "$r" "$s")"
   if [ -n "$raw" ]; then echo "$raw"
   elif [ -n "$cur" ] && [ "$r" -ge "$RESUME_PCT" ]; then echo "$cur"   # dead-band: hold
+  elif [ -n "$cur" ] && [ "$s" -ge "$SWAP_HI_PCT" ] && [ "$r" -ge $((SWAP_AMP_RAM_PCT - 5)) ]; then echo WARN   # swap-path dead-band
   else echo ""
   fi
 }

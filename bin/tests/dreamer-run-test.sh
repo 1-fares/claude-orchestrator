@@ -28,6 +28,8 @@ cat > "$stub_dir/claude" <<'EOF'
 cat > /dev/null   # drain stdin
 echo "call $*" >> "${FAKE_CLAUDE_LOG:-/dev/null}"
 [ -n "${FAKE_CLAUDE_STDERR:-}" ] && cat "$FAKE_CLAUDE_STDERR" >&2
+# A write to the ledger while the model "thinks": the dreamer's swap guard must refuse.
+[ -n "${FAKE_CLAUDE_TOUCH:-}" ] && echo "concurrent append" >> "$FAKE_CLAUDE_TOUCH"
 cat "${FAKE_CLAUDE_OUTPUT:?}"
 EOF
 chmod +x "$stub_dir/claude"
@@ -176,22 +178,80 @@ cat > "$stub_dir/out2" <<'EOF'
 <<<DREAM-NO-OPS>>>
 EOF
 export FAKE_CLAUDE_OUTPUT="$stub_dir/out2"
+# state.md: only the dream marker line may differ (same stamp-format), so
+# both sums are taken with the marker lines stripped.
 before_digest="$(md5sum "$TEAM_DIR/observer/history-digest.md")"
-before_state="$(md5sum "$TEAM_DIR/state.md" | cut -d' ' -f1)"
+before_state="$(grep -v '^_last dream: ' "$TEAM_DIR/state.md" | md5sum)"
 dreamer
 after_digest="$(md5sum "$TEAM_DIR/observer/history-digest.md")"
-after_state="$(md5sum "$TEAM_DIR/state.md" | cut -d' ' -f1)"
+after_state="$(grep -v '^_last dream: ' "$TEAM_DIR/state.md" | md5sum)"
 check "rerun: digest unchanged" "$([ "$before_digest" = "$after_digest" ]; echo $?)"
-# state.md: only the dream marker line may differ (same stamp-format), so
-# compare with markers stripped.
-s1="$(grep -v '^_last dream: ' "$TEAM_DIR/state.md" | md5sum)"
-check "rerun: state.md unchanged apart from marker" "$([ -n "$s1" ]; echo $?)"
+check "rerun: state.md unchanged apart from marker" "$([ "$before_state" = "$after_state" ]; echo $?)"
 
 # ============ 5. convergence floor =======================================
 # state.md is now small: the eligible-lines floor must prevent a model call.
 : > "$FAKE_CLAUDE_LOG"
 dreamer --artifact state
 check "floor: no model call on converged ledger" "$([ ! -s "$FAKE_CLAUDE_LOG" ]; echo $?)"
+
+# ============ 6. ledger pass outcomes, as the report states them =========
+# mkstate: a fresh state.md with one old chain above the eligible-lines floor.
+mkstate() {
+  {
+    echo "# state"
+    echo "## 2026-07-03 10:00 - derive claim B"
+    for i in 1 2 3 4 5 6 7 8; do echo "claim B derivation line $i"; done
+    echo
+    echo "## 2026-07-03 15:00 - claim B corrected"
+    for i in 1 2 3 4 5 6 7 8; do echo "claim B correction line $i"; done
+  } > "$TEAM_DIR/state.md"
+}
+cat > "$stub_dir/out-b" <<'EOF'
+<<<DREAM-OP COLLAPSE>>>
+<<<HEADER>>>## 2026-07-03 10:00 - derive claim B
+<<<HEADER>>>## 2026-07-03 15:00 - claim B corrected
+<<<REPLACEMENT>>>
+## 2026-07-03 - claim B terminal
+(supersedes 2 archived entries)
+<<<END-OP>>>
+EOF
+rep="$TEAM_DIR/dreams/latest-report.md"
+
+# 6a. no protocol marker at all vs every op malformed: two different PROBLEM lines.
+mkstate
+printf 'I looked at the ledger and it seems fine.\n' > "$stub_dir/out-prose"
+FAKE_CLAUDE_OUTPUT="$stub_dir/out-prose" dreamer --artifact state
+check "no-marker: reported as a PROBLEM, not as nothing to do" "$(grep -q 'state: PROBLEM: model output has no COLLAPSE/ARCHIVE op marker' "$rep"; echo $?)"
+check "no-marker: the start of the output is quoted" "$(grep -q 'I looked at the ledger' "$rep"; echo $?)"
+printf '<<<DREAM-OP COLLAPSE>>>\n<<<REPLACEMENT>>>\nx\n<<<END-OP>>>\n<<<DREAM-OP ARCHIVE>>>\n<<<END-OP>>>\n' > "$stub_dir/out-bad"
+FAKE_CLAUDE_OUTPUT="$stub_dir/out-bad" dreamer --artifact state
+check "malformed: reported with the op count" "$(grep -q 'state: PROBLEM: 2 op block(s) emitted, all malformed and dropped' "$rep"; echo $?)"
+check "malformed: state.md untouched" "$(grep -q 'claim B derivation line 1' "$TEAM_DIR/state.md"; echo $?)"
+
+# 6b. "applied" only after the swap: a write during the model call makes the swap refuse.
+mkstate
+FAKE_CLAUDE_TOUCH="$TEAM_DIR/state.md" FAKE_CLAUDE_OUTPUT="$stub_dir/out-b" dreamer --artifact state
+check "swap refused: reported" "$(grep -q 'SWAP REFUSED' "$rep"; echo $?)"
+check "swap refused: no 'applied' line" "$(! grep -q 'applied: ops=' "$rep"; echo $?)"
+check "swap refused: the candidate line does not claim it applied" "$(grep -q 'state: ops=1 parsed into a candidate' "$rep"; echo $?)"
+check "swap refused: state.md keeps the chain" "$(grep -q 'claim B derivation line 1' "$TEAM_DIR/state.md"; echo $?)"
+
+# 6c. the archive append is verified before the swap: an unwritable archive target aborts the pass.
+mkstate
+mv "$TEAM_DIR/state-archive.md" "$stub_dir/state-archive.saved"
+mkdir "$TEAM_DIR/state-archive.md"   # a directory: the append fails whatever the user's privileges
+FAKE_CLAUDE_OUTPUT="$stub_dir/out-b" dreamer --artifact state
+check "archive failure: reported" "$(grep -q 'ARCHIVE WRITE/VERIFY FAILED (state-archive.md); pass aborted' "$rep"; echo $?)"
+check "archive failure: no 'applied' line" "$(! grep -q 'applied: ops=' "$rep"; echo $?)"
+check "archive failure: state.md keeps the chain" "$(grep -q 'claim B derivation line 1' "$TEAM_DIR/state.md" && ! grep -q 'claim B terminal' "$TEAM_DIR/state.md"; echo $?)"
+rmdir "$TEAM_DIR/state-archive.md"; mv "$stub_dir/state-archive.saved" "$TEAM_DIR/state-archive.md"
+
+# 6d. the normal path: archived, verified, swapped, then "applied".
+mkstate
+FAKE_CLAUDE_OUTPUT="$stub_dir/out-b" dreamer --artifact state
+check "apply: 'applied' logged after the swap" "$(grep -q 'applied: ops=1, .* swapped; originals in state-archive.md' "$rep"; echo $?)"
+check "apply: state.md collapsed" "$(grep -q 'claim B terminal' "$TEAM_DIR/state.md" && ! grep -q 'claim B derivation line 1' "$TEAM_DIR/state.md"; echo $?)"
+check "apply: the archive ends with the removed sections" "$([ "$(tail -n 1 "$TEAM_DIR/state-archive.md")" = 'claim B correction line 8' ]; echo $?)"
 
 echo
 echo "dreamer-run: $pass passed, $fail failed"

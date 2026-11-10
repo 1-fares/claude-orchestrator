@@ -13,7 +13,10 @@
 #   OBSERVER_INTERVAL=900   seconds between observations (default 15 min)
 #   OBSERVER_MODEL=sonnet   model for the recommendation (sonnet|haiku|opus|id)
 #                           an auditor pass benefits from the strongest model at a low cadence
-#   OBSERVER_AUDIT_DAEMONS  space list of bin/<daemon> names the audit expects alive
+#   OBSERVER_AUDIT_DAEMONS  space list of daemon names the audit expects alive; each is
+#                           checked through this run's $TEAM_DIR/<name>.pid and the
+#                           identity test in bin/lib/pid-identity.sh
+#   OBSERVER_AUDIT_CRON_RE  ERE selecting the crontab lines the audit expects
 #   TEAM_WORKTREES          space list of extra working trees for the git-state audit
 #   OBSERVER_IDLE_SEC=1800  a role idle longer than this is shrink-eligible
 #   OBSERVER_CALL_TIMEOUT=120  max seconds for one model call
@@ -21,6 +24,15 @@
 #   OBSERVER_RENUDGE_SEC=14400  a verdict already nudged within this window stays
 #                           silent even if another verdict came between (anti-flap;
 #                           see bin/lib/observer-nudge.sh for the measured case)
+#   OBSERVER_FORCE_CALL_EVERY=8  while the decision inputs are unchanged the model call
+#                           is skipped, but at least one call is made every N cycles
+#                           (1 = call every cycle)
+#   OBSERVER_FAIL_ALERT_AFTER=3  after N consecutive failed model calls, one bus
+#                           message to the orchestrator
+#   OBSERVER_BUS_SEND       bus command (default bin/bus-send.py), called as
+#                           <cmd> --name observer --to orchestrator --text <text>
+#   OBSERVER_BUS_TIMEOUT=15 seconds allowed for that command
+#   OBSERVER_ESCALATE_SINK  tests: append the bus message to this file instead
 #
 # GitHub ground truth: each cycle the observer runs bin/observer-github-groundtruth.sh
 # (self-gated to at most every OBSERVER_GH_MIN_INTERVAL secs), then folds the
@@ -42,21 +54,29 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$repo/bin/lib/observer-nudge.sh"
 # shellcheck source=bin/lib/host-verdict.sh
 . "$repo/bin/lib/host-verdict.sh"
+# shellcheck source=bin/lib/pid-identity.sh
+. "$repo/bin/lib/pid-identity.sh"
 # Self-reload: re-exec when this file or a lib it sources changes on disk, so a synced
 # fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
 . "$repo/bin/lib/self-reload.sh"
 self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" "$repo/bin/lib/observer-nudge.sh" "$repo/bin/lib/self-reload.sh" \
-  "$repo/bin/lib/host-verdict.sh"
+  "$repo/bin/lib/host-verdict.sh" "$repo/bin/lib/pid-identity.sh"
 
 interval="${OBSERVER_INTERVAL:-900}"
 model="${OBSERVER_MODEL:-sonnet}"
 idle_sec="${OBSERVER_IDLE_SEC:-1800}"
 call_timeout="${OBSERVER_CALL_TIMEOUT:-120}"
+force_every="${OBSERVER_FORCE_CALL_EVERY:-8}"
+fail_alert_after="${OBSERVER_FAIL_ALERT_AFTER:-3}"
+bus_send_cmd="${OBSERVER_BUS_SEND:-$repo/bin/bus-send.py}"
+bus_timeout="${OBSERVER_BUS_TIMEOUT:-15}"
 obs_dir="$TEAM_DIR/observer"
 mkdir -p "$obs_dir"
-last_headline=""
+inputs_state="$obs_dir/.inputs-state"     # "<hash of the last answered inputs> <cycles skipped since>"
+fail_streak_f="$obs_dir/.model-fail-streak"
+model_err="$obs_dir/.model-call.err"
 
 # GitHub ground-truth file the fetcher writes and we fold into the model context.
 # Keep in sync with the fetcher's default (OBSERVER_GH_GROUNDTRUTH).
@@ -102,13 +122,13 @@ gh_groundtruth_block() {
   sed 's/^/  /' "$gh_groundtruth"
 }
 
-# Convert team-status IDLE tokens (3s, 12m, 1h, 2d) to seconds.
+# Convert team-status IDLE tokens (3s, 12m, 1h; fmt_age in bin/team-status.sh emits no
+# other unit) to seconds.
 idle_to_sec() {
   case "$1" in
     *s) echo "${1%s}" ;;
     *m) echo $(( ${1%m} * 60 )) ;;
     *h) echo $(( ${1%h} * 3600 )) ;;
-    *d) echo $(( ${1%d} * 86400 )) ;;
     *) echo 0 ;;
   esac
 }
@@ -139,7 +159,9 @@ gather_metrics() {
   local ncpu mem claude_n claude_rss
   ncpu="$(nproc)"
   mem="$(free -m | awk '/^Mem:/{printf "%d/%d MiB (%d%%)", $3, $2, ($3/$2)*100}')"
-  claude_n="$(pgrep -xc claude 2>/dev/null || echo 0)"
+  # pgrep -c prints 0 and exits 1 on no match, so `|| echo 0` printed a second 0.
+  claude_n="$(pgrep -xc claude 2>/dev/null)" || :
+  claude_n="${claude_n:-0}"
   claude_rss="$(ps -eo rss,comm 2>/dev/null | awk '$2=="claude"{s+=$1} END{printf "%.1f", s/1024/1024}')"
 
   # Roster (role, idle, health) via team-status
@@ -176,10 +198,20 @@ gather_metrics() {
     goal="$(grep -A3 -iE '^#* *goal' "$TEAM_DIR/state.md" 2>/dev/null | tail -n +2 | grep -m1 -vE '^[[:space:]]*$' | sed 's/^[[:space:]]*//' | head -c 200)"
   fi
 
-  # Bus throughput over the last interval (rough liveness)
-  local buslog msgs="?"
+  # Bus throughput over the last interval (rough liveness): records of the host-wide bus
+  # log whose "ts" (UTC ISO-8601) falls within the last $interval seconds. The former
+  # `tail -n 400 | wc -l` was 400 on every pass once the log held 400 lines. Only the last
+  # 5000 records are read, so a count of 5000 means "at least".
+  local buslog msgs="?" since
   buslog="$HOME/.claude/data/inter-session/messages.log"
-  [ -f "$buslog" ] && msgs="$(tail -n 400 "$buslog" 2>/dev/null | wc -l)"
+  if [ -f "$buslog" ]; then
+    since="$(date -u -d "@$(( $(date +%s) - interval ))" '+%Y-%m-%dT%H:%M:%S')"
+    msgs="$(tail -n 5000 "$buslog" 2>/dev/null | awk -v s="$since" '
+      match($0, /"ts": *"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) {
+        if (substr($0, RSTART + RLENGTH - 19, 19) >= s) n++
+      }
+      END { print n + 0 }')"
+  fi
 
   # Per-role model. Ground truth: the launch records under $TEAM_DIR/models/
   # (written by team-spawn.sh at spawn time). Fallback for runs started before
@@ -218,7 +250,7 @@ ${disp:-  (none)}
 SHRINK-ELIGIBLE (idle >= ${idle_sec}s): ${idle_roles}
 PIPELINE (unit status counts): ${pipe:-none}
 GOAL: ${goal:-unknown}
-BUS: ~${msgs} recent messages logged
+BUS: ${msgs} messages logged in the last ${interval}s (host-wide bus log, all teams)
 GITHUB GROUND TRUTH (authoritative external PR/merge state; the ONLY sanctioned source for such claims):
 $(gh_groundtruth_block)
 EOF
@@ -227,25 +259,36 @@ EOF
 
 # gather_audit_evidence: primary-source facts for the AUDIT section (2026-09-07). The
 # metrics block summarises; this reads the crontab, the run dir, the pings log, the
-# ledgers and git, so the model audits evidence instead of restating a summary. Generic:
-# daemon and worktree lists come from env (OBSERVER_AUDIT_DAEMONS, TEAM_WORKTREES).
+# ledgers and git, so the model audits evidence instead of restating a summary. Generic: cron,
+# daemon and worktree lists come from env (OBSERVER_AUDIT_CRON_RE, OBSERVER_AUDIT_DAEMONS,
+# TEAM_WORKTREES).
 gather_audit_evidence() {
   local td="${TEAM_DIR:-}" now_s; now_s="$(date +%s)"
   echo "CRONTAB (filtered for expected jobs):"
-  crontab -l 2>/dev/null | grep -E '(backup|digest|ensure|tests-run|notify-operator)' | sed 's/^/  /' || echo "  (none found)"
-  echo "DAEMON LIVENESS:"
-  local d pid
-  for d in ${OBSERVER_AUDIT_DAEMONS:-observer api-watchdog tmux-watchdog compaction-watchdog permission-mode-watchdog session-headroom-watchdog}; do
-    pid="$(pgrep -f "bin/${d}" 2>/dev/null | head -1)"
-    [ -n "$pid" ] && echo "  $d: alive pid=$pid" || echo "  $d: NOT RUNNING"
+  crontab -l 2>/dev/null | grep -E "${OBSERVER_AUDIT_CRON_RE:-(dreamer|night-janitor|capability-probe|backup|digest|ensure|tests-run|notify-operator)}" | sed 's/^/  /' || echo "  (none found)"
+  # Each daemon through THIS run's pidfile and the identity test team-spawn and cleanup use
+  # (bin/lib/pid-identity.sh: the script in program position AND this run's TEAM_RUN_ID or
+  # TEAM_DIR in its environment). `pgrep -f bin/<name>` also matched other clones' and
+  # other runs' daemons, and "observer" always matched this process.
+  echo "DAEMON LIVENESS (this run's pidfiles):"
+  local d
+  local -a globs
+  for d in ${OBSERVER_AUDIT_DAEMONS:-observer api-watchdog tmux-watchdog compaction-watchdog permission-mode-watchdog host-ram-watchdog disk-tmp-watchdog chrome-supervisor}; do
+    if [ ! -f "$td/$d.pid" ]; then echo "  $d: NOT RUNNING (no $d.pid)"; continue; fi
+    mapfile -t globs < <(proc_run_daemon_globs "$d")
+    if proc_pidfile_verdict "$td/$d.pid" "${globs[@]}"; then echo "  $d: alive pid=$PM_PID"
+    else echo "  $d: NOT RUNNING (pid ${PM_PID:-?}: $PM_WHY)"; fi
   done
   echo "OPERATOR PHONE (last 10 lines of the pings log):"
   local pf; pf="$(ls "$td"/reports/operator-pings.log "$td"/reports/*-pings.log 2>/dev/null | head -1)"
   [ -n "$pf" ] && tail -10 "$pf" | sed 's/^/  /' || echo "  (no pings log)"
   echo "LEDGER/DECISIONS FRESHNESS:"
   local f mt age_h
-  for f in "$td"/DECISIONS-FOR-*.md "$td/state.md"; do
+  # The live decision files, named as bin/dreamer.sh finds them (DECISIONS*.md); the
+  # dreamer's <name>-archive.md files are history, not ledgers.
+  for f in "$td"/DECISIONS*.md "$td/state.md"; do
     [ -f "$f" ] || continue
+    case "$f" in *-archive.md) continue ;; esac
     mt="$(stat -c '%Y' "$f" 2>/dev/null || echo 0)"; age_h=$(( (now_s - mt) / 3600 ))
     echo "  $(basename "$f"): modified $(date -u -d "@$mt" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) (${age_h}h ago)"
   done
@@ -261,14 +304,20 @@ gather_audit_evidence() {
   echo "STALE MARKERS/ALARMS (>24h):"
   find "$td/health" "$td" -maxdepth 1 \( -name '*.marker' -o -name '*.alarm' -o -name '*-blind*.md' \) -mtime +1 2>/dev/null | sed 's/^/  /' | grep . || echo "  (none over 24h)"
   echo "UNIT TABLE (state.md open units):"
-  [ -f "$td/state.md" ] && grep -A 100 '^| Unit ' "$td/state.md" 2>/dev/null | head -20 | sed 's/^/  /' || echo "  (no state.md)"
+  # -m1 -A 19 = the first 20 lines from the table header, without a head(1) that can SIGPIPE grep under
+  # pipefail. A state.md without the table is reported as such, not as a missing file.
+  local ut=""
+  if [ -f "$td/state.md" ]; then
+    ut="$(grep -m1 -A 19 '^| Unit ' "$td/state.md" 2>/dev/null)"
+    if [ -n "$ut" ]; then sed 's/^/  /' <<<"$ut"; else echo "  (state.md has no '| Unit ' table)"; fi
+  else echo "  (no state.md)"; fi
   echo "CAPABILITY PROBE (last result, bin/capability-probe.sh):"
   if [ -f "$td/health/capability-probe.json" ]; then sed 's/^/  /' "$td/health/capability-probe.json" | cut -c1-400; else echo "  (never run)"; fi
   echo "THINKING-MODEL CALLS LOG:"
   local fcl="$td/reports/fable-calls.log" cls
   if [ -f "$fcl" ]; then
     echo "  total lines: $(wc -l < "$fcl")"
-    for cls in CLASS-1 CLASS-2 CLASS-3 CLASS-4 SKIPPED; do echo "  $cls: $(grep -c "$cls" "$fcl" 2>/dev/null || echo 0)"; done
+    for cls in CLASS-1 CLASS-2 CLASS-3 CLASS-4 SKIPPED; do echo "  $cls: $(grep -c "$cls" "$fcl" 2>/dev/null || :)"; done
     echo "  last 5:"; tail -5 "$fcl" | sed 's/^/    /'
   else echo "  (no fable-calls.log)"; fi
 }
@@ -369,18 +418,117 @@ ${audit_evidence:-  (no audit evidence collected)}
 EOF
 }
 
+# _decision_inputs: stdin = model + prompt -> the part a recommendation rests on, for the
+# skip-unchanged hash. Left out: the HOST line (load, memory, claude RSS), the BUS volume,
+# the roster's idle ages, the ground-truth fetch time and age figures, and "(Nh ago)"
+# ledger ages; they change every cycle without changing the facts. Kept: the HOST VERDICT
+# state word (ok/busy/overloaded), roster roles and health, SHRINK-ELIGIBLE (an idle role
+# crossing the threshold changes it), the pipeline, daemon pids, ledger mtimes, git state.
+_decision_inputs() {
+  awk '
+    /^HOST: / || /^BUS: / { next }
+    /^HOST VERDICT: / { split($0, a, ": "); print "HOST VERDICT: " a[2]; next }
+    /^ROSTER / { roster = 1; print; next }
+    /^ROLE MODELS / { roster = 0 }
+    roster { n = split($0, f, "\t"); print f[1] "\t" f[n]; next }
+    /^  fetched_at:/ { next }
+    { gsub(/AGE [0-9]+m/, "AGE"); gsub(/ \([0-9]+h ago\)/, ""); print }
+  '
+}
+
+# _obs_bus_send <text>: one message to the orchestrator over the bus, bounded by a timeout,
+# stdin from /dev/null, no retry; the outcome goes to the observer log, a failure is not fatal.
+_obs_bus_send() {
+  local err rc=0
+  if [ -n "${OBSERVER_ESCALATE_SINK:-}" ]; then
+    printf '%s %s\n' "$(iso)" "$1" >> "$OBSERVER_ESCALATE_SINK"
+    echo "$(iso) observer: bus message written to OBSERVER_ESCALATE_SINK"; return 0
+  fi
+  err="$(BUS_SEND_RETRY_S=0 timeout "$bus_timeout" "$bus_send_cmd" --name observer --to orchestrator \
+           --text "$1" </dev/null 2>&1 >/dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ]; then echo "$(iso) observer: told the orchestrator on the bus"
+  else echo "$(iso) observer: bus message to the orchestrator failed (rc=$rc${err:+: ${err##*$'\n'}})"; fi
+  return 0
+}
+
+# model_call_failed <metrics> <raw output> <reason>: a failed call is reported as a failure.
+# It used to yield the signature ?|?|?|?, for which observer_nudge_should never nudges, and
+# its text was printed under "## Recommendation" as if it were advice. Now latest.md and
+# history.md say "model call failed" with the reason, and the failure streak is counted:
+# at exactly OBSERVER_FAIL_ALERT_AFTER consecutive failures ONE bus message goes to the
+# orchestrator. A failed call does not record the inputs hash, so the next cycle calls again.
+model_call_failed() {
+  local metrics="$1" out="$2" reason="$3" n=0
+  {
+    echo "# Observer recommendation"
+    echo "_$(iso) - model ${model}, every ${interval}s_"
+    echo
+    echo '## Metrics'
+    echo '```'
+    printf '%s\n' "$metrics"
+    echo '```'
+    echo
+    echo '## MODEL CALL FAILED: no recommendation this pass'
+    echo
+    echo "Reason: $reason"
+    echo
+    echo "The metrics above are valid; the model call failed. The text below is not advice."
+    echo
+    echo '### Raw model output'
+    echo '```'
+    printf '%s\n' "${out:-(none)}"
+    echo '```'
+  } > "$obs_dir/latest.md"
+  { echo "=== $(iso) ==="; echo "MODEL CALL FAILED: $reason"; echo; } >> "$obs_dir/history.md"
+  [ -f "$fail_streak_f" ] && read -r n < "$fail_streak_f"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$fail_streak_f"
+  echo "$(iso) observer: MODEL CALL FAILED ($n in a row): $reason"
+  if [ "$n" -eq "$fail_alert_after" ]; then
+    _obs_bus_send "status: observer: the model call has failed $n passes in a row, so there is no recommendation. Last reason: $reason. Metrics: $obs_dir/latest.md"
+  fi
+}
+
 observe_once() {
-  local metrics prompt out headline verdict_sig
+  local metrics prompt out headline verdict_sig inputs_hash prev_hash="" skipped=0 rc=0 err="" reason=""
   refresh_gh_groundtruth
   metrics="$(gather_metrics)"
   audit_ev="$(gather_audit_evidence 2>/dev/null)" || true
   prompt="$(build_prompt "$metrics" "$audit_ev")"
+
+  # Skip the model call while the decision inputs are what the last ANSWERED call saw: a
+  # call every cycle (96 a day) re-asked the same question overnight with the team idle,
+  # and duplicate verdicts were filtered only after paying for them. At least one call is
+  # made every OBSERVER_FORCE_CALL_EVERY cycles, so drift the hash leaves out is still seen.
+  inputs_hash="$(printf '%s\n%s\n' "$model" "$prompt" | _decision_inputs | sha256sum)"
+  inputs_hash="${inputs_hash%% *}"
+  [ -f "$inputs_state" ] && read -r prev_hash skipped < "$inputs_state"
+  case "$skipped" in ''|*[!0-9]*) skipped=0 ;; esac
+  if [ -n "$prev_hash" ] && [ "$inputs_hash" = "$prev_hash" ] && [ $((skipped + 1)) -lt "$force_every" ]; then
+    printf '%s %s\n' "$inputs_hash" "$((skipped + 1))" > "$inputs_state"
+    echo "$(iso) observer: decision inputs unchanged; model call skipped ($((skipped + 1)) of $((force_every - 1)) before a forced call)"
+    return 0
+  fi
+
   # The prompt goes on stdin: as one argv string it can hit the 128 KiB per-argument cap (E2BIG,
   # rc=126). A here-string, not a pipe, so pipefail cannot turn a SIGPIPE into the call's rc.
-  out="$(timeout "$call_timeout" claude -p --model "$model" <<<"$prompt" 2>/dev/null)"
-  [ -z "$out" ] && out="(model call failed or timed out; metrics only)"
-  headline="$(printf '%s\n' "$out" | grep -m1 -E '^HEADLINE:' | sed 's/^HEADLINE:[[:space:]]*//')"
+  # stderr is kept: it is the only record of WHY a call failed (rate limit, auth, bad model).
+  out="$(timeout "$call_timeout" claude -p --model "$model" <<<"$prompt" 2>"$model_err")" || rc=$?
+  err="$("$repo/bin/lib/strip-known-cc-notes.sh" < "$model_err" 2>/dev/null)" || err="$(cat "$model_err" 2>/dev/null)"
+  [ -n "$err" ] && printf '%s\n' "$err" | sed "s/^/$(iso) observer: model stderr: /"
   verdict_sig="$(printf '%s\n' "$out" | _verdict_sig)"
+  if [ "$rc" -eq 124 ]; then reason="timed out after ${call_timeout}s"
+  elif [ "$rc" -ne 0 ]; then reason="rc=$rc"
+  elif [ -z "$out" ]; then reason="empty answer"
+  elif [ "$verdict_sig" = '?|?|?|?' ]; then reason="the answer has no VERDICT line"
+  fi
+  if [ -n "$reason" ]; then
+    [ -n "$err" ] && reason="$reason; stderr: $(printf '%s\n' "$err" | tail -n 1 | cut -c1-200)"
+    model_call_failed "$metrics" "$out" "$reason"
+    return 0
+  fi
+  headline="$(printf '%s\n' "$out" | grep -m1 -E '^HEADLINE:' | sed 's/^HEADLINE:[[:space:]]*//')"
 
   {
     echo "# Observer recommendation"
@@ -402,8 +550,10 @@ observe_once() {
   # (bin/lib/observer-nudge.sh). latest.md is written every pass regardless.
   if observer_nudge_should "$verdict_sig" "$(date +%s)" "$obs_dir/.nudge-ring"; then
     post_orch "observer: ${headline:-recommendation changed} (full advice: ${obs_dir}/latest.md)"
-    last_headline="$headline"
   fi
+  # An answered call: these inputs are covered, and the failure streak ends.
+  printf '%s 0\n' "$inputs_hash" > "$inputs_state"
+  printf '0\n' > "$fail_streak_f"
   echo "$(iso) observer: ${headline:-no headline} [verdict ${verdict_sig}]"
 }
 

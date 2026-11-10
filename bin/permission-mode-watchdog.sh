@@ -73,7 +73,10 @@
 #   PMW_ONESHOT=1         run ONE sweep and exit (used by the test suite)
 #   PMW_SOCKET/PMW_SESSION  tmux -L socket / session (engine passes TEAM_TMUX/TEAM_SESSION)
 #   PMW_LOG=<path>        audit log (default $TEAM_DIR/permission-mode-watchdog.log)
-#   NTFY_URL              operator push (team-env exports it)
+#   PMW_ABSENT_EXIT=10    consecutive sweeps with no tmux session before the daemon
+#                         exits (the team is gone; a relaunch starts a new one)
+#   NTFY_URL              operator push target, read by bin/lib/notify.sh (the daemon
+#                         notifies through it, class action; unset = log only)
 
 set -uo pipefail
 # Original invocation args, captured before any parsing, so self-reload can re-exec
@@ -88,7 +91,12 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
 . "$repo/bin/lib/self-reload.sh"
-self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" "$repo/bin/lib/self-reload.sh"
+self_reload_init "$0" "$repo/bin/team-env.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+# The operator is reached only through bin/lib/notify.sh (class, mute, dedupe, decision
+# log). It needs TEAM_DIR only, so it also works without a TEAM_RUN_ID.
+# shellcheck source=bin/lib/notify.sh
+. "$repo/bin/lib/notify.sh"
+NOTIFY_SOURCE=permission-mode-watchdog
 
 [ "${PERMISSION_MODE_WATCHDOG_DISABLED:-0}" = "1" ] && exit 0
 
@@ -99,6 +107,7 @@ INTERVAL="${PMW_INTERVAL:-30}"
 MAX_PRESSES="${PMW_MAX_PRESSES:-6}"
 UNREADABLE_ALARM="${PMW_UNREADABLE_ALARM:-10}"
 SETTLE="${PMW_SETTLE:-2}"
+ABSENT_EXIT="${PMW_ABSENT_EXIT:-10}"
 LOG="${PMW_LOG:-$TEAM_DIR/permission-mode-watchdog.log}"
 MARKER_DIR="$TEAM_DIR/health"
 
@@ -130,14 +139,9 @@ pane_mode() {
     | sed -E 's/^⏵⏵ //; s/ on$//'
 }
 
-has_menu()       { grep -qE "$AWAIT_RE" <<<"$1"; }
+# Case-insensitive, as watchdog-detect.sh matches the same AWAIT_RE.
+has_menu()       { grep -qiE "$AWAIT_RE" <<<"$1"; }
 has_classifier() { grep -qE "$CLASSIFIER_RE" <<<"$1"; }
-
-push_ntfy() {
-  [ -n "${NTFY_URL:-}" ] || return 0
-  [ -x "$repo/bin/notify-via-ntfy.sh" ] || return 0
-  "$repo/bin/notify-via-ntfy.sh" --title "$1" --body "$2" --prio default >/dev/null 2>&1 || true
-}
 
 # Cycle one pane back to EXPECTED. Returns 0 once the status line reads the
 # expected mode, 1 if MAX_PRESSES presses did not get there.
@@ -214,10 +218,10 @@ sweep_pane() {
         echo "$uc consecutive sweeps, so the watchdog cannot confirm it is in"
         echo "'$EXPECTED' and will not cycle a mode it cannot see."
         echo
-        echo "Check it by hand: TEAM_RUN_ID=$TEAM_RUN_ID bin/attach.sh"
+        echo "Check it by hand: ${TEAM_RUN_ID:+TEAM_RUN_ID=$TEAM_RUN_ID }bin/attach.sh"
       } > "$MARKER_DIR/permission-mode-$name.md"
-      push_ntfy "AI team: permission mode unreadable" \
-                "Role '$name' has not shown a permission-mode status line for $uc sweeps."
+      notify_operator action "permission mode unreadable: $name" \
+        "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' has not shown a permission-mode status line for $uc sweeps; check it by hand (see $MARKER_DIR/permission-mode-$name.md)"
     fi
     return 0
   fi
@@ -241,21 +245,23 @@ sweep_pane() {
       echo
       echo "Until this is fixed the session can stop on permission prompts that"
       echo "nobody can answer remotely. Attach and cycle it by hand:"
-      echo "  TEAM_RUN_ID=$TEAM_RUN_ID bin/attach.sh    # then shift+tab to 'bypass permissions on'"
+      echo "  ${TEAM_RUN_ID:+TEAM_RUN_ID=$TEAM_RUN_ID }bin/attach.sh    # then shift+tab to 'bypass permissions on'"
     } > "$marker"
     log "[$name] RESTORE FAILED after $MAX_PRESSES presses; wrote $marker"
-    push_ntfy "AI team: permission mode stuck" \
-              "Role '$name' is in '${mode:-unreadable}', expected '$EXPECTED'. Prompts may block the run."
+    notify_operator action "permission mode stuck: $name" \
+      "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' is in '${mode:-unreadable}', expected '$EXPECTED'; prompts may block the run (see $marker)"
   fi
   return 1
 }
 
+# sweep_all: exit 3 when the session does not exist, else 0.
 sweep_all() {
-  tmux_t has-session -t "$SESSION" 2>/dev/null || return 0
+  tmux_t has-session -t "$SESSION" 2>/dev/null || return 3
   while IFS=$'\t' read -r widx wname; do
     [ -n "${widx:-}" ] || continue
     sweep_pane "${SESSION}:${widx}" "${wname:-w$widx}" || true
   done < <(tmux_t list-windows -t "$SESSION" -F '#{window_index}	#{window_name}' 2>/dev/null)
+  return 0
 }
 
 # One sweep and out: lets the test suite drive the real script rather than a
@@ -265,8 +271,21 @@ if [ "${PMW_ONESHOT:-0}" = "1" ]; then sweep_all; exit 0; fi
 
 log "permission-mode-watchdog started (socket=$SOCKET session=$SESSION expected='$EXPECTED' interval=${INTERVAL}s)"
 
+# Exit once the team session has been gone for ABSENT_EXIT consecutive sweeps: the
+# loop otherwise ran forever after the team (and often $TEAM_DIR) was gone. A
+# relaunch starts a new daemon (ensure_team_daemons, and tmux-watchdog while the
+# session is up).
+absent=0
 while :; do
   self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
-  sweep_all
+  if sweep_all; then
+    absent=0
+  else
+    absent=$((absent + 1))
+    if [ "$absent" -ge "$ABSENT_EXIT" ]; then
+      log "session $SESSION absent for $absent consecutive sweeps; exiting"
+      exit 0
+    fi
+  fi
   sleep "$INTERVAL"
 done

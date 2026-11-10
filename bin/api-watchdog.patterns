@@ -4,7 +4,7 @@
 API Error.*Rate limit
 API Error.*temporarily limiting requests
 API Error.*Overloaded
-rate.*limited
+API Error.*rate[ _-]?limit
 Connection error
 Network error
 ECONNRESET

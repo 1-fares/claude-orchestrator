@@ -26,7 +26,8 @@ isolate_assert
 scratch="$(mktemp -d)"
 pids=()
 cleanup() {
-  local p; for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done
+  # the fixture's `sleep 120` child outlives a kill of its bash by up to 120 s; reap it first
+  local p; for p in "${pids[@]}"; do pkill -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; done
   rm -rf "$TEAM_DIR" "$scratch"
 }
 trap cleanup EXIT
@@ -111,7 +112,7 @@ start_build() {
   done
   BUILD_PID="$p"
 }
-stop_build() { kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; }
+stop_build() { pkill -P "$1" 2>/dev/null; kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; }
 cmdline_is() { [ "$(tr '\0' ' ' < "/proc/$1/cmdline")" = "$2 " ]; }
 
 # 1. off by default ------------------------------------------------------------------

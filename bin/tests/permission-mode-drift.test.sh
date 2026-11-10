@@ -65,11 +65,18 @@ exit 0
 FAKE
 chmod +x "$FAKEBIN/tmux"
 
+# Operator notices go through bin/lib/notify.sh into NOTIFY_SINK (decisions in NOTIFY_LOG).
+# Working hours are widened so an action is delivered to the sink whatever the time.
+# run_sweep [NAME=value ...]: extra assignments override the defaults; RS_UNSET=<var>
+# removes one more variable (env takes -u only before the first assignment).
+NSINK="$SCRATCH/notify.sink"; NLOG="$SCRATCH/notify.log"
 run_sweep() {
   : > "$SENDLOG"
-  env PATH="$FAKEBIN:$PATH" PMW_ONESHOT=1 PMW_SETTLE=0 PMW_MAX_PRESSES=4 \
+  env -u NOTIFY_ACTION_SOURCES ${RS_UNSET:+-u "$RS_UNSET"} PATH="$FAKEBIN:$PATH" PMW_ONESHOT=1 PMW_SETTLE=0 PMW_MAX_PRESSES=4 \
       PMW_SOCKET=testsock PMW_SESSION=testsess PMW_UNREADABLE_ALARM=4 \
       PMW_LOG="$SCRATCH/pmw.log" NTFY_URL= \
+      NOTIFY_SINK="$NSINK" NOTIFY_LOG="$NLOG" NOTIFY_STATE_DIR="$SCRATCH/notify-state" \
+      NOTIFY_HOURS=0000-2400 NOTIFY_DAYS=1-7 "$@" \
       bash "$PMW" >/dev/null 2>&1
 }
 sent()     { grep -q -- "$1" "$SENDLOG" 2>/dev/null; }
@@ -118,6 +125,10 @@ else no "writes the stuck marker when cycling does not help" "no marker in $TEAM
 n="$(grep -c BTab "$SENDLOG" 2>/dev/null || echo 0)"
 if [ "$n" -le 4 ]; then ok "bounded at PMW_MAX_PRESSES presses ($n)"
 else no "bounded at PMW_MAX_PRESSES presses" "pressed $n times"; fi
+if grep -q 'SENT action 4 permission mode stuck: orchestrator' "$NLOG" 2>/dev/null \
+   && grep -q 'permission mode stuck: orchestrator' "$NSINK" 2>/dev/null; then
+  ok "the operator is notified through notify.sh (class action)"
+else no "the operator is notified through notify.sh (class action)" "log: $(tail -1 "$NLOG" 2>/dev/null)"; fi
 
 echo "== 5b. GUARD: mode unreadable -> never cycles blind"
 printf '%s\n' '  -- INSERT -- (no mode marker rendered)' > "$PANEFILE"; rm -f "$FLIPFILE"
@@ -132,6 +143,9 @@ for _ in 1 2 3; do run_sweep; done
 if [ -f "$TEAM_DIR/health/permission-mode-orchestrator.md" ]; then
   ok "alarms after PMW_UNREADABLE_ALARM sweeps"
 else no "alarms after PMW_UNREADABLE_ALARM sweeps" "no marker written"; fi
+if grep -q 'action 4 permission mode unreadable: orchestrator' "$NLOG" 2>/dev/null; then
+  ok "the unreadable alarm notifies the operator (class action)"
+else no "the unreadable alarm notifies the operator (class action)" "log: $(tail -1 "$NLOG" 2>/dev/null)"; fi
 
 echo "== 6. recovery clears the marker"
 printf '%s\n' "$BYPASS" > "$PANEFILE"
@@ -139,6 +153,61 @@ run_sweep
 if [ -f "$TEAM_DIR/health/permission-mode-orchestrator.md" ]; then
   no "clears the marker once the mode is back" "marker still present"
 else ok "clears the marker once the mode is back"; fi
+
+echo "== 7. no TEAM_RUN_ID (single-team mode): the operator is still notified"
+# FLIPFILE is absent since 5b, so the drift survives and the restore fails.
+printf '%s\n' "$AUTO" > "$PANEFILE"
+: > "$NSINK"
+RS_UNSET=TEAM_RUN_ID run_sweep TEAM_DIR_ALLOW_OVERRIDE=1 NOTIFY_STATE_DIR="$SCRATCH/notify-state-7"
+if grep -q 'permission mode stuck: orchestrator' "$NSINK" 2>/dev/null; then
+  ok "notifies without a TEAM_RUN_ID"
+else no "notifies without a TEAM_RUN_ID" "sink: $(cat "$NSINK" 2>/dev/null)"; fi
+
+echo "== 8. GUARD: a prompt in other letter case is still a prompt -> hands off"
+{ echo "do you want to proceed?"; echo " 1. yes"; echo " 3. no"; printf '%s\n' "$AUTO"; } > "$PANEFILE"
+: > "$FLIPFILE"
+run_sweep
+if sent_any; then no "case-insensitive prompt match (as watchdog-detect)" "sent: $(tr '\n' ';' < "$SENDLOG")"
+else ok "case-insensitive prompt match (as watchdog-detect)"; fi
+
+echo "== 9. the loop exits once the session has been gone PMW_ABSENT_EXIT sweeps"
+# A second stand-in tmux: has-session succeeds only while the file 'up' says yes.
+FAKE2="$SCRATCH/bin2"; mkdir -p "$FAKE2"; UPF="$SCRATCH/up"
+cat > "$FAKE2/tmux" <<FAKE
+#!/usr/bin/env bash
+while [ "\${1:-}" = "-L" ] || [ "\${1:-}" = "-f" ]; do shift 2; done
+case "\${1:-}" in
+  has-session) [ "\$(cat "$UPF" 2>/dev/null)" = yes ] ;;
+  list-windows) printf '%s\t%s\n' '0' 'orchestrator' ;;
+  capture-pane) printf '%s\n' '$BYPASS' ;;
+  *) exit 0 ;;
+esac
+FAKE
+chmod +x "$FAKE2/tmux"
+run_loop() {  # run_loop <seconds>: the real loop, bounded by timeout; echoes the exit code
+  env -u NOTIFY_ACTION_SOURCES PATH="$FAKE2:$PATH" PMW_INTERVAL=1 PMW_ABSENT_EXIT=3 PMW_SETTLE=0 \
+      PMW_SOCKET=testsock PMW_SESSION=testsess PMW_LOG="$SCRATCH/pmw-loop.log" \
+      NOTIFY_SINK="$NSINK" NOTIFY_LOG="$NLOG" NOTIFY_STATE_DIR="$SCRATCH/notify-state" \
+      timeout "$1" bash "$PMW" >/dev/null 2>&1
+  echo $?
+}
+echo no > "$UPF"
+rc="$(run_loop 20)"
+if [ "$rc" = 0 ] && grep -q 'absent for 3 consecutive sweeps; exiting' "$SCRATCH/pmw-loop.log" 2>/dev/null; then
+  ok "exits 0 after 3 sweeps with no session"
+else no "exits 0 after 3 sweeps with no session" "rc=$rc log: $(tail -1 "$SCRATCH/pmw-loop.log" 2>/dev/null)"; fi
+echo yes > "$UPF"
+rc="$(run_loop 5)"
+if [ "$rc" = 124 ]; then ok "keeps running while the session exists (positive control)"
+else no "keeps running while the session exists (positive control)" "rc=$rc"; fi
+# The count is of CONSECUTIVE absences: the session is back from 2 s to 5 s. With the
+# reset the third absence in a row comes at about 7 s; without it, at about 5 s.
+( sleep 2; echo yes > "$UPF"; sleep 3; echo no > "$UPF" ) &
+echo no > "$UPF"
+t0=$(date +%s); rc="$(run_loop 20)"; dt=$(( $(date +%s) - t0 ))
+wait
+if [ "$rc" = 0 ] && [ "$dt" -ge 7 ]; then ok "a returning session resets the count (exited after ${dt}s)"
+else no "a returning session resets the count" "rc=$rc after ${dt}s"; fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

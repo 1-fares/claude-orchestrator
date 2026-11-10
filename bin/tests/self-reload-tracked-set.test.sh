@@ -11,7 +11,7 @@
 # Daemons: api-watchdog chrome-supervisor compaction-watchdog disk-tmp-watchdog host-ram-watchdog observer
 #   permission-mode-watchdog tmux-watchdog watchdog bus-inbox
 # Sourced files: team-env tmux-input tmux-submit notify self-reload status-hook watchdog-detect compaction-detect
-#   disk-tmp host-ram host-verdict observer-nudge project.conf
+#   disk-tmp host-ram host-verdict observer-nudge pid-identity project.conf
 # Run against another checkout: RELOAD_TREE_UNDER_TEST=<dir>.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

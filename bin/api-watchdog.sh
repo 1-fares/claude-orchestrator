@@ -37,18 +37,21 @@
 #
 # Health per role is recorded under $TEAM_DIR/health/<role>.json with a single
 # `state` field: active | stalled-api | stalled-usage | stuck | stuck-giveup |
-# give-up | awaiting-input | awaiting-input-esc. The orchestrator reads these
-# (pull-based, Tier-3 awareness).
+# stuck-giveup-esc | give-up | awaiting-input | awaiting-input-esc. The
+# orchestrator reads these (pull-based, Tier-3 awareness).
 #
-#   C. AWAITING-INPUT — a role is blocked on an interactive prompt (a selection
+#   D. AWAITING-INPUT: a role is blocked on an interactive prompt (a selection
 #      menu / confirmation) with no spinner: it cannot proceed without a human.
 #      The api-stall and stuck detectors both miss this (no error pattern, no
 #      spinner), so a blocked role reads as a healthy idle one and silently
-#      stalls the run. No automated recovery is possible (only a human answers),
-#      so after AWAIT_OPERATOR_SEC the watchdog escalates ONCE: it writes a
-#      marker $TEAM_DIR/health/awaiting-<role>.md (an external watcher can see
-#      it even with NTFY unset) and pushes the operator. Cleared when the prompt
-#      clears.
+#      stalls the run. The watchdog never answers the prompt. After
+#      AWAIT_OPERATOR_SEC it escalates: it writes a marker
+#      $TEAM_DIR/health/awaiting-<role>.md (an external watcher can see it even
+#      with NTFY unset), tells the orchestrator on the bus (it can often answer or
+#      re-route without a human; never told about itself), then notifies the
+#      operator (class action). The escalation repeats at the widening gaps of
+#      AWAIT_ESC_STEPS while the prompt stays open, with the elapsed time
+#      rewritten into the marker each time. Cleared when the prompt clears.
 #
 #   E. USAGE-STALL — the account ran out of usage/credits and Claude Code
 #      parked the session on a modal dialog ("Stop and wait for limit to
@@ -63,8 +66,8 @@
 #      scan retries, so recovery is retried indefinitely on a flat
 #      USAGE_RETRY_SEC cadence (default 300s) — a usage window can be gone for
 #      hours and giving up would strand the team exactly when it becomes
-#      recoverable. The operator is pushed ONCE on entry (usage exhaustion is
-#      operator-actionable: add funds or wait) and the recovery is logged.
+#      recoverable. The operator is notified ONCE on entry as class info (filed
+#      to the daily digest, not pushed) and the recovery is logged.
 #      A FAR wall is the exception. When the role's refusal record names a
 #      rateLimitType and a resetsAt further out than USAGE_WALL_PAGE_SEC, the
 #      cadence drops to USAGE_WALL_PROBE_SEC (see usage_wall_reset). Only a
@@ -79,13 +82,30 @@
 #   bin/api-watchdog.sh --interval 30         # seconds between scans
 #   bin/api-watchdog.sh --max-retries 5
 #   bin/api-watchdog.sh --once                # one scan, then exit (for testing)
+#   bin/api-watchdog.sh --patterns <file>     # same as API_WATCHDOG_PATTERNS
 #
 # Env:
 #   API_WATCHDOG_DISABLED=1   skip auto-start entirely (in launch-team)
 #   STUCK_WATCHDOG_DISABLED=1 keep api-stall recovery, disable stuck detection
 #   STUCK_THRESHOLD_SEC=480   pane unchanged while busy this long => stuck (8 min)
 #   STUCK_MAX_NUDGES=2        gentle interrupt+nudge attempts before escalation
+#   STUCK_OPERATOR_SEC=<STUCK_THRESHOLD_SEC+600>  still frozen this long after
+#                             stuck-giveup => page the operator once
+#   AWAIT_WATCHDOG_DISABLED=1 disable awaiting-input detection
+#   AWAIT_OPERATOR_SEC=300    blocked on an interactive prompt this long => marker
+#                             file + orchestrator (bus) + operator notice
+#   AWAIT_ESC_STEPS="1200 3600"  gaps between later escalations of one blocked
+#                             prompt; the last gap repeats while it stays blocked
+#   API_WATCHDOG_BUS_TIMEOUT=15  seconds one bus send to the orchestrator may take
+#   API_WATCHDOG_BUS_SEND=<py>   bus client (default bin/bus-send.py)
+#   API_WATCHDOG_BUS_SINK=<file> tests: bus lines are appended here instead of sent;
+#                             without it a real send also needs $TEAM_DIR/state.md
 #   USAGE_RETRY_SEC=300       flat cadence for usage-limit dialog recovery retries
+#   USAGE_PUSH_DEDUPE_SEC=3600  min seconds between usage-stall entry notices per role
+#   USAGE_WALL_PAGE_SEC=7200  a recorded usage reset further away than this
+#                             switches the retry cadence to USAGE_WALL_PROBE_SEC
+#   USAGE_WALL_PROBE_SEC=1800 retry cadence while such a reset is pending
+#   USAGE_WALL_MULTIDAY_SEC=86400  a reset at least this far away pages the operator
 #   USAGE_WAKE_DEDUPE_SEC=3600  min seconds between "usage outage may be over"
 #                             wake-up nudges to the orchestrator
 #   API_EPISODE_WINDOW_SEC=1800  api-stalls separated by less than this are ONE
@@ -119,12 +139,21 @@ stuck_max_nudges="${STUCK_MAX_NUDGES:-2}"
 # we push ONCE. Transient wedges that the nudge/respawn clears never reach here.
 stuck_operator_sec="${STUCK_OPERATOR_SEC:-$((stuck_threshold + 600))}"
 # AWAITING-INPUT: a role blocked on an interactive prompt (selection menu /
-# confirmation) cannot proceed without a human. There is no automated recovery
-# (only a human can answer), so after this long we escalate ONCE to the operator
-# and drop a marker file an external watcher can see. Lower than the stuck path:
-# a blocked prompt is dead time from the first second, not a maybe-transient wedge.
+# confirmation) cannot proceed until someone answers it, and the watchdog never
+# does. After this long it escalates: marker file, the orchestrator on the bus,
+# then the operator. Lower than the stuck path: a blocked prompt is dead time
+# from the first second, not a maybe-transient wedge.
 await_disabled="${AWAIT_WATCHDOG_DISABLED:-0}"
 await_operator_sec="${AWAIT_OPERATOR_SEC:-300}"
+# Gaps between later escalations of the same blocked prompt. Escalating once and
+# then never again made a prompt blocked all night look like one blocked for
+# five minutes; widening gaps repeat the news without nagging.
+read -r -a await_esc_steps <<< "${AWAIT_ESC_STEPS:-1200 3600}"
+# Bus delivery to the orchestrator. BUS_SEND_RETRY_S=0 on the call: the scan loop
+# must not wait for an absent listener; the next escalation is the retry.
+bus_send="${API_WATCHDOG_BUS_SEND:-$repo/bin/bus-send.py}"
+bus_timeout="${API_WATCHDOG_BUS_TIMEOUT:-15}"
+bus_sink="${API_WATCHDOG_BUS_SINK:-}"
 # USAGE-STALL: flat retry cadence for the usage-limit dialog. No max: a retry
 # is cheap and idempotent (Escape + "try again" while the dialog is up just
 # re-opens it), and the outage ends on the account's schedule, not ours.
@@ -163,7 +192,7 @@ while [ $# -gt 0 ]; do
     --max-retries) max_retries="$2"; shift 2 ;;
     --once) once=1; shift ;;
     --patterns) patterns_file="$2"; shift 2 ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^$/p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -218,7 +247,7 @@ pattern_regex="$(grep -vE '^[[:space:]]*(#|$)' "$patterns_file" | paste -sd'|' -
 # Self-reload: re-exec this daemon when its own source or a sourced lib changes on disk,
 # so a committed fix takes effect without a manual restart. Track $0 + every lib sourced
 # above. Checked once per loop below.
-. "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+. "$repo/bin/lib/self-reload.sh"
 # shellcheck source=bin/lib/status-hook.sh
 . "$repo/bin/lib/status-hook.sh"
 self_reload_init "$0" \
@@ -242,10 +271,6 @@ iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-
 
 # ---- tmux-bound wrappers ----------------------------------------------------
 
-classify()        { tmux capture-pane -t "$1" -p 2>/dev/null | _classify_text; }
-pane_is_busy()    { tmux capture-pane -t "$1" -p 2>/dev/null | _is_busy_text; }
-pane_fingerprint(){ tmux capture-pane -t "$1" -p 2>/dev/null | _fingerprint_text; }
-
 # role_transcript <window-id>: resolve the Claude Code session transcript behind
 # a pane. Chain (same as compaction-watchdog's probe_pct_from_jsonl): pane pid
 # -> ~/.claude/sessions/<pid>.json -> sessionId + cwd -> ~/.claude/projects/
@@ -260,17 +285,16 @@ role_transcript() {
   sess_file="${WATCHDOG_SESSIONS_DIR:-$HOME/.claude/sessions}/${pid}.json"
   [ -f "$sess_file" ] || return 1
   read -r sid proj_dir < <(python3 -c '
-import json, os, sys
+import json, os, re, sys
 d = json.load(open(sys.argv[1]))
 sid = d.get("sessionId", "")
 cwd = d.get("cwd", "")
 proj_dir = ""
 if cwd:
-    u = os.path.expanduser("~")
-    slug = cwd.replace("/", "-").lstrip("-")
-    if cwd.startswith(u):
-        slug = "-home-" + os.environ.get("USER", os.path.basename(u)) + cwd[len(u):].replace("/", "-")
-    proj_dir = os.path.join(u, ".claude", "projects", slug)
+    # Claude Code names the project dir after the cwd with every character
+    # other than [A-Za-z0-9] replaced by "-" ("/x/.cache/a.b" -> "-x--cache-a-b").
+    slug = re.sub(r"[^A-Za-z0-9]", "-", cwd)
+    proj_dir = os.path.join(os.path.expanduser("~"), ".claude", "projects", slug)
 print(sid, proj_dir)
 ' "$sess_file" 2>/dev/null) || return 1
   [ -n "$sid" ] && [ -n "$proj_dir" ] || return 1
@@ -311,8 +335,9 @@ if kind:
 # transcript_turn_state <window-id>: open | closed | unknown (see
 # _transcript_turn_state_text in bin/lib/watchdog-detect.sh). Reads the last
 # 64 KiB of the transcript; a turn-end marker is a short record at the very end.
+# Reuses rt_jsonl when the caller already resolved it (one python3 start, not two).
 transcript_turn_state() {
-  role_transcript "$1" || { echo unknown; return 0; }
+  [ -n "${rt_jsonl:-}" ] || role_transcript "$1" || { echo unknown; return 0; }
   tail -c 65536 "$rt_jsonl" 2>/dev/null | _transcript_turn_state_text
 }
 
@@ -327,9 +352,6 @@ subagents_progressing() {
   [ -d "$rt_subdir" ] || return 1
   [ -n "$(find "$rt_subdir" -maxdepth 1 -name '*.jsonl' -newermt "-${secs} seconds" -print -quit 2>/dev/null)" ]
 }
-
-# read_field <file> <field> <default>
-read_field() { jq -r --arg d "$3" --arg k "$2" '.[$k] // $d' "$1" 2>/dev/null || echo "$3"; }
 
 # persist <file> + all fields. One writer for both failure modes so neither
 # clobbers the other's bookkeeping.
@@ -346,7 +368,7 @@ persist() {
          --argjson retries "$retries" \
          --argjson last_retry "$last_retry" \
          --argjson since "$since" \
-         --argjson last_seen "$(now)" \
+         --argjson last_seen "${nowts:-$(now)}" \
          --arg fp "$fp" \
          --argjson fp_since "$fp_since" \
          --arg nudge_fp "$nudge_fp" \
@@ -372,14 +394,14 @@ nudge_pane() {
 # orchestrator's own health (unlike an API stall), so a one-shot push is fine.
 # Never ping the orchestrator about itself.
 escalate_stuck() {
-  local name="$1" mins="$2"
+  local name="$1" mins="$2" nudged="${3:-$stuck_max_nudges}"
   if [ "$name" = "orchestrator" ]; then
     {
       echo "# Orchestrator wedged"
       echo
       echo "The orchestrator pane has shown no progress for ~${mins}m while busy"
       echo "(stuck on a hung tool call). The watchdog cannot recover it on its own."
-      echo "Recovery: attach (TEAM_RUN_ID=$TEAM_RUN_ID bin/attach.sh), send Escape,"
+      echo "Recovery: attach (${TEAM_RUN_ID:+TEAM_RUN_ID=$TEAM_RUN_ID }bin/attach.sh), send Escape,"
       echo "and re-prompt; if unrecoverable, reset and relaunch from state.md."
     } > "$TEAM_DIR/PENDING.md.tmp.$$" 2>/dev/null \
       && mv -f "$TEAM_DIR/PENDING.md.tmp.$$" "$TEAM_DIR/PENDING.md" 2>/dev/null \
@@ -388,7 +410,7 @@ escalate_stuck() {
     status_hook wedged orchestrator "orchestrator made no progress for ~${mins}m while busy; the operator has been asked to intervene"
     return
   fi
-  local msg="[watchdog] role '$name' is wedged: ~${mins}m with no pane progress while busy, and ${stuck_max_nudges} interrupt+nudge attempts did not clear it (likely a hung tool call, e.g. the chrome-devtools MCP). Recommend retire+respawn: bin/retire-role.sh $name --force --reason 'stuck/hung tool call' then bin/add-role.sh <goal> $name, then re-brief it on its in-flight unit."
+  local msg="[watchdog] role '$name' is wedged: ~${mins}m with no pane progress while busy, and ${nudged} interrupt+nudge attempt(s) did not clear it (likely a hung tool call, e.g. the chrome-devtools MCP). Recommend retire+respawn: bin/retire-role.sh $name --force --reason 'stuck/hung tool call' then bin/add-role.sh <goal-file> $name --reason 'respawn after a hung tool call', then re-brief it on its in-flight unit."
   tmux_submit "$TEAM_SESSION:orchestrator" "$msg"
   # NO operator push here: asking the orchestrator to retire+respawn is automated
   # recovery, not something the operator must act on. If that respawn does not
@@ -415,6 +437,68 @@ escalate_apistall() {
   tmux_submit "$TEAM_SESSION:orchestrator" "[watchdog] role '$name' has stalled on the same API error $nretries times within one episode and auto-retry is exhausted (error line in $TEAM_DIR/audit/api-watchdog/$name.log).${hint} Intervene: re-brief it around the error, re-route the unit, or retire+respawn."
 }
 
+# await_next_gap <escalations-so-far>: seconds from the last escalation of a
+# blocked prompt to the next one (AWAIT_ESC_STEPS; past its end the last gap holds).
+await_next_gap() {
+  local n="$1" i=0 g last=3600
+  for g in "${await_esc_steps[@]}"; do
+    case "$g" in ''|*[!0-9]*) continue ;; esac
+    i=$((i + 1)); last="$g"
+    [ "$i" -ge "$n" ] && { echo "$g"; return 0; }
+  done
+  echo "$last"
+}
+
+# await_tell_orchestrator <role> <mins> <n> <marker> <audit-log>: tell the
+# orchestrator on the bus that <role> is blocked on an interactive prompt, and log
+# whether it was told. The prompt text is NOT quoted: the bus line is shown in the
+# orchestrator's pane, and a quoted menu footer there would classify the
+# orchestrator itself as awaiting-input on the next scan. It points at the marker.
+# A test sets API_WATCHDOG_BUS_SINK; without a sink a real send also needs
+# $TEAM_DIR/state.md (a live team has it), so a fixture TEAM_DIR never reaches a
+# live bus.
+await_tell_orchestrator() {
+  local role="$1" mins="$2" n="$3" marker="$4" log="$5" msg
+  msg="status: api-watchdog: role '$role' has been blocked ${mins}m on an interactive prompt (escalation $n); nothing it owns proceeds until the prompt is answered. Its screen is in $marker. Answer it only if the action is safe, or re-route its unit. The operator is notified as well; this repeats at widening intervals while it stays blocked."
+  if [ -n "$bus_sink" ]; then
+    printf '%s --to orchestrator %s\n' "$(iso "$nowts")" "$msg" >> "$bus_sink" 2>/dev/null || true
+    echo "$(iso "$nowts") [$role] AWAIT-BUS #$n: written to the test sink $bus_sink" >> "$log"
+    return 0
+  fi
+  if [ ! -f "$TEAM_DIR/state.md" ]; then
+    echo "$(iso "$nowts") [$role] AWAIT-BUS #$n: not sent, $TEAM_DIR has no state.md (not a live team)" >> "$log"
+    return 0
+  fi
+  if BUS_SEND_RETRY_S=0 timeout "$bus_timeout" python3 "$bus_send" --name api-watchdog --to orchestrator \
+       --text "$msg" </dev/null >/dev/null 2>&1; then
+    echo "$(iso "$nowts") [$role] AWAIT-BUS #$n: orchestrator told on the bus" >> "$log"
+  else
+    echo "$(iso "$nowts") [$role] AWAIT-BUS #$n: bus-send FAILED, the orchestrator was NOT told" >> "$log"
+  fi
+}
+
+# usage_wake_orchestrator <role> <audit-log>: after a role's recovery from the
+# usage dialog is confirmed, wake the orchestrator. Every parked WORKER resumes
+# its own aborted turn via the usage path, but an orchestrator that was IDLE when
+# usage ran out has no turn to resume, so nothing re-dispatched work and a
+# recovered team sat idle until a human noticed (observed: 13h overnight). One
+# deduped nudge per USAGE_WAKE_DEDUPE_SEC across the team; skipped while the
+# orchestrator is itself usage-stalled (its modal would swallow the typed keys,
+# and its own recovery path resumes it anyway), and never about the orchestrator.
+usage_wake_orchestrator() {
+  local name="$1" log="$2" owf owlast ostate
+  [ "$name" != "orchestrator" ] || return 0
+  owf="$health_dir/orchestrator.usage-wake"
+  owlast=$(cat "$owf" 2>/dev/null || echo 0)
+  case "$owlast" in ''|*[!0-9]*) owlast=0;; esac
+  ostate="$(jq -r '.state // "unknown"' "$health_dir/orchestrator.json" 2>/dev/null)"
+  if [ "$ostate" != "stalled-usage" ] && [ $((nowts - owlast)) -ge "${USAGE_WAKE_DEDUPE_SEC:-3600}" ]; then
+    tmux_submit "$TEAM_SESSION:orchestrator" "[watchdog] role '$name' recovered from a usage-limit stall; the usage outage may be over. Check $TEAM_DIR/health/, re-read the ledger, reconcile unit statuses against what is actually committed, and re-dispatch anything in flight."
+    echo "$nowts" > "$owf"
+    echo "$(iso "$nowts") [$name] USAGE-WAKE sent to orchestrator" >> "$log"
+  fi
+}
+
 scan_once() {
   if ! tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then return 0; fi
   tmux list-windows -t "$TEAM_SESSION" -F '#{window_id}'$'\t''#{window_name}' 2>/dev/null \
@@ -429,16 +513,15 @@ scan_once() {
       hf="$health_dir/$name.json"
       af="$audit_dir/$name.log"
       [ -f "$hf" ] || echo '{}' > "$hf"
-      prev="$(jq -r '.state // "unknown"' "$hf" 2>/dev/null)"
-      retries=$(read_field "$hf" retries 0)
-      last_retry=$(read_field "$hf" last_retry_at 0)
-      since=$(read_field "$hf" since 0)
-      prev_fp=$(read_field "$hf" fp "")
-      prev_tok=$(read_field "$hf" tok "")
-      fp_since=$(read_field "$hf" fp_since 0)
-      nudge_fp=$(read_field "$hf" nudge_fp "")
-      nudge_count=$(read_field "$hf" nudge_count 0)
-      last_nudge=$(read_field "$hf" last_nudge_at 0)
+      # One jq per role per scan, not one per field. \037 is not IFS whitespace,
+      # so an empty field (fp, tok, nudge_fp) keeps its position; on a jq failure
+      # read assigns every name empty and the numeric defaults below apply.
+      IFS=$'\037' read -r prev retries last_retry since prev_fp prev_tok fp_since nudge_fp nudge_count last_nudge < <(
+        jq -r '[(.state // "unknown"), (.retries // 0), (.last_retry_at // 0), (.since // 0),
+                (.fp // ""), (.tok // ""), (.fp_since // 0), (.nudge_fp // ""),
+                (.nudge_count // 0), (.last_nudge_at // 0)] | map(tostring) | join("\u001f")' "$hf" 2>/dev/null)
+      retries="${retries:-0}"; last_retry="${last_retry:-0}"; since="${since:-0}"
+      fp_since="${fp_since:-0}"; nudge_count="${nudge_count:-0}"; last_nudge="${last_nudge:-0}"
       nowts=$(now)
 
       # Recover from a prior awaiting-input the moment the prompt clears (a human
@@ -447,6 +530,9 @@ scan_once() {
       if [ "$state" != "awaiting-input" ] && { [ "$prev" = "awaiting-input" ] || [ "$prev" = "awaiting-input-esc" ]; }; then
         echo "$(iso "$nowts") [$name] RECOVERED-AWAIT (interactive prompt cleared)" >> "$af"
         rm -f "$health_dir/awaiting-$name.md" 2>/dev/null || true
+        # Reset the escalation count (an empty file reads as none), so the next blocked
+        # prompt starts at escalation 1 after AWAIT_OPERATOR_SEC.
+        [ -f "$health_dir/$name.await-esc" ] && : > "$health_dir/$name.await-esc"
         # Only an ESCALATED wait was announced outside, so only that gets a recovery notice.
         [ "$prev" = "awaiting-input-esc" ] && status_hook operator-answered "$name" "the interactive prompt cleared; work resumes"
       fi
@@ -454,7 +540,10 @@ scan_once() {
       # USAGE-RECOVERED, confirmed. Leaving stalled-usage is not proof of recovery: each
       # "try again" makes the pane busy for a scan before the dialog re-opens, so one
       # outage leaves and re-enters the state many times. Report recovery only after the
-      # role has stayed OFF the dialog for USAGE_RECOVERED_CONFIRM_SEC (marker file).
+      # role has stayed OFF the dialog for USAGE_RECOVERED_CONFIRM_SEC (marker file), and
+      # wake the orchestrator from here. The wake used to fire only when a role went from
+      # the dialog straight to an idle prompt; a recovering role is busy on its first scan
+      # (it resumes its turn), so with default settings the wake almost never fired.
       _urf="$health_dir/$name.usage-left"
       if [ "$state" = "stalled-usage" ]; then
         rm -f "$_urf" 2>/dev/null || true
@@ -467,13 +556,14 @@ scan_once() {
           rm -f "$_urf" 2>/dev/null || true
           echo "$(iso "$nowts") [$name] USAGE-RECOVERED (off the usage dialog for ${USAGE_RECOVERED_CONFIRM_SEC:-600}s)" >> "$af"
           status_hook usage-recovered "$name" "working again; the usage limit dialog has stayed clear for $(( ${USAGE_RECOVERED_CONFIRM_SEC:-600} / 60 )) minutes"
+          usage_wake_orchestrator "$name" "$af"
         fi
       fi
 
       # --- E. USAGE-STALL path (parked on the usage-limit dialog) ------------
       # Auto-recoverable: Escape dismisses the modal, "try again" resumes the
       # aborted turn once usage returns. Retried indefinitely on a flat cadence
-      # (see header); pushed to the operator ONCE on entry.
+      # (see header); the operator is notified ONCE on entry.
       if [ "$state" = "stalled-usage" ]; then
         if [ "$prev" != "stalled-usage" ]; then
           # A retry attempt makes the pane busy for a scan or two before the
@@ -620,40 +710,57 @@ scan_once() {
 
       # --- D. AWAITING-INPUT path (blocked on an interactive operator prompt) -
       # A selection menu / confirmation is on screen: the session is blocked
-      # until a human answers and nothing in the run proceeds. There is NO
-      # automated recovery (only a human can answer), so once it has waited past
-      # await_operator_sec we escalate ONCE: write a marker file an external
-      # watcher (the laptop observer) can see, and push the operator.
-      # Re-armed by the RECOVERED-AWAIT cleanup above when the prompt clears.
+      # until someone answers and nothing it owns proceeds. The watchdog never
+      # answers it. Once it has waited past await_operator_sec we escalate: write
+      # a marker file an external watcher can see, tell the orchestrator on the
+      # bus, notify the operator; then again at the AWAIT_ESC_STEPS gaps while
+      # it stays blocked. Re-armed by the RECOVERED-AWAIT cleanup above.
       if [ "$state" = "awaiting-input" ] && [ "$await_disabled" != 1 ]; then
+        # Escalation ladder. A per-role file holds "<escalations> <epoch of the last>";
+        # the first escalation is due AWAIT_OPERATOR_SEC after `since`, each later one
+        # the next AWAIT_ESC_STEPS gap after the previous one. A new blocked prompt
+        # starts from zero whatever an earlier one left behind.
+        _escf="$health_dir/$name.await-esc"
         if [ "$prev" != "awaiting-input" ] && [ "$prev" != "awaiting-input-esc" ]; then
           since=$nowts
+          [ -s "$_escf" ] && : > "$_escf"
           echo "$(iso "$nowts") [$name] AWAITING-INPUT (blocked on interactive prompt)" >> "$af"
         fi
         [ "$since" -eq 0 ] && since=$nowts
         waited=$((nowts - since))
-        if [ "$prev" != "awaiting-input-esc" ] && [ "$waited" -ge "$await_operator_sec" ]; then
-          mins=$((waited / 60))
+        _esc_n=0; _esc_last=0
+        [ -s "$_escf" ] && read -r _esc_n _esc_last < "$_escf" 2>/dev/null
+        case "$_esc_n" in ''|*[!0-9]*) _esc_n=0 ;; esac
+        case "$_esc_last" in ''|*[!0-9]*) _esc_last=0 ;; esac
+        if [ "$_esc_n" -eq 0 ]; then _due=$((since + await_operator_sec))
+        else _due=$((_esc_last + $(await_next_gap "$_esc_n"))); fi
+        if [ "$nowts" -ge "$_due" ]; then
+          mins=$((waited / 60)); _esc_n=$((_esc_n + 1))
           marker="$health_dir/awaiting-$name.md"
           {
-            echo "# Operator decision needed — role '$name' blocked ${mins}m"
+            echo "# Decision needed: role '$name' blocked ${mins}m (escalation $_esc_n)"
             echo
             echo "_$(iso "$nowts")_ — '$name' is waiting on an interactive prompt"
-            echo "(selection menu / confirmation). Nothing in the run proceeds"
-            echo "until a human answers. Attach: TEAM_RUN_ID=${TEAM_RUN_ID:-legacy} bin/attach.sh"
+            echo "(selection menu / confirmation). Nothing it owns proceeds until"
+            echo "someone answers. Attach: ${TEAM_RUN_ID:+TEAM_RUN_ID=$TEAM_RUN_ID }bin/attach.sh"
             echo
             echo '```'
             printf '%s\n' "$visible" | tail -20
             echo '```'
           } > "$marker" 2>/dev/null || true
-          echo "$(iso "$nowts") [$name] AWAITING-INPUT-ESCALATED (blocked ${mins}m; marker=$marker)" >> "$af"
-          status_hook awaiting-operator "$name" "blocked ${mins}m on an interactive prompt that only its operator can answer; nothing it owns proceeds until then"
-          notify_operator action "role blocked: $name" "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' blocked ${mins}m on an interactive prompt; operator decision needed (see $marker)"
+          echo "$(iso "$nowts") [$name] AWAITING-INPUT-ESCALATED #$_esc_n (blocked ${mins}m; marker=$marker)" >> "$af"
+          # The orchestrator first: it can often answer or re-route without a human.
+          # Never told about itself. Then the operator, as before; notify.sh dedupes an
+          # action by subject (NOTIFY_ACTION_COOLDOWN_SEC), so repeats reach the phone
+          # at most once per cooldown and are logged otherwise.
+          [ "$name" != "orchestrator" ] && await_tell_orchestrator "$name" "$mins" "$_esc_n" "$marker" "$af"
+          [ "$_esc_n" -eq 1 ] && status_hook awaiting-operator "$name" "blocked ${mins}m on an interactive prompt that only its operator can answer; nothing it owns proceeds until then"
+          notify_operator action "role blocked: $name" "[orchestrator/${TEAM_RUN_ID:-legacy}] role '$name' blocked ${mins}m on an interactive prompt (escalation $_esc_n); decision needed (see $marker)"
+          printf '%s %s\n' "$_esc_n" "$nowts" > "$_escf" 2>/dev/null || true
           persist "$hf" "awaiting-input-esc" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
           continue
         fi
-        # Not yet past threshold, or already escalated: hold state (do not
-        # downgrade an -esc back to awaiting-input, or it would re-escalate).
+        # Not yet due: hold state (an -esc stays -esc between escalations).
         newstate="awaiting-input"; [ "$prev" = "awaiting-input-esc" ] && newstate="awaiting-input-esc"
         persist "$hf" "$newstate" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$last_nudge"
         continue
@@ -681,8 +788,10 @@ scan_once() {
         #              the pane logic: a hung tool call is still caught.
         #   unknown -> no transcript behind the pane (test fixture, other CLI):
         #              pane-only, as before.
+        # Resolve the transcript HERE, not inside the $(...) below: a subshell's
+        # rt_subdir is lost, and subagents_progressing would resolve it again.
         rt_jsonl=""; rt_subdir=""
-        tstate="$(transcript_turn_state "$wid")"
+        role_transcript "$wid" && tstate="$(transcript_turn_state "$wid")" || tstate=unknown
         if [ "$tstate" = "closed" ]; then
           # Keep the frozen clock running across the veto so the misread leaves a
           # trail: one STUCK-VETO line per threshold window while it lasts.
@@ -731,7 +840,7 @@ scan_once() {
             # First give-up: log + ask the orchestrator to retire+respawn. This is
             # AUTOMATED recovery, so NO operator push yet.
             echo "$(iso "$nowts") [$name] STUCK-GIVEUP (nudge ineffective, frozen ${mins}m); asked orchestrator to retire+respawn" >> "$af"
-            escalate_stuck "$name" "$mins"
+            escalate_stuck "$name" "$mins" "$nudge_count"
             persist "$hf" "stuck-giveup" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$nudge_fp" "$nudge_count" "$nowts"
             continue
           fi
@@ -754,7 +863,7 @@ scan_once() {
         nudge_count=$((nudge_count + 1))
         if [ "$nudge_count" -gt "$stuck_max_nudges" ]; then
           echo "$(iso "$nowts") [$name] STUCK-GIVEUP after $((nudge_count-1)) nudges (frozen ${mins}m)" >> "$af"
-          escalate_stuck "$name" "$mins"
+          escalate_stuck "$name" "$mins" "$((nudge_count - 1))"
           persist "$hf" "stuck-giveup" "$retries" "$last_retry" "$since" "$fp" "$fp_since" "$fp" "$nudge_count" "$nowts"
           continue
         fi
@@ -779,31 +888,12 @@ scan_once() {
         # still-live outage (this branch cannot tell a real recovery from
         # one), and clearing them here would defeat the dedupe on the next
         # oscillation. Stale markers only delay a brand-new outage's first
-        # push/nudge by their window, which is acceptable.
-        #
-        # Wake the orchestrator: after a long outage every parked WORKER
-        # resumes its own aborted turn via the usage path, but an orchestrator
-        # that was IDLE when usage ran out has no turn to resume, so nothing
-        # re-dispatched work and a recovered team sat idle until a human
-        # noticed (observed: 13h overnight, 2026-07-10). One deduped nudge per
-        # USAGE_WAKE_DEDUPE_SEC across the team; skipped while the
-        # orchestrator is itself usage-stalled (its modal would swallow the
-        # typed keys, and its own recovery path resumes it anyway). This
-        # branch can fire during a still-live outage (see above), in which
-        # case the nudged orchestrator just re-enters the usage path — a
-        # wasted turn an hour, not a hazard.
-        if [ "$name" != "orchestrator" ]; then
-          _owf="$health_dir/orchestrator.usage-wake"
-          _owlast=$(cat "$_owf" 2>/dev/null || echo 0)
-          case "$_owlast" in ''|*[!0-9]*) _owlast=0;; esac
-          _ostate="$(jq -r '.state // "unknown"' "$health_dir/orchestrator.json" 2>/dev/null)"
-          if [ "$_ostate" != "stalled-usage" ] && [ $((nowts - _owlast)) -ge "${USAGE_WAKE_DEDUPE_SEC:-3600}" ]; then
-            tmux_submit "$TEAM_SESSION:orchestrator" "[watchdog] role '$name' just recovered from a usage-limit stall; the usage outage may be over. Check $TEAM_DIR/health/, re-read the ledger, reconcile unit statuses against what is actually committed, and re-dispatch anything in flight."
-            echo "$nowts" > "$_owf"
-            echo "$(iso "$nowts") [$name] USAGE-WAKE sent to orchestrator" >> "$af"
-          fi
-        fi
-      elif [ "$prev" = "stalled-api" ] || [ "$prev" = "give-up" ]; then
+        # push/nudge by their window, which is acceptable. The orchestrator
+        # wake is sent from the confirmed-recovery check above, not here.
+      elif [ "$busy" = 0 ] && { [ "$prev" = "stalled-api" ] || [ "$prev" = "give-up" ]; }; then
+        # busy = 0: with STUCK_WATCHDOG_DISABLED=1 the busy blip after a retry
+        # lands here instead of the B path; it is not a recovery, and clearing
+        # the episode marker on it made give-up unreachable.
         echo "$(iso "$nowts") [$name] RECOVERED after $retries retries" >> "$af"
         # No push: recovery is not actionable. Logged only. A genuine recovery
         # (idle prompt, no error in the tail) ends the api-stall episode; a
@@ -825,11 +915,7 @@ scan_once() {
 # pane as healthy-idle for hours (the failure class behind the compaction probe
 # going blind on the 2.1.170 upgrade). Best-effort, one shot, never blocks start.
 canary() {
-  if [ -z "$pattern_regex" ]; then
-    echo "api-watchdog CANARY-FAIL: empty stall-pattern regex; stall detection is OFF"
-    notify "🔴 [api-watchdog/${TEAM_RUN_ID:-legacy}] CANARY: no stall patterns loaded; stall detection OFF"
-    return
-  fi
+  # (An empty pattern_regex never reaches here: startup exits 2 on it.)
   tmux has-session -t "$TEAM_SESSION" 2>/dev/null || { echo "api-watchdog canary: no session yet; deferred"; return; }
   # At a cold start the watchdog races the first Claude Code TUI render: the
   # session/window exists but its pane captures empty for a few seconds. A
@@ -842,7 +928,8 @@ canary() {
       txt="$(tmux capture-pane -t "$wid" -p 2>/dev/null)"
       [ -n "$txt" ] && break
     fi
-    [ "$attempt" = 6 ] || sleep 10
+    # Lock fd closed in the sleep: see the main loop below.
+    [ "$attempt" = 6 ] || { sleep 10 200>&- & wait "$!"; }
   done
   if [ -z "${wid:-}" ]; then echo "api-watchdog canary: no windows yet; deferred"; return; fi
   if [ -z "${txt:-}" ]; then
@@ -861,15 +948,25 @@ canary() {
   fi
 }
 
-echo "api-watchdog: starting team=$TEAM_SESSION run=${TEAM_RUN_ID:-legacy} interval=${interval}s max-retries=$max_retries stuck=$([ "$stuck_disabled" = 1 ] && echo off || echo "${stuck_threshold}s/${stuck_max_nudges}nudges") await=$([ "$await_disabled" = 1 ] && echo off || echo "${await_operator_sec}s") ntfy=${NTFY_URL:-<unset>}"
+echo "api-watchdog: starting team=$TEAM_SESSION run=${TEAM_RUN_ID:-legacy} interval=${interval}s max-retries=$max_retries stuck=$([ "$stuck_disabled" = 1 ] && echo off || echo "${stuck_threshold}s/${stuck_max_nudges}nudges") await=$([ "$await_disabled" = 1 ] && echo off || echo "${await_operator_sec}s") ntfy=$([ -n "${NTFY_URL:-}" ] && echo set || echo unset)"
+# (The topic URL is a secret: the log says only whether it is set.)
 if [ "$once" = 1 ]; then
   scan_once; exit 0
 fi
 canary
-trap 'echo "api-watchdog: stopping"; exit 0' TERM INT
+# The loop's sleep runs in the background with the lock fd 200 closed, and the loop
+# waits on it. A foreground sleep held off the TERM trap until it ended (bash runs a
+# trap only between commands), and it inherited fd 200: after a kill the orphaned
+# sleep kept the flock for up to $interval, so a relaunch in that window exited
+# "already running". The trap also ends the sleep, so nothing outlives the daemon.
+_sleep_pid=""
+trap 'echo "api-watchdog: stopping"; [ -n "$_sleep_pid" ] && kill "$_sleep_pid" 2>/dev/null; exit 0' TERM INT
 while true; do
   scan_once
   # Reload if this daemon's own source changed on disk (debounced + bash -n gated).
   self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
-  sleep "$interval"
+  sleep "$interval" 200>&- & _sleep_pid=$!
+  # Cleared once it returns, so a TERM that arrives during the next scan never
+  # signals a finished (and possibly reused) pid.
+  wait "$_sleep_pid" 2>/dev/null; _sleep_pid=""
 done

@@ -15,7 +15,7 @@
 #     verbatim; hallucinated headers are rejected ops.
 #   - Never destroys raw evidence: removed content is appended verbatim to the
 #     greppable archives (state-archive.md, DECISIONS-archive.md, dreams/archive/)
-#     BEFORE any swap; swaps are atomic with a lost-update guard.
+#     and verified BEFORE any swap; swaps are atomic with a lost-update guard.
 #   - Open/fresh content is protected mechanically: no op may touch a section
 #     younger than DREAMER_FRESH_HOURS or without a derivable date.
 #   - Quiescence-gated: refuses to run unless every roster role is idle
@@ -46,6 +46,8 @@
 #   DREAMER_CALL_TIMEOUT=1200 max seconds per model call
 #   DREAMER_FRESH_HOURS=48    sections younger than this are untouchable
 #   DREAMER_MAX_CALLS=12      hard cap on model calls per run
+#   DREAMER_MIN_ELIGIBLE_LINES=40  below this many lines in old-enough sections, a
+#                             ledger pass makes no model call (converged)
 #   DREAMER_MEMORY_DIR=       path to the durable memory bank (optional)
 #   DREAMER_CLAUDE_BIN=claude model CLI (tests point this at a stub)
 #   DREAMER_ACTIVITY_CMD=     override role-activity command (tests)
@@ -65,7 +67,7 @@ while [ $# -gt 0 ]; do
     --report-only|--dry-run) report_only=1 ;;
     --force) force=1 ;;
     --artifact) shift; only_artifact="${1:-}" ;;
-    -h|--help) sed -n '2,60p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,57p' "$0"; exit 0 ;;
     *) echo "dreamer: unknown flag $1" >&2; exit 2 ;;
   esac
   shift
@@ -167,10 +169,10 @@ run_model() {
 # Common preamble for every consolidation prompt: the safety rules the model
 # must follow. The applier enforces the mechanical ones regardless.
 prompt_rules() {
-  cat <<'EOF'
+  cat <<EOF
 You are the nightly memory consolidator ("dreamer") for a team of AI agents.
 You rewrite the SETTLED PAST of a ledger smaller and truer. Hard rules:
-- NEVER touch open/unresolved items or anything from the last 48 hours; when
+- NEVER touch open/unresolved items or anything from the last ${fresh_hours} hours; when
   unsure whether something is settled, leave it alone.
 - Keep ALL information: collapse a chain of superseded entries to its TERMINAL
   state plus a one-line provenance note; do not drop facts that are not
@@ -230,7 +232,7 @@ consolidate_ledger() {
     echo "The file below is '$label' ($(basename "$src")). Sections start at '##'/'###' lines."
     echo "Collapse settled derive/challenge/re-derive chains and resolved sagas to"
     echo "their terminal state; ARCHIVE fully superseded dead weight. Sections from"
-    echo "the last 48h and undated sections are protected (ops on them are rejected)."
+    echo "the last ${fresh_hours}h and undated sections are protected (ops on them are rejected)."
     echo
     ops_protocol_help
     echo
@@ -252,7 +254,20 @@ consolidate_ledger() {
   rm -rf "$opsdir"
   nops="$(dream_parse_ops "$ofile" "$opsdir" 2>>"$dreams/dreamer.log")"
   if [ -z "$nops" ] || [ "$nops" -eq 0 ]; then
-    log "- $label: no valid ops parsed; untouched"
+    # Neither case is "nothing to do" (the model says that with <<<DREAM-NO-OPS>>>, handled
+    # above), and one message for both read as a quiet success: either the output carries no
+    # COLLAPSE/ARCHIVE marker at all (the model did not follow the protocol; dream_parse_ops
+    # writes nothing then), or every op block was malformed and dropped (dream_parse_ops names
+    # each one in dreamer.log). grep -c prints 0 AND exits 1 on no match: keep the printed count.
+    local markers
+    markers="$(grep -cE '^<<<DREAM-OP (COLLAPSE|ARCHIVE)>>>' "$ofile" 2>/dev/null)"
+    case "$markers" in ''|*[!0-9]*) markers=0 ;; esac
+    if [ "$markers" -eq 0 ]; then
+      log "- $label: PROBLEM: model output has no COLLAPSE/ARCHIVE op marker ($(wc -c < "$ofile") bytes, model=$model); the response did not follow the protocol; untouched. First 200 bytes:"
+      log "    $(head -c 200 "$ofile" | tr '\n' ' ' | sed 's/[[:space:]]\{1,\}/ /g')"
+    else
+      log "- $label: PROBLEM: $markers op block(s) emitted, all malformed and dropped (per-op reason in dreams/dreamer.log); untouched"
+    fi
     return 0
   fi
 
@@ -265,7 +280,8 @@ consolidate_ledger() {
 
   local old_sz new_sz
   old_sz="$(stat -c%s "$src")"; new_sz="$(stat -c%s "$newf")"
-  log "- $label: ops=$nops applied, $old_sz -> $new_sz bytes"
+  # Not "applied" yet: the archive write and the swap below can still refuse.
+  log "- $label: ops=$nops parsed into a candidate, $old_sz -> $new_sz bytes"
   [ -s "$rej" ] && { log "  rejected ops:"; sed 's/^/    /' "$rej" >> "$report"; }
 
   # Full diff into the archive dir; capped excerpt into the report.
@@ -283,15 +299,19 @@ consolidate_ledger() {
   # Archive FIRST (both the greppable ledger archive and the dated dream
   # archive), then swap with the lost-update guard.
   cp "$src" "$arch_dir/$(basename "$src").pre"
-  {
-    echo
-    echo "===== dreamed $(dream_iso) from $(basename "$src") ====="
-    cat "$archf"
-  } >> "$archive_target"
+  # The removal is safe only once the archive verifiably holds the removed sections. An
+  # unchecked append that failed (full disk, quota, unwritable target) still let the swap take
+  # them out of the only greppable file that held them. On failure the pass stops here.
+  if ! { echo; echo "===== dreamed $(dream_iso) from $(basename "$src") ====="; cat "$archf"; } \
+         2>>"$dreams/dreamer.log" >> "$archive_target" \
+     || ! dream_archive_verified "$archive_target" "$archf"; then
+    log "  ARCHIVE WRITE/VERIFY FAILED ($(basename "$archive_target")); pass aborted, nothing applied, live file untouched"
+    return 0
+  fi
   if dream_swap "$src" "$newf" "$ref"; then
-    log "  swapped; originals in $(basename "$archive_target") + $arch_dir/"
+    log "  applied: ops=$nops, $old_sz -> $new_sz bytes; swapped; originals in $(basename "$archive_target") + $arch_dir/"
   else
-    log "  SWAP REFUSED (file changed mid-run); no live change, archive block already appended"
+    log "  SWAP REFUSED (file changed mid-run); nothing applied, archive block already appended"
   fi
 }
 
@@ -343,7 +363,7 @@ consolidate_observer() {
   awk '
     /^=== / { d = substr($2,1,10) }
     /^HEADLINE:/ { key = d "|" $0; if (!(key in seen)) { seen[key]=1; print d "\t" $0 } }
-    /^5\) FLAGS:|^FLAGS:/ { if ($0 !~ /none/) { key = d "|F|" $0; if (!(key in seen)) { seen[key]=1; print d "\tFLAG " $0 } } }
+    /^[0-9]+\) FLAGS:|^FLAGS:/ { if ($0 !~ /none/) { key = d "|F|" $0; if (!(key in seen)) { seen[key]=1; print d "\tFLAG " $0 } } }
   ' "$oldf" > "$mat"
 
   local dfile="$tmp/obs.digest"
@@ -435,6 +455,12 @@ consolidate_observer() {
 consolidate_reports() {
   local rdir="$TEAM_DIR/reports"
   [ -d "$rdir" ] || { log "- reports: no dir, skipped"; return 0; }
+  # reports/ usually exists for its .log files alone; an index of nothing is not worth a model call.
+  local f n_md=0
+  for f in "$rdir"/*.md; do
+    [ -f "$f" ] && [ "$(basename "$f")" != "INDEX.md" ] && n_md=$((n_md+1))
+  done
+  [ "$n_md" -gt 0 ] || { log "- reports: no .md reports, skipped"; return 0; }
   local pfile="$tmp/reports.prompt" ofile="$tmp/reports.out" idxf="$rdir/INDEX.md"
   {
     prompt_rules
@@ -575,11 +601,13 @@ consolidate_bank() {
     kind="$(cat "$blocks/$i.kind")"; path="$(cat "$blocks/$i.path")"; content="$blocks/$i.content"
     if [ ! -s "$content" ]; then i=$((i+1)); continue; fi
     if [ "$kind" = "propose" ]; then
-      mkdir -p "$dreams/proposed"
-      local slug
+      # dreams/proposed/ is what the orchestrator reviews; --report-only keeps it under $staged.
+      local slug pdir="$dreams/proposed"
+      [ "$report_only" -eq 1 ] && pdir="$staged/proposed"
+      mkdir -p "$pdir"
       slug="$(printf '%s' "$path" | tr -cs 'A-Za-z0-9' '-' | cut -c1-60)"
-      cp "$content" "$dreams/proposed/$stamp-$slug.md"
-      log "- bank: PROPOSAL staged: dreams/proposed/$stamp-$slug.md ($path)"
+      cp "$content" "$pdir/$stamp-$slug.md"
+      log "- bank: PROPOSAL staged: ${pdir#"$TEAM_DIR"/}/$stamp-$slug.md ($path)"
       proposed=$((proposed+1))
     else
       # Filenames only: reject traversal or non-markdown targets.

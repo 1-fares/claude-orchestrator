@@ -20,7 +20,10 @@ ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
 bad() { fail=$((fail+1)); printf '  FAIL %s\n' "$1"; }
 check() { if [ "$2" -eq 0 ]; then ok "$1"; else bad "$1"; fi; }
 
+# The attachments root is GH_ATTACHMENTS_DIR (default $HOME/scratch/gh-attachments, where
+# bin/gh-attachments.sh writes): pinned to the fixture, so an --apply run never expires real files.
 janitor() {
+  GH_ATTACHMENTS_DIR="$TEAM_DIR/attachments" \
   NJ_BUS_DIR="$bus" NJ_KEEP_BAKS=2 NJ_ATTACH_DAYS=7 NJ_ARCHIVE_DAYS=30 \
   NJ_BUS_KEEP_DAYS=7 NJ_BUS_LOG_MAX=1000 NJ_BUS_KEEP_LINES=5 \
   "$repo/bin/night-janitor.sh" "$@" 2>&1
@@ -37,6 +40,13 @@ touch -d '20 days ago' "$TEAM_DIR/attachments/old.mp4"
 mkdir -p "$TEAM_DIR/dreams/archive/20260501-0200"
 echo x > "$TEAM_DIR/dreams/archive/20260501-0200/f"
 touch -d '60 days ago' "$TEAM_DIR/dreams/archive/20260501-0200"
+# dreams/archive/janitor/: one gz past NJ_ARCHIVE_DAYS, one inside it. Writing them leaves the
+# directory's own mtime fresh, the state every nightly thinning leaves it in.
+mkdir -p "$TEAM_DIR/dreams/archive/janitor"
+echo oldgz > "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20250101-000000.gz"
+echo newgz > "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20260520-000000.gz"
+touch -d '40 days ago' "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20250101-000000.gz"
+touch -d '5 days ago' "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20260520-000000.gz"
 echo keepme > "$bus/spill/new-spill"
 echo oldspill > "$bus/spill/old-spill"
 touch -d '30 days ago' "$bus/spill/old-spill"
@@ -48,11 +58,16 @@ check "dry-run: mentions bak thinning" "$(grep -q 'bak: gzip+move' <<<"$out"; ec
 check "dry-run: baks still present" "$([ "$(ls "$TEAM_DIR"/state.md.bak-* | wc -l)" -eq 4 ]; echo $?)"
 check "dry-run: old attachment kept" "$([ -f "$TEAM_DIR/attachments/old.mp4" ]; echo $?)"
 check "dry-run: bus log untouched" "$([ "$(wc -l < "$bus/messages.log")" -eq 200 ]; echo $?)"
+check "dry-run: lists the aged janitor gz" "$(grep -q 'dream-archive: expire state.md.bak-20250101-000000.gz' <<<"$out"; echo $?)"
+check "dry-run: aged janitor gz still present" "$([ -f "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20250101-000000.gz" ]; echo $?)"
 
 # --- apply ---------------------------------------------------------------
 out="$(janitor --apply)"
 check "apply: 2 newest baks kept" "$([ "$(ls "$TEAM_DIR"/state.md.bak-* | wc -l)" -eq 2 ]; echo $?)"
-check "apply: old baks archived gz" "$([ "$(ls "$TEAM_DIR"/dreams/archive/janitor/*.gz | wc -l)" -eq 2 ]; echo $?)"
+check "apply: old baks archived gz" "$([ -f "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20260601-000000.gz" ] && [ -f "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20260602-000000.gz" ]; echo $?)"
+check "apply: janitor gz past NJ_ARCHIVE_DAYS expired by its own age" "$([ ! -e "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20250101-000000.gz" ]; echo $?)"
+check "apply: janitor gz inside NJ_ARCHIVE_DAYS kept" "$([ -f "$TEAM_DIR/dreams/archive/janitor/state.md.bak-20260520-000000.gz" ]; echo $?)"
+check "apply: janitor/ itself kept" "$([ -d "$TEAM_DIR/dreams/archive/janitor" ]; echo $?)"
 check "apply: old attachment deleted" "$([ ! -f "$TEAM_DIR/attachments/old.mp4" ]; echo $?)"
 check "apply: new attachment kept" "$([ -f "$TEAM_DIR/attachments/new.png" ]; echo $?)"
 check "apply: old dream-archive dir expired" "$([ ! -d "$TEAM_DIR/dreams/archive/20260501-0200" ]; echo $?)"

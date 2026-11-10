@@ -11,9 +11,15 @@
 # Section model: a section starts at a line matching ^## or ^###, and runs to
 # the line before the next such header. Lines before the first header are the
 # prelude (never touched). A section's date comes from a YYYY-MM-DD in its
-# header, else it inherits the most recent date seen in an earlier header
-# (DECISIONS-style "### 20:07 - ..." entries under a dated parent); a section
-# with no derivable date is PROTECTED (no op may touch it).
+# header, else it inherits the date of its nearest enclosing header, i.e. the
+# nearest earlier header at a SHALLOWER level (DECISIONS-style "### 20:07 - ..."
+# entries under a dated "## <date>" parent). When that inherited date is
+# non-zero and a dated header appeared inside the enclosing section before
+# this one, the newer of the two dates applies (an undated note after a newer
+# dated addendum is as fresh as the addendum). A sibling or a shallower header
+# never lends its date on its own: an undated "## unit: x" after a dated
+# "## <date> ..." stays undated. A section with no derivable date is PROTECTED
+# (no op may touch it).
 #
 # Ops protocol (model output; anything outside op blocks is ignored):
 #   <<<DREAM-NO-OPS>>>                          nothing to consolidate
@@ -48,19 +54,36 @@ dream_sections_index() {
       if (hdr != "") printf "%d\t%d\t%s\t%s\n", start, end, date, hdr
       else if (end >= 1) printf "1\t%d\t0\t(prelude)\n", end
     }
-    BEGIN { hdr=""; start=1; date=0; ctx=0 }
+    # eff[L] = effective date of the open header at level L (its own date, else
+    # inherited, else 0); at[L] = its line number. A new header at level L
+    # closes every open header at L or deeper, then inherits from the nearest
+    # open header above it. lastd/lastat = own date and line of the most recent
+    # header that carried a date.
+    BEGIN { hdr=""; start=1; date=0; maxl=0; lastd=0; lastat=0 }
     /^##+ / {
       flush(NR-1)
       hdr=$0; start=NR
+      match($0, /^#+/); lvl = RLENGTH
+      if (lvl > maxl) maxl = lvl
+      for (k = lvl; k <= maxl; k++) { delete eff[k]; delete at[k] }
+      d = 0
       if (match($0, dre)) {
         ds = substr($0, RSTART, RLENGTH)
         cmd = "date -u -d \"" ds "\" +%s 2>/dev/null"
         ctxv = 0
         (cmd | getline ctxv)
         close(cmd)
-        if (ctxv > 0) ctx = ctxv
+        if (ctxv > 0) d = ctxv
       }
-      date = ctx
+      if (d > 0) { lastd = d; lastat = NR }
+      else for (k = lvl - 1; k >= 2; k--) if (k in eff) {
+        d = eff[k]
+        # A dated header inside the enclosing section, after it began, may be newer.
+        if (d > 0 && lastat > at[k] && lastd > d) d = lastd
+        break
+      }
+      eff[lvl] = d; at[lvl] = NR
+      date = d
       next
     }
     END { flush(NR) }
@@ -275,4 +298,14 @@ dream_swap() {
   fi
   chmod --reference="$src" "$newfile" 2>/dev/null || true
   mv -f "$newfile" "$src"
+}
+
+# dream_archive_verified <archive_target> <archive_block>
+# True when <archive_target> ends with <archive_block> byte for byte, i.e. the block
+# just appended is really there. An empty block is trivially held.
+dream_archive_verified() {
+  local target="$1" block="$2" n
+  n="$(stat -c%s "$block" 2>/dev/null)" || return 1
+  [ "$n" -eq 0 ] && return 0
+  tail -c "$n" "$target" 2>/dev/null | cmp -s - "$block"
 }

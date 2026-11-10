@@ -14,8 +14,8 @@
 # (window 0). Every fable session pays ~2x an opus one per token, so the
 # cheap-context discipline pays double on the fable workers — and a wedged worker
 # at the ceiling is as costly as a wedged orchestrator. The daemon now watches
-# window 0 (orchestrator) ALWAYS, plus every other window whose role runs fable
-# (per $TEAM_DIR/models/<role>). Targets are re-enumerated each cycle, so a role
+# window 0 (orchestrator) ALWAYS, plus every other window whose role runs the
+# top-tier model (role_is_top; per $TEAM_DIR/models/<role>). Targets are re-enumerated each cycle, so a role
 # spawned, retired, or re-modelled mid-run is picked up automatically. Per-target
 # state lives in bash associative arrays keyed by role name.
 #
@@ -31,16 +31,20 @@
 #
 # Choosing the RIGHT moment (two thresholds, agent-cooperative first):
 #   - At the per-role NUDGE pct the daemon does NOT force anything. It asks the
-#     session to compact ITSELF at its next safe checkpoint (after it has written
-#     its ledger/state, with no in-flight subagent). The agent knows a semantically
-#     safe point better than any pane heuristic can.
+#     session to report its next safe checkpoint (after it has written its
+#     ledger/state, with no subagent running) by creating a request file
+#     ($HEALTH_DIR/compact-request-<role>; the nudge gives the exact command). A
+#     session cannot run /compact itself (built-in commands are not available to
+#     the model), so the daemon sends /compact when it next finds the pane idle
+#     with the request present. The agent knows a semantically safe point better
+#     than any pane heuristic can.
 #   - At the per-role FORCE pct the daemon force-sends `/compact` as a backstop,
 #     with focus instructions to preserve task state. By the force pct auto-compact
 #     is imminent anyway, so a controlled forced compaction is the safer of two
 #     certainties.
 #
-# Per-role thresholds are model-aware (fable: nudge 70 / force 85; opus default
-# 80 / 90). The launch records each role's model in $TEAM_DIR/models/<role>
+# Per-role thresholds are model-aware (top tier, TEAM_MODEL_TOP or fable: nudge 70 /
+# force 85; any other model 80 / 90). The launch records each role's model in $TEAM_DIR/models/<role>
 # (team-spawn.sh); explicit COMPACT_*_PCT env always wins (global override).
 #
 # Both actions fire only at a genuine "good moment", per pane:
@@ -69,9 +73,11 @@
 # Env:
 #   COMPACT_WATCHDOG_DISABLED=1  do not run (exit 0)
 #   COMPACT_NUDGE_PCT            global override: ask to self-compact at/above this
-#                                (else per-role default: fable 70, opus 80)
+#                                (else per-role default: top tier 70, other 80)
 #   COMPACT_FORCE_PCT            global override: force /compact at/above this
-#                                (else per-role default: fable 85, opus 90)
+#                                (else per-role default: top tier 85, other 90)
+#   TEAM_MODEL_TOP               the top tier's model, as in bin/lib/team-spawn.sh model_for
+#                                (unset or empty: fable)
 #   COMPACT_THRESHOLD_PCT        legacy alias for COMPACT_NUDGE_PCT
 #   COMPACT_NUDGE_DEBOUNCE=600   min seconds between two cooperative nudges (per role)
 #   COMPACT_DEBOUNCE_SEC=900     min seconds between two forced compactions (per role)
@@ -85,7 +91,9 @@
 #   COMPACT_SESSION=<name>       team session; if unset, first orch-* on the socket
 #                               (engine passes $TEAM_SESSION). Window 0 = orchestrator.
 #   COMPACT_PROBE_WAIT=4         seconds to wait for /context output to render
-#   COMPACT_LOG=<path>           audit log (default ${TEAM_DIR:-.}/compaction-watchdog.log)
+#   COMPACT_LOG=<path>           audit log (default $TEAM_DIR/compaction-watchdog.log)
+#   TEAM_DIR                     required: the run's state directory (log, lock, pidfile,
+#                                health markers, model records). Unset: refuse to start.
 #   COMPACT_SETTINGS_FILE=<path> Claude Code settings read for autoCompactWindow
 #                                (default ~/.claude/settings.json; read on every probe)
 
@@ -105,12 +113,20 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fix takes effect without a restart. 2026-09-02: this daemon kept running 24 August
 # code for nine hours after the fix landed, because only api-watchdog reloaded itself.
 # shellcheck source=bin/lib/self-reload.sh
-. "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+. "$repo/bin/lib/self-reload.sh"
 self_reload_init "$0" "$repo/bin/lib/compaction-detect.sh" "$repo/bin/lib/tmux-submit.sh" "$repo/bin/lib/tmux-input.sh" "$repo/bin/lib/status-hook.sh" "$repo/bin/lib/self-reload.sh" "$repo/bin/lib/notify.sh"
+
+[ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && { echo "compaction-watchdog disabled"; exit 0; }
+# Every state path below (log, lock, pidfile, health markers, model records, temp files) lives under TEAM_DIR. A
+# fallback to the current directory would put run state wherever the daemon happened to start, where no reader looks.
+if [ -z "${TEAM_DIR:-}" ]; then
+  echo "compaction-watchdog: TEAM_DIR is not set; refusing to start (run state would land in $PWD)" >&2
+  exit 1
+fi
 
 SOCK="${COMPACT_SOCKET:-orchestrator}"
 SESSION="${COMPACT_SESSION:-}"
-MODELS_DIR="${TEAM_DIR:-.}/models"
+MODELS_DIR="$TEAM_DIR/models"
 # Global threshold overrides (per-role defaults resolved in resolve_thresholds).
 NUDGE_OVERRIDE="${COMPACT_NUDGE_PCT:-${COMPACT_THRESHOLD_PCT:-}}"
 FORCE_OVERRIDE="${COMPACT_FORCE_PCT:-}"
@@ -121,7 +137,7 @@ INTERVAL="${COMPACT_CHECK_INTERVAL:-180}"
 IDLE_SEC="${COMPACT_IDLE_SEC:-45}"
 PROBE_WAIT="${COMPACT_PROBE_WAIT:-4}"
 PRESERVE="${COMPACT_PRESERVE:-preserve verbatim the standing rules card (RULES-IN-FORCE.md) if present and the state.md unit table, then the current task state, open decisions and in-flight work}"
-LOG="${COMPACT_LOG:-${TEAM_DIR:-.}/compaction-watchdog.log}"
+LOG="${COMPACT_LOG:-$TEAM_DIR/compaction-watchdog.log}"
 # Ceiling guard (busy-agnostic). A near-full / wedged session renders the
 # warning/limit/failed strings in its pane even while busy; the idle-gated probe
 # below never sees them. We check every cycle and: force a compact on the warning
@@ -129,7 +145,7 @@ LOG="${COMPACT_LOG:-${TEAM_DIR:-.}/compaction-watchdog.log}"
 # operator marker (never a silent wedge) and, for the ORCHESTRATOR only, do a
 # /clear + rebrief once the state persists (the manual recovery, automated). A
 # worker at the unrecoverable ceiling is escalated to the orchestrator instead.
-HEALTH_DIR="${COMPACT_HEALTH_DIR:-${TEAM_DIR:-.}/health}"
+HEALTH_DIR="${COMPACT_HEALTH_DIR:-$TEAM_DIR/health}"
 # Back-compat: an explicit COMPACT_CEILING_MARKER overrides the orchestrator's
 # marker path only; workers always use the per-role default.
 ORCH_MARKER_OVERRIDE="${COMPACT_CEILING_MARKER:-}"
@@ -162,8 +178,6 @@ BUS_SINK="${COMPACT_BUS_SINK:-}"
 # How much of a transcript's end the jsonl probe reads (see probe_pct_from_jsonl).
 JSONL_TAIL_BYTES="${COMPACT_JSONL_TAIL_BYTES:-4194304}"
 
-[ "${COMPACT_WATCHDOG_DISABLED:-0}" = "1" ] && { echo "compaction-watchdog disabled"; exit 0; }
-
 # Per-team singleton via an exclusive flock UNDER TEAM_DIR. The old guard was a
 # global `pgrep bin/compaction-watchdog.sh` in the launchers: it could not tell
 # two teams apart, so a second team's (different TEAM_DIR) watchdog was wrongly
@@ -171,24 +185,51 @@ JSONL_TAIL_BYTES="${COMPACT_JSONL_TAIL_BYTES:-4194304}"
 # (kernel-released on death), so a duplicate -- which would double every /compact
 # and /context keystroke into a pane -- exits at birth. fd 200, NOT fd 9 (the
 # roster lock the daemon drops via 9>&-). The daemon then owns its pidfile.
-_COMPACT_LOCK="${COMPACT_LOCK:-${TEAM_DIR:-.}/compaction-watchdog.lock}"
+_COMPACT_LOCK="${COMPACT_LOCK:-$TEAM_DIR/compaction-watchdog.lock}"
+_COMPACT_PIDF="${COMPACT_PIDFILE:-$TEAM_DIR/compaction-watchdog.pid}"
+# The code version of the instance that owns the pidfile: the self-reload hash of this file and every lib it sources.
+_COMPACT_VERF="$_COMPACT_PIDF.version"
+# _compact_holder_same: exit 0 when the pidfile names a live compaction watchdog (not this process) that runs the same
+# code version as this one. A second start (bin/lib/team-spawn.sh ensure_team_daemons, on every launch, add-role and
+# orchestrator restart) then leaves at once: no second canary, no second set of keystrokes.
+_compact_holder_same() {
+  local p="" v=""
+  { read -r p < "$_COMPACT_PIDF"; read -r v < "$_COMPACT_VERF"; } 2>/dev/null
+  case "$p" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$p" != "$$" ] && kill -0 "$p" 2>/dev/null || return 1
+  grep -qa 'compaction-watchdog\.sh' "/proc/$p/cmdline" 2>/dev/null || return 1
+  [ -n "$v" ] && [ "$v" = "$_SR_BASELINE" ]
+}
 if command -v flock >/dev/null 2>&1 && exec 200>"$_COMPACT_LOCK"; then
   if ! flock -n 200; then
-    echo "compaction-watchdog already running (lock $_COMPACT_LOCK held); exiting"; exit 0
+    # Either way this start exits 0 before the canary: a holder on other code reloads itself (self_reload_check).
+    if _compact_holder_same; then
+      echo "compaction-watchdog already running (lock $_COMPACT_LOCK held, same code version); exiting"
+    else
+      echo "compaction-watchdog already running (lock $_COMPACT_LOCK held, other or unknown code version; it reloads itself on a code change); exiting"
+    fi
+    exit 0
   fi
+elif _compact_holder_same; then
+  echo "compaction-watchdog already running (no flock; pidfile $_COMPACT_PIDF names a live instance, same code version); exiting"; exit 0
 fi
-_COMPACT_PIDF="${COMPACT_PIDFILE:-${TEAM_DIR:-.}/compaction-watchdog.pid}"
 echo $$ > "$_COMPACT_PIDF" 2>/dev/null || true
-# On exit, also reap our children. The loop's `sleep $INTERVAL` is an external
-# child that INHERITS the flock fd; a bare SIGTERM kills this bash but orphans the
-# sleep (reparented to init), which keeps holding the lock for up to INTERVAL
-# seconds — long enough to block compaction-watchdog-ensure.sh from relaunching
-# (observed on the 2026-06-10 restart). pkill -P reaps it so the lock frees at
-# once. Trap TERM/INT explicitly so the EXIT trap runs on signal, not just on a
-# normal return.
+printf '%s\n' "$_SR_BASELINE" > "$_COMPACT_VERF" 2>/dev/null || true
+# On exit, also reap our children: the inter-pass sleep runs in the background (_interruptible_sleep), and pkill -P
+# ends it with the daemon. That sleep is started with the lock fd closed, so it never holds the flock; the lock is
+# released the moment this bash exits. Trap TERM/INT explicitly so the EXIT trap runs on signal, not just on a normal
+# return; `wait` is interrupted by a trapped signal, so a TERM during the sleep takes effect at once.
 _compact_cleanup() { rm -f "$_COMPACT_PIDF" 2>/dev/null; pkill -P $$ 2>/dev/null || true; }
 trap _compact_cleanup EXIT
 trap 'exit 0' TERM INT
+# _interruptible_sleep <seconds>: the inter-pass sleep. Bash runs a TERM/INT trap only after a FOREGROUND child returns,
+# so a foreground `sleep "$INTERVAL"` delayed a stop by up to INTERVAL seconds and, killed with -9 instead, left an
+# orphaned sleep that inherited fd 200 and held the lock until it ended. In the background with fd 200 closed, the
+# sleep never holds the lock, and `wait` returns as soon as a trapped signal arrives.
+_interruptible_sleep() {
+  sleep "$1" 200>&- &
+  wait "$!" 2>/dev/null
+}
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG"; }
 tmux_o() { tmux -L "$SOCK" "$@"; }
@@ -239,11 +280,33 @@ role_marker() {
 }
 role_blind_marker() { printf '%s/compaction-probe-blind-%s.md' "$HEALTH_DIR" "$1"; }
 
+# top_model: set TOP_M to the top tier's model, ${TEAM_MODEL_TOP:-fable} as model_for (bin/lib/team-spawn.sh) reads
+# it, an empty value counting as unset. The orchestrator's model record is not consulted: a per-role override such as
+# TEAM_MODEL_ORCHESTRATOR=opus would otherwise make every opus worker top tier.
+top_model() {
+  TOP_M="${TEAM_MODEL_TOP:-fable}"
+  TOP_M="${TOP_M//[[:space:]]/}"
+  case "$TOP_M" in ''|default) TOP_M=fable ;; esac
+}
+
+# role_is_top <role>: exit 0 when the role's model record names the top tier's model: the same alias or id, a full id
+# that contains the alias ("claude-fable-5-2" for fable), or an alias that a full-id top model contains. Read with
+# builtins only (no fork): it runs for every window on every cycle, so a role re-modelled mid-run is seen next cycle.
+role_is_top() {
+  local rec=""
+  [ -n "${1:-}" ] || return 1
+  { read -r rec < "$MODELS_DIR/$1"; } 2>/dev/null
+  rec="${rec//[[:space:]]/}"
+  case "$rec" in ''|default) return 1 ;; esac
+  top_model
+  [[ "$rec" == *"$TOP_M"* || "$TOP_M" == *"$rec"* ]]
+}
+
 # resolve_thresholds <role>: set NUDGE_R / FORCE_R for the role's model. Global
-# env override wins; else fable -> 70/85, anything else (opus) -> 80/90.
+# env override wins; else the top tier -> 70/85, any other model -> 80/90.
 resolve_thresholds() {
   local role="$1" dn=80 df=90
-  if grep -qs '^fable' "$MODELS_DIR/$role" 2>/dev/null; then dn=70; df=85; fi
+  if role_is_top "$role"; then dn=70; df=85; fi
   NUDGE_R="${NUDGE_OVERRIDE:-$dn}"
   FORCE_R="${FORCE_OVERRIDE:-$df}"
 }
@@ -339,7 +402,7 @@ rescale_pct() {
 # enumerate_targets: echo "<role> <target> <orchflag> <probeflag>" lines, one per
 # window. The window NAME is the role name. orchflag=1 for window 0 (the
 # orchestrator, autorecover-eligible), 0 otherwise. probeflag=1 (window 0 plus
-# every fable-model role per $TEAM_DIR/models/<role>) = full watch including the
+# every top-tier role, role_is_top) = full watch including the
 # /context probe; probeflag=0 (every other window) = ceiling guard ONLY. The
 # probe types keystrokes into the pane, so it stays limited to the panes whose
 # token cost justifies early compaction — but the ceiling guard is a passive
@@ -366,7 +429,7 @@ enumerate_targets() {
       printf '%s %s:%s 1 1\n' "$wname" "$sess" "$widx"
       continue
     fi
-    if grep -qs '^fable' "$MODELS_DIR/$wname" 2>/dev/null; then
+    if role_is_top "$wname"; then
       printf '%s %s:%s 0 1\n' "$wname" "$sess" "$widx"
     else
       printf '%s %s:%s 0 0\n' "$wname" "$sess" "$widx"
@@ -380,8 +443,8 @@ enumerate_targets() {
 # 16s)") or a "Press up to edit queued messages" hint (keystrokes are queueing)
 # WITHOUT "esc to interrupt" in the live rows. Treat all of these as busy so a
 # probe never types into a mid-turn pane — there /context queues instead of
-# rendering, which parses empty and (in the canary, which skips the IDLE_SEC gate)
-# raises a spurious probe-blind alarm (observed 2026-06-10). Still NOT gating on
+# rendering, which parses empty and (in the canary, which once skipped the IDLE_SEC gate)
+# raised a spurious probe-blind alarm (observed 2026-06-10). Still NOT gating on
 # "still running" (the persistent bus monitor, almost always present); the
 # IDLE_SEC gate already catches a changing spinner in the running loop.
 is_busy() {
@@ -420,7 +483,7 @@ probe_pct() {
   # moved from a parenthesised "(NN%)" to a "NN% context used" footer in 2.1.x;
   # see bin/lib/compaction-detect.sh.
   # Given a role, the result is restated against that role's auto-compact window
-  # (rescale_pct); without one (the canary only needs "parses or not") it is raw.
+  # (rescale_pct); without one it is raw.
   cap="$(tmux_o capture-pane -t "$t" -p -S -60 2>/dev/null)"
   raw="$(printf '%s\n' "$cap" | parse_context_pct)"
   rescale_pct "$raw" "$role" "$(printf '%s\n' "$cap" | context_denominator)"
@@ -436,16 +499,15 @@ pane_session() {
   local sess_file="$HOME/.claude/sessions/${pid}.json"
   [ -f "$sess_file" ] || return 1
   read -r sid proj_dir < <(python3 -c "
-import json,sys,os
+import json,sys,os,re
 d=json.load(open(sys.argv[1]))
 sid=d.get('sessionId','')
 cwd=d.get('cwd','')
 if cwd:
-    u=os.path.expanduser('~')
-    slug=cwd.replace('/','-').lstrip('-')
-    if cwd.startswith(u):
-        slug='-home-'+os.environ.get('USER',os.path.basename(u))+cwd[len(u):].replace('/','-')
-    proj_dir=os.path.join(u,'.claude','projects',slug)
+    # Claude Code names the project directory after the cwd with every character other than [A-Za-z0-9] replaced by
+    # '-' ('/x/.cache/a_b' -> '-x--cache-a-b'), wherever the cwd and the home directory are (as bin/api-watchdog.sh).
+    slug=re.sub(r'[^A-Za-z0-9]','-',cwd)
+    proj_dir=os.path.join(os.path.expanduser('~'),'.claude','projects',slug)
 else:
     proj_dir=''
 print(sid,proj_dir)
@@ -522,11 +584,17 @@ for line in reversed(tail.splitlines()):
   [ -n "$pct" ] && [ "$pct" -ge 0 ] 2>/dev/null && printf '%s' "$pct"
 }
 
-# Cooperative: ask a session to compact itself at its own safe checkpoint.
-# Plain text, no apostrophes (shell-quoting safety over send-keys).
+# role_compact_request <role>: the file a session creates to ask for /compact at its own safe checkpoint.
+role_compact_request() { printf '%s/compact-request-%s' "$HEALTH_DIR" "$1"; }
+
+# Cooperative: ask a session to report its own safe checkpoint. A session cannot run /compact itself (Claude Code does
+# not offer built-in commands such as /compact to the model), so the message names the one command it can run: create
+# the request file. process_target sends /compact when it next finds the pane idle with that file present.
+# Plain text, no apostrophes.
 do_nudge() {
-  local t="$1" pct="$2"
-  local msg="[compaction-watchdog] Context is at ${pct} percent. When you reach a safe checkpoint (ledger and state written, no in-flight subagent), please run /compact so the run stays in a cheap context. Finish the current step first; there is no rush."
+  local t="$1" pct="$2" role="${3:-}" req
+  req="$(role_compact_request "${role:-unknown}")"
+  local msg="[compaction-watchdog] Context is at ${pct} percent. Finish the current step first; there is no rush. When you reach a safe checkpoint (ledger and state written, no subagent running), run this shell command: touch \"${req}\" and end your turn. The watchdog then sends /compact to this pane once it is idle."
   # No C-u first: a cooperative nudge never wipes a draft; a box holding typed text is refused and logged.
   submit_o "$t" "$msg" 2>/dev/null || log "[$t] nudge not sent: ${TI_REFUSED:-not seen submitted}"
 }
@@ -560,7 +628,7 @@ compact_refused() {
 # those rather than summarising from memory. Workers have no such rebrief and are
 # escalated to the orchestrator instead (notify_orch_worker_wedged).
 orch_rebrief_text() {
-  local brief="You are the orchestrator, auto-recovered from a context-limit wedge (compaction could not reduce below the limit, so the watchdog /cleared you; your state is on disk). Re-join the bus: run python3 $repo/bin/bus-inbox.py status orchestrator; if it says reader=none, arm the reader with Bash run_in_background (python3 $repo/bin/bus-inbox.py wait orchestrator 7200), starting the listener first if it is dead (never /is c, never a Monitor on client.py). Then reconstruct the run from ./CLAUDE.md, ./roles/orchestrator.md, and ${TEAM_DIR:-.}/state.md (read the recent tail, including the decision-log). Resume from there; keep context lean (point to files, do not re-read everything, checkpoint+compact at task boundaries). Report status when re-oriented."
+  local brief="You are the orchestrator, auto-recovered from a context-limit wedge (compaction could not reduce below the limit, so the watchdog /cleared you; your state is on disk). Re-join the bus: run python3 $repo/bin/bus-inbox.py status orchestrator; if it says reader=none, arm the reader with Bash run_in_background (python3 $repo/bin/bus-inbox.py wait orchestrator 7200), starting the listener first if it is dead (never /is c, never a Monitor on client.py). Then reconstruct the run from ./CLAUDE.md, ./roles/orchestrator.md, and $TEAM_DIR/state.md (read the recent tail, including the decision-log). Resume from there; keep context lean (point to files, do not re-read everything, checkpoint+compact at task boundaries). Report status when re-oriented."
   printf '%s' "$brief"
 }
 
@@ -640,8 +708,8 @@ rebrief_tell() {
     printf '%s --to orchestrator %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$msg" >> "$BUS_SINK" 2>/dev/null || true
     log "clear-rebrief: notice written to the test sink $BUS_SINK"; return 0
   fi
-  if [ ! -f "${TEAM_DIR:-.}/state.md" ]; then
-    log "clear-rebrief: notice not sent, ${TEAM_DIR:-.} has no state.md (not a live team)"; return 0
+  if [ ! -f "$TEAM_DIR/state.md" ]; then
+    log "clear-rebrief: notice not sent, $TEAM_DIR has no state.md (not a live team)"; return 0
   fi
   if BUS_SEND_RETRY_S=0 timeout "$BUS_TIMEOUT" python3 "$BUS_SEND" --name compaction-watchdog --to orchestrator --text "$msg" </dev/null >/dev/null 2>&1; then
     log "clear-rebrief: orchestrator told on the bus"
@@ -829,8 +897,8 @@ blind_bus_notice() {
     log "[$role] BLIND-BUS: written to the test sink $BUS_SINK (${n} cycles)"
     return 0
   fi
-  if [ ! -f "${TEAM_DIR:-.}/state.md" ]; then
-    log "[$role] BLIND-BUS: not sent, ${TEAM_DIR:-.} has no state.md (not a live team; a test sets COMPACT_BUS_SINK) (${n} cycles)"
+  if [ ! -f "$TEAM_DIR/state.md" ]; then
+    log "[$role] BLIND-BUS: not sent, $TEAM_DIR has no state.md (not a live team; a test sets COMPACT_BUS_SINK) (${n} cycles)"
     return 0
   fi
   if BUS_SEND_RETRY_S=0 timeout "$BUS_TIMEOUT" python3 "$BUS_SEND" --name compaction-watchdog --to orchestrator --text "$msg" </dev/null >/dev/null 2>&1; then
@@ -842,6 +910,8 @@ blind_bus_notice() {
 
 # Per-role state (associative arrays keyed by role name).
 declare -A last_fp fp_since last_compact last_nudge last_recover ceiling_seen probe_fail probe_blind_alarmed force_count force_stuck_alarmed blind_since
+# The start-up canary is pending until process_target finds the orchestrator pane safe to probe (canary_verdict).
+CANARY_PENDING=1
 
 # process_target <role> <target> <orchflag> <probeflag>: one pass of the watch
 # logic for a single pane. probeflag=0 = ceiling guard only, no /context probe.
@@ -925,7 +995,7 @@ process_target() {
   # Ceiling-guard-only target (default-model worker): no /context probe.
   [ "$probe" = 1 ] || return
 
-  local _busy=0
+  local _busy=0 canary=0 src="" req
   is_busy "$txt" && _busy=1
 
   if [ "$fp" != "${last_fp[$role]:-}" ]; then
@@ -963,6 +1033,22 @@ process_target() {
       real) log "[$role] skip: real unsubmitted text on input line"; return ;;
     esac
 
+    # The session asked for /compact at its own safe checkpoint (do_nudge names the request file).
+    req="$(role_compact_request "$role")"
+    if [ -e "$req" ]; then
+      # Consumed first: a request that cannot be moved aside would otherwise send /compact on every idle cycle.
+      if mv -f "$req" "$req.done" 2>/dev/null; then
+        log "[$role] COMPACT-REQUEST: the session reported a safe checkpoint; sending /compact"
+        do_compact "$t"; last_compact[$role]=$nowt; last_fp[$role]=""
+        return
+      fi
+      log "[$role] COMPACT-REQUEST: $req cannot be moved aside; request ignored"
+    fi
+
+    # The start-up canary (CANARY_PENDING, orchestrator only) exists to check the /context parser, so it skips the
+    # transcript read and types /context, here behind the same idle, busy and input-line gates as every probe.
+    if [ "$is_orch" = 1 ] && [ "$CANARY_PENDING" = 1 ]; then canary=1; CANARY_PENDING=0; fi
+
     # Transcript-first probe (2026-09-10). Read the context % from the session's
     # transcript JSONL BEFORE falling back to /context. A /context probe injects a
     # ~17.9k-character user message (+8k tokens) into the probed session every time
@@ -970,13 +1056,15 @@ process_target() {
     # ~32k tokens an hour of monitoring overhead and drives compactions with no
     # operator traffic. The transcript read is a file read, no tmux injection.
     # /context stays as the fallback when the transcript cannot be read.
-    pct="$(probe_pct_from_jsonl "$t" "$role" 2>/dev/null)" || pct=""
+    pct=""
+    [ "$canary" = 1 ] || { pct="$(probe_pct_from_jsonl "$t" "$role" 2>/dev/null)" || pct=""; }
     if [ -n "$pct" ]; then
       log "[$role] jsonl-probe: ${pct}% (idle pane, read from transcript)"
     else
       pct="$(probe_pct "$t" "$role")"
       last_fp[$role]=""   # /context changed the pane; force a fresh baseline next pass
       if [ -n "$pct" ]; then
+        src=pane
         log "[$role] pane-probe: ${pct}% (idle pane, /context fallback)"
       else
         # The pane could not show the total (an over-limit render is taller than an
@@ -985,12 +1073,25 @@ process_target() {
         [ -n "$pct" ] && log "[$role] jsonl-probe: ${pct}% (pane unreadable; read the /context render back from the transcript)"
       fi
     fi
+    [ "$canary" = 1 ] && canary_verdict "$role" "$t" "$src" "$pct" "$nowt"
   fi
+  # The consecutive-failure count and the probe-blind marker live in files under HEALTH_DIR, not only in memory: after
+  # a restart or a self-reload the streak goes on, and a good read clears a marker that an earlier process raised.
+  # probe_blind_alarmed also holds the alarm in memory, so a marker that cannot be written (disk full, unwritable
+  # HEALTH_DIR) does not repeat the alarm, a /compact and an orchestrator notice, on every cycle.
+  local bcf="$HEALTH_DIR/compaction-probe-fail-$role" bn="" bs=""
   if [ -z "$pct" ]; then
-    probe_fail[$role]=$(( ${probe_fail[$role]:-0} + 1 ))
-    [ "${probe_fail[$role]}" -eq 1 ] && blind_since[$role]=$nowt
+    { read -r bn bs < "$bcf"; } 2>/dev/null
+    case "$bn" in ''|*[!0-9]*) bn=0 ;; esac
+    case "$bs" in ''|*[!0-9]*) bs=$nowt ;; esac
+    probe_fail[$role]=$(( bn + 1 ))
+    [ "${probe_fail[$role]}" -eq 1 ] && bs=$nowt
+    blind_since[$role]=$bs
+    mkdir -p "$HEALTH_DIR" 2>/dev/null
+    printf '%s %s\n' "${probe_fail[$role]}" "$bs" > "$bcf" 2>/dev/null
     log "[$role] probe: could not read context % (${probe_fail[$role]} consecutive)"
-    if [ "${probe_fail[$role]}" -ge "$PROBE_FAIL_ALARM" ] && [ "${probe_blind_alarmed[$role]:-0}" = 0 ]; then
+    if [ "${probe_fail[$role]}" -ge "$PROBE_FAIL_ALARM" ] && [ "${probe_blind_alarmed[$role]:-0}" = 0 ] \
+      && [ ! -e "$(role_blind_marker "$role")" ]; then
       log "[$role] PROBE-BLIND: ${probe_fail[$role]} consecutive parse failures; alarming + marker (CC /context format may have changed)"
       probe_blind_alarm "$role" "$t" "${probe_fail[$role]}" "$is_orch"
       probe_blind_alarmed[$role]=1
@@ -1000,12 +1101,13 @@ process_target() {
     blind_bus_notice "$role" "${probe_fail[$role]}" "$is_orch" "$txt"
     return
   fi
-  # A real read: clear any standing blind alarm and reset the streak.
-  if [ "${probe_blind_alarmed[$role]:-0}" = 1 ]; then
+  # A real read: clear any standing blind alarm, whichever process raised it, and reset the streak.
+  if [ -e "$(role_blind_marker "$role")" ]; then
     rm -f "$(role_blind_marker "$role")" 2>/dev/null || true
     log "[$role] PROBE-RECOVERED: read ${pct}% again; cleared blind marker"
   fi
   probe_fail[$role]=0; probe_blind_alarmed[$role]=0
+  [ -s "$bcf" ] && : > "$bcf" 2>/dev/null
 
   if [ "$pct" -ge "$FORCE_R" ]; then
     if [ $(( nowt - ${last_compact[$role]:-0} )) -ge "$DEBOUNCE" ]; then
@@ -1016,8 +1118,8 @@ process_target() {
     fi
   elif [ "$pct" -ge "$NUDGE_R" ]; then
     if [ $(( nowt - ${last_nudge[$role]:-0} )) -ge "$NUDGE_DEBOUNCE" ] && [ $(( nowt - ${last_compact[$role]:-0} )) -ge "$NUDGE_DEBOUNCE" ]; then
-      log "[$role] NUDGE: context ${pct}% >= ${NUDGE_R}% after ${idle}s idle (ask session to self-compact)"
-      do_nudge "$t" "$pct"; last_nudge[$role]=$(date +%s)
+      log "[$role] NUDGE: context ${pct}% >= ${NUDGE_R}% after ${idle}s idle (ask the session to request /compact at its checkpoint)"
+      do_nudge "$t" "$pct" "$role"; last_nudge[$role]=$(date +%s)
     else
       log "[$role] nudge-suppressed: context ${pct}% (within ${NUDGE_DEBOUNCE}s nudge debounce)"
     fi
@@ -1026,42 +1128,31 @@ process_target() {
   fi
 }
 
-# Start-time canary: prove the probe can read a % from a real pane right
-# now, so a format break is caught at (re)start instead of after hours of silent
-# blindness. Probes the orchestrator (the /context format is CC-version-global,
-# not per-pane, so one pane validates the parser). Skips cleanly if the
-# orchestrator is busy or absent; the running consecutive-failure backstop covers
-# every target individually.
-canary() {
-  local t etxt txt pct
-  t="$(orch_target)" || { log "canary: no orch session yet; deferred to running backstop"; return; }
-  etxt="$(tmux_o capture-pane -e -t "$t" -p 2>/dev/null)"
-  txt="$(printf '%s' "$etxt" | strip_ansi)"
-  if [ -z "$txt" ]; then log "canary: empty pane capture; deferred"; return; fi
-  if is_busy "$txt"; then log "canary: orchestrator busy; deferred to running backstop"; return; fi
-  pct="$(probe_pct "$t")"
-  last_fp[orchestrator]=""   # the canary's /context changed the pane; force a fresh baseline
-  if [ -z "$pct" ]; then
-    # /context failed. Before alarming, try the transcript: a busy pane that
-    # is_busy does not catch (tool output streaming, mid-render) makes /context
-    # unreadable while the jsonl transcript still reads. A successful jsonl read
-    # means the instrument is fine and the pane was uncooperative at startup.
-    pct="$(probe_pct_from_jsonl "$t" orchestrator 2>/dev/null)" || pct=""
-    if [ -n "$pct" ]; then
-      log "canary: /context probe failed but jsonl-probe read ${pct}%; instrument healthy, pane busy at startup"
-      return
-    fi
-    log "CANARY-FAIL: probe parsed empty on a live pane at startup and the jsonl fallback also failed. CC /context format may have changed (parser blind). Raising alarm."
-    probe_blind_alarm "orchestrator" "$t" 0 1
+# Start-time canary: prove that the /context probe can read a % from a real pane, so a format break is caught at
+# (re)start instead of after PROBE_FAIL_ALARM cycles. It types /context with clear, which empties the input box, so
+# it never runs at start-up directly: it stays pending (CANARY_PENDING) until process_target finds the orchestrator
+# pane safe (unchanged for IDLE_SEC, not busy, no real text on the input line) and probes it there with /context
+# instead of the transcript. The /context format is CC-version-global, so one pane validates the parser.
+# canary_verdict <role> <target> <src> <pct> <now>: log the outcome of that probe; src=pane when /context itself read.
+canary_verdict() {
+  local role="$1" t="$2" src="$3" pct="$4" nowt="$5"
+  if [ "$src" = pane ]; then
+    log "canary: probe healthy (read ${pct}%)"
+  elif [ -n "$pct" ]; then
+    # The pane did not show the total, but the render the probe wrote was read back from the transcript.
+    log "canary: /context not readable on the pane but read back from the transcript (${pct}%); instrument healthy"
   else
-    log "canary: probe healthy at startup (read ${pct}%)"
+    log "CANARY-FAIL: /context parsed empty on a safe pane and the transcript read-back also failed. CC /context format may have changed (parser blind). Raising alarm."
+    probe_blind_alarm "$role" "$t" 1 1
+    probe_blind_alarmed[$role]=1
+    last_compact[$role]=$nowt   # the alarm drove a /compact
   fi
 }
 
 # Sourcing hook for the unit tests: with COMPACT_TEST_SOURCE=1 the file defines its
 # functions and stops here, so a test can call them directly instead of driving the
-# whole daemon through a fake tmux. It stops BEFORE the start-line, the canary and
-# the main loop, so sourcing injects no keystroke into any pane.
+# whole daemon through a fake tmux. It stops BEFORE the start-line and the main
+# loop, so sourcing injects no keystroke into any pane.
 # Exactly "1": a stray COMPACT_TEST_SOURCE=0 (or any other value) in a launch environment must not stop the daemon
 # silently after it has taken the flock and the pidfile.
 if [ "${COMPACT_TEST_SOURCE:-}" = 1 ]; then
@@ -1072,7 +1163,7 @@ fi
 # redirect-to-file pattern (not a pipe) so the listing is complete; see
 # enumerate_targets on why a piped/command-sub call can truncate.
 start_targets=""
-_st_tmp="${TEAM_DIR:-.}/.compaction-start.$$"
+_st_tmp="$TEAM_DIR/.compaction-start.$$"
 if enumerate_targets > "$_st_tmp" 2>/dev/null; then
   while read -r r _ orchf probef; do
     [ -n "$r" ] || continue
@@ -1087,13 +1178,13 @@ if enumerate_targets > "$_st_tmp" 2>/dev/null; then
 fi
 rm -f "$_st_tmp" 2>/dev/null
 log "start: multi-target watching: ${start_targets:-<none yet>}| idle=${IDLE_SEC}s interval=${INTERVAL}s nudge_debounce=${NUDGE_DEBOUNCE}s force_debounce=${DEBOUNCE}s ceiling-guard=on autorecover=${AUTORECOVER}(orch-only) probe-blind-alarm=${PROBE_FAIL_ALARM} sock=${SOCK} session=${SESSION:-auto}"
-canary
+log "canary: pending until the orchestrator pane is idle, not busy and holds no typed text"
 
 while :; do
   self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   if ! enumerate_targets > "${TEAM_DIR:-.}/.compaction-targets.$$" 2>/dev/null || [ ! -s "${TEAM_DIR:-.}/.compaction-targets.$$" ]; then
     log "no targets on socket $SOCK (no orch session?)"; rm -f "${TEAM_DIR:-.}/.compaction-targets.$$" 2>/dev/null
-    sleep "$INTERVAL"; continue
+    _interruptible_sleep "$INTERVAL"; continue
   fi
   while read -r role target orchflag probeflag; do
     [ -n "$role" ] || continue
@@ -1104,5 +1195,5 @@ while :; do
     process_target "$role" "$target" "$orchflag" "$probeflag"
   done < "${TEAM_DIR:-.}/.compaction-targets.$$"
   rm -f "${TEAM_DIR:-.}/.compaction-targets.$$" 2>/dev/null
-  sleep "$INTERVAL"
+  _interruptible_sleep "$INTERVAL"
 done

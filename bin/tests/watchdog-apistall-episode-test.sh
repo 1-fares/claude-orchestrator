@@ -134,18 +134,26 @@ scan
 echo "step 7: a role recovering from a usage stall wakes the idle orchestrator"
 # The overnight-outage gap (2026-07-10): workers resume their own turns when
 # usage returns, but an orchestrator that was idle at the prompt has no turn to
-# resume and nothing re-dispatches work. The RECOVERED-USAGE branch must send
-# one deduped wake nudge to the orchestrator.
+# resume and nothing re-dispatches work. Once the recovery is CONFIRMED (the role
+# stayed off the dialog for USAGE_RECOVERED_CONFIRM_SEC) one deduped wake nudge
+# goes to the orchestrator. The real shape is dialog -> BUSY (the role resumes its
+# turn) -> later scans; the wake used to need dialog -> idle and never fired on it.
 $TM new-window -t "$TEAM_SESSION" -n usagerole \
   "bash -c 'stty -echo 2>/dev/null; printf \"● Drafting.\n  You have reached your usage limit.\n ❯ 1. Stop and wait for limit to reset\n   2. Add funds to continue with usage credits\n Enter to confirm · Esc to cancel\n\"; sleep 600'"
 sleep 1
-scan
+USAGE_RECOVERED_CONFIRM_SEC=2 scan
 [ "$(state_of usagerole)" = "stalled-usage" ] && ok "usagerole -> stalled-usage" || bad "expected stalled-usage, got '$(state_of usagerole)'"
 $TM kill-window -t "$TEAM_SESSION:usagerole" 2>/dev/null || true
 $TM new-window -t "$TEAM_SESSION" -n usagerole \
-  "bash -c 'stty -echo 2>/dev/null; printf \"● Resuming.\n────\n❯ \n\"; sleep 600'"
+  "bash -c 'i=0; while true; do printf \"✻ resuming step %d… (%ds · esc to interrupt)\n\" \$i \$i; i=\$((i+1)); sleep 1; done'"
 sleep 1
-scan
+USAGE_RECOVERED_CONFIRM_SEC=2 scan
+[ "$(state_of usagerole)" = "active" ] && ok "usagerole busy on its first scan off the dialog" || bad "expected active, got '$(state_of usagerole)'"
+[ ! -f "$hf/orchestrator.usage-wake" ] && ok "no wake before the recovery is confirmed" || bad "wake sent before USAGE_RECOVERED_CONFIRM_SEC elapsed"
+sleep 3
+USAGE_RECOVERED_CONFIRM_SEC=2 scan
+grep -q "USAGE-RECOVERED (off the usage dialog" "$TEAM_DIR/audit/api-watchdog/usagerole.log" 2>/dev/null \
+  && ok "audit records the confirmed recovery" || bad "audit missing USAGE-RECOVERED line"
 [ -f "$hf/orchestrator.usage-wake" ] && ok "usage-wake dedupe marker written" || bad "usage-wake marker missing"
 grep -q "USAGE-WAKE sent to orchestrator" "$TEAM_DIR/audit/api-watchdog/usagerole.log" 2>/dev/null \
   && ok "audit records the wake" || bad "audit missing USAGE-WAKE line"

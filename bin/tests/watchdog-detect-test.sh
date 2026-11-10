@@ -147,6 +147,78 @@ usage_prose() { cat <<'EOF'
   -- INSERT -- ⏵⏵ bypass permissions on · 1 monitor
 EOF
 }
+# The inline usage banner (no dialog): the session stops with this line above an
+# idle prompt. Must classify stalled-usage, and needs no Escape (not a modal).
+usage_banner() { cat <<'EOF'
+● Let me check that file.
+  ⎿  You've hit your weekly limit · resets Nov 12, 3pm
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on
+EOF
+}
+# The banner's words as prose, without the "· resets" part: not a stall.
+usage_banner_prose() { cat <<'EOF'
+● Noted: the operator said you hit your weekly limit yesterday and it has reset.
+  I have finished my unit and reported done.
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on
+EOF
+}
+# Prose that quotes the whole banner mid-line, and a source comment that does the
+# same (a role reading watchdog-detect.sh): neither starts with the banner.
+usage_banner_quoted() { cat <<'EOF'
+● The session stops with "You've hit your weekly limit · resets Nov 12, 3pm" above the prompt.
+# "You've hit your weekly limit · resets <when>": without it a role stopped on
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on
+EOF
+}
+# Ordinary prose near an idle prompt that the api-stall patterns must not read as
+# a retryable error: the watchdog would type "try again" into a healthy role.
+prose_rate() { cat <<'EOF'
+● Next I iterate over the limited set of fixtures, then report done.
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on
+EOF
+}
+# Prose that mentions rate limits at an idle prompt: a role whose work is about
+# rate limiting must not be read as stalled. $1 is the assistant line.
+prose_line() { cat <<EOF
+● $1
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on
+EOF
+}
+# A real rate-limit refusal at an idle prompt (positive control for the pattern).
+rate_limit_error() { cat <<'EOF'
+● Starting the verification run.
+  ⎿  API Error: Request rejected (429) · This request would exceed your account's rate limit. Please try again later.
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on
+EOF
+}
+# The same refusal as the raw JSON error body.
+rate_limit_json() { cat <<'EOF'
+● Starting the verification run.
+  ⎿  API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  -- INSERT -- ⏵⏵ bypass permissions on
+EOF
+}
 # Matching dialog text but NO '❯' anywhere in the tail (scrolled output, no
 # rendered prompt): the idle-prompt gate must keep it out of stalled-usage.
 usage_no_prompt() { cat <<'EOF'
@@ -196,6 +268,19 @@ idle | _is_usage_stall_text && bad "idle should NOT be a usage stall" || ok "idl
 stalled | _is_usage_stall_text && bad "api-stalled should NOT be a usage stall" || ok "api-stalled not a usage stall"
 eq "prose ABOUT usage limits classifies active (no injection on healthy roles)" "$(usage_prose | _classify_text)" "active"
 eq "dialog text without a rendered prompt classifies active (idle gate)" "$(usage_no_prompt | _classify_text)" "active"
+eq "inline usage banner classifies stalled-usage" "$(usage_banner | _classify_text)" "stalled-usage"
+usage_banner | _has_modal_dialog_text && bad "inline usage banner should NOT read as a modal" || ok "inline usage banner is not a modal (no Escape)"
+eq "banner words without '· resets' classify active" "$(usage_banner_prose | _classify_text)" "active"
+eq "banner quoted mid-line in prose classifies active" "$(usage_banner_quoted | _classify_text)" "active"
+usage_banner | _is_usage_stall_text && ok "inline usage banner is a usage stall" || bad "inline usage banner should be a usage stall"
+
+echo "api-stall patterns vs prose:"
+eq "'iterate over the limited set' classifies active" "$(prose_rate | _classify_text)" "active"
+eq "'Added rate limiting to the HTTP client' classifies active" "$(prose_line 'Added rate limiting to the HTTP client.' | _classify_text)" "active"
+eq "'The rate limit is 50 rpm' classifies active" "$(prose_line 'The rate limit is 50 rpm.' | _classify_text)" "active"
+eq "'separate limits per role' classifies active" "$(prose_line 'I will separate limits per role.' | _classify_text)" "active"
+eq "a 429 rate-limit refusal classifies stalled-api" "$(rate_limit_error | _classify_text)" "stalled-api"
+eq "a 429 rate_limit_error JSON body classifies stalled-api" "$(rate_limit_json | _classify_text)" "stalled-api"
 
 # A long legitimate THINK: body static, but the token counter climbs. The
 # daemon must read this as alive (not wedged) via the token readout, even

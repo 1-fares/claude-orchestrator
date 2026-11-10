@@ -41,10 +41,12 @@
 #   bin/chrome-supervisor.sh --once          # one scan, then exit (for testing)
 #
 # Env:
-#   CHROME_SUPERVISOR_DISABLED=1   skip auto-start entirely (in launch-team/add-role)
+#   CHROME_SUPERVISOR_DISABLED=1   skip auto-start entirely (start_chrome_supervisor in
+#                                  bin/lib/team-spawn.sh: launch-team, start-orchestrator, add-role)
 #   CHROME_SUPERVISOR_INTERVAL=20  seconds between scans
 #   CHROME_UNWEDGE_DISABLED=1      keep reaping, disable the stuck->kill-Chrome action
 #   MEM_WARN_MB=800                log a warning when MemAvailable falls below this
+#   CHROME_SUPERVISOR_LOCK         singleton lock file (default $TEAM_DIR/chrome-supervisor.lock)
 
 set -uo pipefail
 # Original invocation args, captured before any parsing, so self-reload can re-exec
@@ -83,7 +85,7 @@ kill_tree() { # pid: TERM then KILL the whole process group
   pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"
   if [ -n "$pgid" ]; then
     kill -TERM "-$pgid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
-    sleep 0.3
+    sleep 0.3 208>&-   # no lock fd in the child (see the singleton lock below)
     kill -KILL "-$pgid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
   else
     kill -KILL "$pid" 2>/dev/null
@@ -112,13 +114,15 @@ descendant_set() {
 
 reap_orphans() {
   local pid
+  # pgrep -P 1 lists only children of init, so a scan does not fork `ps` for every live
+  # MCP process on the host (dozens on a busy desktop); orphaned() re-checks each hit.
   # 1) orphaned chrome-devtools-mcp server processes
-  for pid in $(pgrep -f 'chrome-devtools-mcp' 2>/dev/null || true); do
+  for pid in $(pgrep -P 1 -f 'chrome-devtools-mcp' 2>/dev/null || true); do
     if orphaned "$pid"; then log "reap: orphan chrome-devtools-mcp pid=$pid"; kill_tree "$pid"; fi
   done
   # 2) orphaned headless Chrome roots (carry --user-data-dir; --type= children keep
   #    the root as parent, so PPID==1 selects only orphaned roots)
-  for pid in $(pgrep -f -- '--user-data-dir=[^ ]*puppeteer_dev_chrome_profile' 2>/dev/null || true); do
+  for pid in $(pgrep -P 1 -f -- '--user-data-dir=[^ ]*puppeteer_dev_chrome_profile' 2>/dev/null || true); do
     if orphaned "$pid"; then log "reap: orphan chrome pid=$pid"; kill_tree "$pid"; fi
   done
   # 3) stale /tmp puppeteer profile dirs with no live Chrome
@@ -141,8 +145,14 @@ mem_check() {
   fi
 }
 
+# Roles whose "no Chrome descended" line is already logged for the current stuck episode.
+# A role stays stuck for many scans (one every 20 s); the line is logged once per episode,
+# and the entry is dropped when the role leaves the stuck states or its Chrome is killed.
+declare -A nochrome_logged=()
+
 # Kill the Chrome tree(s) belonging to a role whose pane the api-watchdog marked
-# stuck, so the MCP's hung op rejects and the mutex releases.
+# stuck, so the MCP's hung op rejects and the mutex releases. stuck-giveup-esc is the
+# api-watchdog state of a role still frozen after the retire+respawn escalation.
 unwedge_stuck() {
   [ "$unwedge_disabled" = 1 ] && return 0
   tmux has-session -t "$TEAM_SESSION" 2>/dev/null || return 0
@@ -150,9 +160,9 @@ unwedge_stuck() {
   [ -d "$health_dir" ] || return 0
   for hf in "$health_dir"/*.json; do
     [ -f "$hf" ] || continue
-    state="$(jq -r '.state // ""' "$hf" 2>/dev/null)"
-    case "$state" in stuck|stuck-giveup) ;; *) continue;; esac
     role="$(basename "$hf" .json)"
+    state="$(jq -r '.state // ""' "$hf" 2>/dev/null)"
+    case "$state" in stuck|stuck-giveup|stuck-giveup-esc) ;; *) unset 'nochrome_logged[$role]'; continue;; esac
     # the tmux entry "tmux" is the tmux-watchdog's own health, not a role pane
     [ "$role" = "tmux" ] && continue
     pane_pid="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_name} #{pane_pid}' 2>/dev/null \
@@ -168,7 +178,12 @@ unwedge_stuck() {
         kill_tree "$p"; killed=1;;
       esac
     done
-    [ "$killed" = 0 ] && log "unwedge: role=$role state=$state but no Chrome descended from pane_pid=$pane_pid (wedge is not Chrome-side)"
+    if [ "$killed" = 1 ]; then
+      unset 'nochrome_logged[$role]'
+    elif [ -z "${nochrome_logged[$role]:-}" ]; then
+      log "unwedge: role=$role state=$state but no Chrome descended from pane_pid=$pane_pid (wedge is not Chrome-side; logged once while the role stays stuck)"
+      nochrome_logged[$role]=1
+    fi
   done
 }
 
@@ -178,10 +193,27 @@ scan() {
   unwedge_stuck
 }
 
+# CHROME_SUPERVISOR_TEST=1 sources this file for unit tests: the functions above are
+# defined, then it stops before the lock, any scan and the loop.
+if [ "${CHROME_SUPERVISOR_TEST:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
+
+# Singleton per run: an exclusive flock under TEAM_DIR on fd 208 (the other daemons use
+# 200-204). team-spawn checks a pidfile and then starts, which is not atomic, and two
+# supervisors can both classify a role as stuck and both kill its Chrome tree. The lock
+# fd is closed for every child `sleep` (`208>&-`): an orphaned sleep that inherited it
+# would keep the lock after this process died, and a replacement would refuse to start.
+# A self-reload re-exec keeps fd 208; `exec 208>` then replaces it and re-takes the lock.
+_CS_LOCK="${CHROME_SUPERVISOR_LOCK:-$TEAM_DIR/chrome-supervisor.lock}"
+if command -v flock >/dev/null 2>&1 && exec 208>"$_CS_LOCK"; then
+  if ! flock -n 208; then
+    echo "chrome-supervisor already running (lock $_CS_LOCK held); exiting"; exit 0
+  fi
+fi
+
 log "chrome-supervisor: starting team=$TEAM_SESSION run=${TEAM_RUN_ID:-legacy} interval=${interval}s unwedge=$([ "$unwedge_disabled" = 1 ] && echo off || echo on)"
 if [ "$once" = 1 ]; then scan; exit 0; fi
 while :; do
   self_reload_check "$0" ${_SR_ORIG_ARGS[@]+"${_SR_ORIG_ARGS[@]}"}
   scan
-  sleep "$interval"
+  sleep "$interval" 208>&-
 done
