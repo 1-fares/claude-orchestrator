@@ -8,7 +8,8 @@ flagging it.
 
 ## Bus name
 
-`editor<N>` (e.g. `editor1`). Join with `/is c editor1`.
+`editor<N>` (e.g. `editor1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 

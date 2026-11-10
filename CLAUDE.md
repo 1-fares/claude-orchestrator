@@ -40,9 +40,11 @@ keep private data out of the tree.
   `1-fares` and the `LICENSE` copyright line. Do not introduce any other.
 - **Before any commit, sweep the staged diff:**
   `git diff --cached | bash bin/privacy-scan.sh` (exit 0 = clean; it prints
-  every hit). The same scan runs as a pre-push gate over every outgoing commit
-  once the hook path is set — do this once per clone:
-  `git config core.hooksPath bin/hooks`. A hit that is a genuine placeholder
+  every hit). The same scan, plus the author and committer identity, runs as a
+  pre-push gate over every outgoing commit once the hook is installed per clone:
+  `ln -sfn ../../bin/hooks/pre-push .git/hooks/pre-push`, or
+  `git config core.hooksPath bin/hooks`, which disables every other hook in
+  `.git/hooks` (`docs/ENFORCEMENT.md`). A hit that is a genuine placeholder
   false positive is added to `allow_re` in `bin/privacy-scan.sh`, never
   bypassed with `--no-verify`.
 
@@ -68,6 +70,10 @@ keep private data out of the tree.
 - **Honor `pause:` / `resume:` and `stop:` / `priority:`.** On `pause:`, stop
   work and wait. On `stop:` or `priority:` while under `/goal`, drop the goal and
   attend to the new instruction.
+- **Compact when the watchdog asks.** When a `[compaction-watchdog]` message asks
+  you to compact, finish the current step, write your state, run the `touch`
+  command it gives, and end your turn; the watchdog then sends `/compact`. A
+  session cannot run `/compact` itself.
 
 ## Coordination conventions
 
@@ -85,7 +91,7 @@ keep private data out of the tree.
   with a fresh green `bin/verify-unit.sh <unit>` log and a clean
   `bin/check-scope.sh <unit>`. The orchestrator may waive gates for trivial units.
 - **Cadence is a choice, not a default.** Interactive (do a step, report, yield;
-  the `/is` monitor wakes you) is the default. Use `/goal` only with a
+  the bus reader wakes you) is the default. Use `/goal` only with a
   machine-checkable, exit-0 condition and a round budget. Use `/loop` for
   periodic actions.
 - **Never drop work.** Partial, rejected, or out-of-scope work is reported back
@@ -124,9 +130,12 @@ keep private data out of the tree.
 - **Tests are isolated, always.** Any test under `bin/tests/` sources
   `bin/tests/lib/isolate.sh` BEFORE `bin/team-env.sh` (throwaway
   `TEAM_RUN_ID`/`TEAM_TMUX`; `isolate_assert` after). team-env hard-exits a
-  test caller with a non-test run id — an inherited live id is how a test's
-  cleanup once wiped a live run (docs/incident-2026-07-11-*.md). Roles never
-  run `reset.sh` or `cleanup.sh --force`; both refuse inside a role session.
+  test caller with a non-test run id: an inherited live id is how a test's
+  cleanup once wiped a live run
+  (`docs/incident-2026-07-11-test-cleanup-wiped-live-run.md`). Run the suite
+  with `bash bin/tests/run-all.sh` (one file at a time; file names select a
+  subset). Roles never run `reset.sh` or `cleanup.sh --force`; both refuse
+  inside a role session.
 - **Scripts over judgement.** Where a task is deterministic and rule-based
   (spawn, teardown, validation, file moves, formatting, parsing, status checks),
   call a script in [`bin/`](./bin) or write one; do not spend an LLM turn on it.
@@ -166,171 +175,66 @@ file is the portable version of the same discipline.
 
 ## Layout
 
+Detail for each entry: the README section named, a doc, or the script header.
+
 - `roles/<role>.md`: per-role prompt; reused across all goals.
 - `goals/<name>.md`: per-feature brief; the only thing that changes between runs.
 - `tasks/<unit>.md`: per-unit structured handoff (from `tasks/_TEMPLATE.md`).
-- `templates/state.md`: canonical format for the run ledger
-  (`$TEAM_DIR/state.md`, i.e. `.team-<run-id>/state.md` per run, or `.team/state.md`
-  in legacy single-team mode).
+- `templates/state.md`: canonical format for the run ledger `$TEAM_DIR/state.md`.
 - `docs/model-policy.md`: per-role model tiers (`model_for()` in
   `bin/lib/team-spawn.sh`; overrides `TEAM_MODEL_<ROLE>`, `TEAM_MODEL_TOP`,
-  `TEAM_MODEL_DEFAULT`) and the token-economy disciplines (sub-agent bulk reads,
-  file pointers, early compaction) that keep top-tier roles affordable. Launch
-  records each role's model under `$TEAM_DIR/models/<role>`; the observer and
-  the compaction watchdog read those records.
-- `bin/run.sh`: the one-command entry point. Starts the orchestrator and attaches;
-  the orchestrator then asks for the working tree and goal **in the session**
-  (visible, recorded, recoverable), not via shell prompts. Recovery-aware: offers
-  to reattach a live run, or clean a misfired one (via `cleanup.sh`) before
-  starting. Power/scripted args still pre-seed target+goal. Composes the scripts
-  below.
-- `bin/new-project.sh`: scaffold a brand-new target repo. `bin/new-goal.sh`: a
-  short questionnaire that writes a goal brief (you describe the goal; the
-  orchestrator fills in acceptance/scope/team/verify at the ready-gate).
-- `bin/start-orchestrator.sh`: first run (also the recovery entry point); by
-  default runs the orchestrator and roles together in ONE tmux session
-  (`--foreground` runs the orchestrator in your terminal instead, with roles
-  still in tmux). On every (re)start it ensures the supervisor daemons (see the
-  README Daemon lifecycle section), so a recovery does not leave them dead.
-  `bin/launch-team.sh`: spawn roles (`--workdir` to target external code).
-  `bin/attach.sh`: attach to the team tmux session.
-- `bin/add-role.sh` / `bin/retire-role.sh`: dynamic team scaling (B9). Add one
-  role to a LIVE team (enforces a soft, operator-chosen team-size cap, default 12,
-  custom, or uncapped, from `$TEAM_DIR/max-team-size` or `MAX_TEAM_SIZE`; refuses
-  double-spawn,
-  reuse-before-spawn hint, decision-log + roster line, ntfy) or retire one role
-  (graceful single-role teardown scoped to that role, refuses if it owns
-  in-progress units unless `--force` re-files them, archives to `retired/`). Both
-  reuse the shared single-role spawn/teardown discipline in `bin/lib/` and the
-  same hard safety scoping as `cleanup.sh`. Prefer a bus `pause:` over retire for
-  a temporarily-idle role.
-- `bin/stop-team.sh`: end the roles. `bin/reset.sh`: clean slate (ends
-  everything, clears `.team/`). `bin/panic.sh`: emergency stop. `bin/cleanup.sh`:
-  recover from a misfire, reaps orphaned role sessions the others miss (a lost
-  tmux session, a launch with no `.team/active`), dry-run by default, `--force`
-  to apply, `--purge` for config/artifacts, `--include-unsigned` for orphans not
-  attributable to this clone.
-- The team runs on a dedicated tmux socket (`-L orchestrator`, no user config),
-  isolated from your default tmux server and its plugins (e.g.
-  resurrect/continuum). Use `bin/attach.sh` / `bin/team-status.sh`, not a plain
-  `tmux attach`.
+  `TEAM_MODEL_DEFAULT`; each role's model is recorded in `$TEAM_DIR/models/<role>`)
+  and the token-economy disciplines that keep top-tier roles affordable.
+- Operator entry points (README "Run a goal", "Drive the team"): `bin/run.sh`,
+  `bin/new-project.sh`, `bin/new-goal.sh`, `bin/start-orchestrator.sh` (first run
+  and recovery), `bin/launch-team.sh` (`--workdir` for external code),
+  `bin/attach.sh` (the team has its own tmux socket, `-L orchestrator`: never a
+  plain `tmux attach`), `bin/stop-team.sh`, `bin/reset.sh` (clears this run's
+  `$TEAM_DIR`), `bin/panic.sh`, `bin/cleanup.sh` (dry-run unless `--force`).
+- `bin/add-role.sh` / `bin/retire-role.sh`: grow or shrink a live team by one
+  role (README "Dynamic team scaling"). Prefer a bus `pause:` over retire for a
+  temporarily idle role.
 - `bin/team-status.sh` / `bin/team-watch.sh`: status view. `bin/team-broadcast.sh`:
   inject to all roles from outside (honors `pause:`/`resume:`/`priority:`).
   `bin/team-logs.sh`: per-role history from the bus.
-- `bin/verify-unit.sh`, `bin/check-scope.sh`: the gates. `bin/team-env.sh`:
-  per-clone bus port + tmux session, with optional **per-run isolation** when
-  `TEAM_RUN_ID` is set (bin/run.sh allocates one per invocation and spawned
-  children inherit it), so parallel teams in one clone get their own port,
-  session, and state dir (`.team-<run-id>/`) and do not collide on names. No
-  `TEAM_RUN_ID` = today's per-clone behavior (state in `.team/`).
-- `bin/tools/`: the shared toolbox — small coding helpers a role runs as
-  `$ORCH_HOME/bin/tools/<name>` instead of re-deriving boilerplate. `probe-env.sh`
-  (detect a repo's build/test/lint and a `verify:` line), `impact-scan.sh`
-  (reverse-dependency scan before editing a file), `red-green.sh` (capture the
-  tester's fail-then-pass evidence pair), `diff-summary.sh` (compact change
-  summary for review). Prefer them over hand-rolling the same boilerplate. Grow
-  the set from the retro loop, not a brainstorm. See `bin/tools/README.md`.
-- `bin/preflight-deploy.sh`, `bin/panic.sh`, `bin/watchdog.sh`, `bin/worktree.sh`,
+- `bin/verify-unit.sh`, `bin/check-scope.sh`: the gates. `bin/team-env.sh`: bus
+  port, tmux session and `$TEAM_DIR`, per run when `TEAM_RUN_ID` is set (README
+  "Parallel runs in one clone").
+- `bin/tools/`: small coding helpers a role runs as `$ORCH_HOME/bin/tools/<name>`
+  instead of re-deriving boilerplate: `probe-env.sh` (a repo's build/test/lint and
+  a `verify:` line), `impact-scan.sh` (reverse dependencies of a file),
+  `red-green.sh` (the tester's fail-then-pass evidence pair), `diff-summary.sh`
+  (compact change summary). See `bin/tools/README.md`.
+- `bin/preflight-deploy.sh`, `bin/watchdog.sh`, `bin/worktree.sh` (`remove`
+  refuses a worktree with uncommitted changes unless `--force`),
   `bin/trust-workdir.sh` (pre-accept the workspace-trust prompt for a dir).
-- `bin/api-watchdog.sh`: the team's liveness watchdog. Covers these failure modes
-  in one scan loop. (a) **API-stall:** a role idled at the prompt by a transient
-  Anthropic rate-limit / network error, auto-sends `try again` with exponential
-  backoff (default 30/60/120/300/600s, max 5 retries). The retry count is
-  episode-scoped (`API_EPISODE_WINDOW_SEC`, default 1800s, marker file): each
-  retry makes the pane busy, which used to reset the counter, so a role
-  stalling on the same error (classically a content-filter block) retried
-  forever; now give-up is reachable and hands the error to the orchestrator
-  (once per episode) with the recovery-ladder hint. (a2) **Usage-stall:** the
-  account ran out of usage/credits and the session is parked on the usage-limit
-  modal (no spinner, no error text — invisible to (a)); auto-recovers with
-  Escape + a resume nudge on a flat `USAGE_RETRY_SEC` cadence (default 300s),
-  indefinitely, one operator push on entry. When a role recovers from a usage
-  stall, one deduped wake nudge (`USAGE_WAKE_DEDUPE_SEC`, default 3600s) goes
-  to the orchestrator so an idle orchestrator re-dispatches after the outage
-  instead of the team sitting recovered-but-undirected. Other modal dialogs (`Enter to
-  confirm`) classify `awaiting-input` and page the operator. (b) **Stuck (wedged):** a
-  role that is busy (spinner up) but shows no liveness for `STUCK_THRESHOLD_SEC`
-  (default 480s), it is hung on a tool call (classically a chrome-devtools MCP
-  call after the debug Chrome dies). Liveness = the pane content changed OR the
-  streaming token counter advanced; the token counter climbs during a long
-  legitimate think (so a think is not mistaken for a wedge) but freezes on a
-  hung call. The elapsed timer is ignored, it ticks even when wedged. An
-  API-stall detector alone cannot see this, a spinner reads as healthy, so a
-  wedge silently stalls the run. Recovery ladder: first an Escape + nudge to the role's own pane
-  (gentle, autonomous, preserves context), then after `STUCK_MAX_NUDGES`
-  (default 2) failed attempts it marks the role `stuck-giveup` and messages the
-  orchestrator to retire+respawn it (or writes `PENDING.md` if the stuck role is
-  the orchestrator itself). Writes per-role state to `$TEAM_DIR/health/<role>.json`
-  (`active`/`stalled-api`/`stalled-usage`/`stuck`/`stuck-giveup`/`give-up`) and pushes `ntfy` on
-  state changes. The pure pane detectors live in `bin/lib/watchdog-detect.sh`
-  (unit-tested by `bin/tests/watchdog-detect-test.sh`; end-to-end recovery by
-  `bin/tests/watchdog-stuck-integration-test.sh`). Started automatically by
-  `launch-team.sh`; cleaned up by `stop-team.sh` / `panic.sh` / `cleanup.sh`.
-  Pure shell, makes no Claude API call, so cannot itself be rate-limited. Tier-3
-  awareness is pull-only: the orchestrator reads `$TEAM_DIR/health/` to decide.
-  Patterns at `bin/api-watchdog.patterns`. Disable the whole watchdog with
-  `API_WATCHDOG_DISABLED=1`, or just stuck detection with `STUCK_WATCHDOG_DISABLED=1`.
-- `bin/permission-mode-watchdog.sh`: holds every pane in the permission mode the
-  run was launched with. Drift off `bypass permissions` is silent, sticky and one
-  stray shift+tab away in the pane humans type into; it turns routine commands
-  into confirmation menus nobody can answer remotely (2026-08-25: a `gh pr merge`
-  parked an orchestrator six times in one afternoon, ~158 min in total). Restores the mode, and cancels the auto-mode
-  classifier gate with Escape. It never confirms a prompt, never presses keys into
-  an open menu, and never cycles a mode it cannot read. Disable with
-  `PERMISSION_MODE_WATCHDOG_DISABLED=1`.
-- `bin/tmux-watchdog.sh`: detects the tmux server itself going away (systemd
-  scope cleanup, WSL2 suspend/resume, daemon-reload from other tooling) and
-  flips `$TEAM_DIR/health/tmux.json` to `state=crashed`, drops
-  `$TEAM_DIR/CRASH-DETECTED.md` with the recovery command, and pushes `ntfy`.
-  Also takes a forensic snapshot of every window every 60s into
-  `$TEAM_DIR/snapshots/`. Does NOT auto-restart the team; recovery still goes
-  through the operator. Auto-started by `launch-team.sh`. Disable with
-  `TMUX_WATCHDOG_DISABLED=1`. Background and recovery flow in
-  `docs/incident-2026-05-26-tmux-scope-cleanup.md`.
-- `bin/compaction-watchdog.sh`: keeps team sessions' context off the
-  auto-compact ceiling (a near-full window is the most expensive state to run in,
-  since every turn re-reads a huge cached context). Multi-target: the `/context`
-  probe always watches the orchestrator (window 0), plus every window whose role
-  runs a top-tier model per `$TEAM_DIR/models/<role>`; the passive ceiling guard
-  (capture+grep for `Context limit reached` / `Compaction failed`, works
-  mid-turn) covers EVERY window, so a default-model worker wedged at the
-  terminal ceiling is escalated instead of invisible; targets re-enumerated
-  each cycle. Per
-  pane, at an idle task boundary (pane unchanged for `COMPACT_IDLE_SEC`, not
-  busy, input line empty or only dim autocomplete shadow text) it probes
-  `/context` and picks the moment with two model-keyed per-role thresholds
-  (top tier 70/85, default 80/90; `COMPACT_NUDGE_PCT` / `COMPACT_FORCE_PCT`
-  override globally): at the nudge pct it asks the session to compact itself at
-  its next safe checkpoint; at the force pct it force-sends
-  `/compact <focus instructions>` as a backstop. At an unrecoverable ceiling it
-  auto-clears+rebriefs the orchestrator only; a wedged worker is escalated to
-  the orchestrator for retire+respawn. A probe that parses empty 3 consecutive
-  cycles (or a failed startup canary) raises a probe-blind marker and
-  notifies, so a Claude Code `/context` format change is never silent. Pure
-  shell, no Claude API call. Same lifecycle as the api-watchdog (launch +
-  re-ensure + tmux-watchdog self-heal). Disable with
-  `COMPACT_WATCHDOG_DISABLED=1`.
-- `bin/communicator.sh`: opens a Claude Code session in the `communicator` role,
-  the team's two-way operator liaison (spec at `roles/user-communicator.md`).
-  One bus identity per run, multiple front-ends share state under
-  `$TEAM_DIR/comm/`. Idempotent: a second invocation reattaches the existing
-  tmux window. There is no browser front-end: the B11 visual dashboard was
-  removed on 2026-10-19 (unmaintained since May 2026, about 4 MB of image
-  assets, and an HTTP surface with no reader).
-- **Non-code substrate.** `roles/` ships generic non-code roles, structural
-  pipeline references that codify lane discipline (`researcher`, `writer`,
-  `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`, `doc-integrator`),
-  plus three cross-cutting legal references (`paralegal`, `lawyer`,
-  `swiss-law-specialist`). Area specialists (e.g. `employment-lawyer1`,
-  `tenancy-lawyer1`, `market-analyst1`) are NOT predefined: the orchestrator
-  authors them on-the-fly from `roles/_TEMPLATE.md` per goal, so the operator is
-  free to pursue any topic with any role names without growing the curated set.
-  A pluggable **gate library** at `bin/gates/` wraps non-binary checks as exit-0
-  commands for non-code units (`structure`, `link-live`, `cite-resolve`,
-  `md-lint`, `office-wellformed`, `llm-judge`, `rubric-judge`, `cite-support`);
-  a goal's `tasks/<unit>.md` `verify:` line wires one of these.
+- Supervisor daemons, pure shell, started and stopped with the team (README
+  "Daemon lifecycle"): `bin/api-watchdog.sh` (API-error and usage-limit stalls,
+  wedged and prompt-blocked roles; state in `$TEAM_DIR/health/<role>.json`;
+  README "API rate-limit resilience"), `bin/compaction-watchdog.sh` (early
+  compaction; README "Context cost control"), `bin/tmux-watchdog.sh` (crash
+  detection, daemon restarts; README "Crash recovery"),
+  `bin/permission-mode-watchdog.sh` (holds the launch permission mode; README
+  "Safety and unattended running"), `bin/host-ram-watchdog.sh` and
+  `bin/disk-tmp-watchdog.sh` (host guards; the latter runs
+  `bin/rotate-team-logs.sh`), `bin/chrome-supervisor.sh` (un-wedges a role hung
+  on a chrome-devtools MCP call), `bin/observer.sh` (model-backed adviser and
+  auditor; recommends, never acts; README "The observer audit").
+- `bin/gates/heavy-work-gate.sh [--label X]`: exits 1 while host RAM or disk/tmp
+  headroom is in a warn or freeze band; run it before heavy local work.
+- From cron: `bin/dreamer.sh` (nightly ledger consolidation, gated on
+  `bin/role-activity.sh`) and `bin/night-janitor.sh` (bulk expiry), see
+  `docs/dreaming.md`. `bin/capability-probe.sh <probes.conf>` proves the team's
+  privileged actions still work (`docs/CAPABILITY-PROBE.md`).
+- `bin/hooks/`: the standing-rules hook, tool gates (whole-file reads, `rm` with a
+  glob or variable, outbound messages, subagent calls), a Stop hook that keeps a
+  role's bus reader armed, and the git `pre-push` privacy scan
+  (`docs/ENFORCEMENT.md`).
+- `bin/communicator.sh`: opens the `communicator` role, the operator liaison
+  (README "The communicator role"). Non-code work: reference roles in `roles/`,
+  `verify:` gates in `bin/gates/`, area specialists authored per goal from
+  `roles/_TEMPLATE.md` (README "Non-code work").
 
 This is a template, cloned once per project (see [README.md](./README.md) for
-the install and run flow), not a shared home for every project's goals.
-Implementation is staged; see [STATUS.md](./STATUS.md) for what is built versus
-pending.
+the install and run flow), not a shared home for every project's goals. What is
+built: [STATUS.md](./STATUS.md); open work: [BACKLOG.md](./BACKLOG.md).

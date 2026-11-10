@@ -239,6 +239,21 @@ analysis above:
   advantage over Agent Teams' idle-token cost is unchanged and matters more at
   Fable prices.
 
+## Addendum 2026-11-10: repository facts that changed
+
+Checked against the tree; the sections above are left as written.
+
+- The bus listener is no longer a Monitor. Each role runs
+  `bin/bus-inbox.py wait <name> 7200` in the background
+  ([BUS-INBOX.md](./BUS-INBOX.md)), which also wakes an idle role for one
+  heartbeat turn every 2 h. An idle role costs almost nothing, not nothing.
+- The team-size cap in `bin/add-role.sh` is soft and operator-chosen (default
+  12, a custom number, or uncapped), not a hard cap.
+- Claude Code installed at this check: 2.1.321. Its `claude --help` lists
+  background sessions (`--bg`, `claude agents`, `attach`, `logs`, `stop`,
+  `respawn`) and `--worktree` / `--tmux`; the comparison above does not cover
+  them.
+
 ## Sources
 
 - Pricing: <https://platform.claude.com/docs/en/about-claude/pricing> (2026-05-25)

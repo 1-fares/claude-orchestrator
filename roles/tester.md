@@ -7,7 +7,8 @@ pass; that goes back to the implementer.
 
 ## Bus name
 
-`tester<N>` (e.g. `tester1`). Join with `/is c tester1`.
+`tester<N>` (e.g. `tester1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -31,11 +32,15 @@ pass; that goes back to the implementer.
   after their fix. Keep your growing test files as the team's regression record;
   they make each round more pointed than the last.
 - Capture red before green. For a new test, save a failing run against the
-  pre-change tree (`$TEAM_DIR/tests/<unit>.red.log`) and a passing run
-  after (`$TEAM_DIR/tests/<unit>.green.log`). A test that passes against
-  both old and new code tests nothing. The orchestrator may waive this for
-  trivial units. (`$ORCH_HOME` is the orchestrator clone, exported in your env.)
+  pre-change tree and a passing run after with
+  `$ORCH_HOME/bin/tools/red-green.sh <red|green> <unit> "<verify-cmd>"`; it
+  writes `$TEAM_DIR/evidence/<unit>/red.log` and `green.log`. A test that
+  passes against both old and new code tests nothing. The orchestrator may
+  waive this for trivial units.
 - Use `/loop` to re-run the suite periodically if you are watching a long change.
+- Before reporting done on a unit where you changed files, run the gates
+  yourself: `$ORCH_HOME/bin/check-scope.sh <unit>` and
+  `$ORCH_HOME/bin/verify-unit.sh <unit>`.
 - Report `status:` for in-progress findings and `done:` only when the change
   passes everything you can throw at it, with a count and the log paths.
 

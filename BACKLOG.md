@@ -8,8 +8,8 @@ tool before reinventing.
 Open: B2 (autonomous mode), B3 (portability), B4 (remote-control phone test),
 B10 (fold in Agent Teams features), B12 (SDK credit pool), B13 (continuous
 learning loop). Built and removed from this list: B9 (dynamic scaling) and the
-B3 attribution/licence/CJK work; see STATUS.md. B11 (visual dashboard) was
-built in May 2026 and deleted on 2026-10-19; it is not coming back.
+B3 attribution/licence/CJK work; see STATUS.md, which also records why B11 (the
+visual dashboard) was deleted.
 
 ---
 
@@ -58,7 +58,8 @@ remains is portability.
 **To do.**
 - Run beyond WSL/Linux: macOS, other shells, paths with spaces.
 - A dependency preflight with clear errors for a missing `tmux`, `claude`, `uv`,
-  `python3`. None exists today.
+  `python3`. Today only `claude` and `tmux` are checked, one script at a time
+  (`start-orchestrator.sh`, `launch-team.sh`, `add-role.sh`).
 - Confirm the clone-per-project model and concurrent-team behaviour on a fresh
   machine.
 
@@ -68,18 +69,17 @@ remains is portability.
 
 **State.** Primary path is first-party `/remote-control` (outbound-only, mobile
 app, push on input-needed). Escape-hatch helpers are built and locally verified:
-`bin/team-status.sh --mobile`, `bin/inbox.sh`, `bin/approve.sh`, and the
-off-by-default action-button hook (`bin/notify-hook.py` + `bin/sign-action-url.sh`
-+ `bin/notify-via-ntfy.sh`, HMAC-signed URLs with a 30-min TTL).
+`bin/team-status.sh --mobile`, `bin/inbox.sh`, `bin/approve.sh`. The ntfy
+action-button hook was never used end to end and has been removed; notices carry
+no buttons.
 
-**Open.** The end-to-end `/remote-control` phone walkthrough (README "Remote
-control from a phone", Steps 1-8) has not been run. Reaching the host for the
-escape hatch (Tailscale, Cloudflare Tunnel) is a separate opt-in step; if set
-up, point `NOTIFY_HOOK_BASE` at the reachable IP.
+**Open.** The end-to-end `/remote-control` phone test (README "Remote control
+from a phone") has not been run. Reaching the host for the
+escape hatch (Tailscale, Cloudflare Tunnel) is a separate opt-in step.
 
-**Gap `/remote-control` does not cover.** The api-watchdog's stall / recovery /
-give-up signals do not flow through it; they only fire when Claude itself needs
-input. Keep both apps on the phone: the Claude app for `/remote-control`, the
+**Gap `/remote-control` does not cover.** The daemons' operator notices
+(`bin/lib/notify.sh`: give-up, blocked prompt, usage wall, team crash) do not flow
+through it; its pushes only fire when Claude itself needs input. Keep both apps on the phone: the Claude app for `/remote-control`, the
 ntfy app for watchdog pushes.
 
 ---
@@ -109,7 +109,8 @@ re-target the discipline layer onto Agent Teams once it leaves experimental.
 4. **Subagent-definition reuse.** Align `roles/<base>.md` so a role doubles as a
    subagent definition.
 5. **Mailbox auto-delivery + idle notifications.** The bus already push-wakes via
-   the Monitor tool; compare, likely skip unless clearly better.
+   a blocking reader per role (`bin/bus-inbox.py`); compare, likely skip unless
+   clearly better.
 
 **Do-not-regress (advantages folding-in must keep).** Free idle roles, session
 resume, multiple concurrent teams, the readable narrative ledger, the dedicated
@@ -123,8 +124,11 @@ spike of gates-as-`TaskCompleted`-hook on a throwaway Agent Teams run.
 
 ## B12 - Route eligible work onto the Agent SDK credit pool
 
-**State: research done, not implemented. Its 2026-06-15 start date has passed;
-the pool now exists but no orchestrator call site targets it.**
+**State: research done; billing of the existing calls not checked.** Three call
+sites already run `claude -p`: `bin/gates/llm-judge.sh` (and `rubric-judge`,
+`cite-support` through it), `bin/observer.sh` and `bin/dreamer.sh`. Open: check
+how these calls are billed (the pool below, a Console API key, or the
+interactive limits) before routing more work onto `claude -p`.
 
 **The finding.** Since 2026-06-15, Claude Agent SDK and `claude -p` usage no
 longer counts toward the interactive subscription limits; it draws from a
@@ -256,5 +260,5 @@ a deciding factor.
 alongside the orchestrator clone, not bundled. The fork adds the file-pointer
 long-message delivery the orchestrator depends on, the short `/is` invocation,
 auto-start handling, tests, and docs. A2A/MCP are not a better foundation: the
-localhost websocket bus (riding the Monitor tool for push-wake) is correctly
+localhost websocket bus (push-wake through a blocking reader per role) is correctly
 scoped for single-user/local/trusted use; A2A targets cross-org networked agents.

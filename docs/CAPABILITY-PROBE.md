@@ -13,7 +13,8 @@ name | timeout_seconds | shell command (exit 0 = PASS)
 ```
 
 Durable outputs: `$TEAM_DIR/reports/capability-probe.log` (append) and
-`$TEAM_DIR/health/capability-probe.json` (last result). The observer's audit check (i)
+`$TEAM_DIR/health/capability-probe.json` (last full run; a `--only` run does not write
+it). The observer's audit check (i)
 reads the JSON and fails the pass when the result is older than 24 hours or has a FAIL.
 A FAIL is reported through `bin/lib/notify.sh` as `action` unless `--no-notify` is given.
 

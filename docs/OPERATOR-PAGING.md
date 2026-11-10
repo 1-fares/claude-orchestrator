@@ -26,9 +26,9 @@ the history was ntfy's 12-hour cache.
 
 | Class | ntfy priority and phone behaviour | Rule | Rate |
 |---|---|---|---|
-| `page` | 5: long vibration, sound, pop-over | a human must act now: production impact, data exposure, the team dead beyond self-heal, a delivery failure, an outbound message to a recipient outside the allow-list | re-pages every 30 min until `notify_resolved`; ignores hours; during a mute it still goes, prefixed `[maintenance]` |
-| `action` | 4: vibration, sound, pop-over | a human must act today: only the operator holds the key, credential or decision | one push per subject per 6 h; queued outside Mon-Fri 07:00-19:00 Zurich and flushed at 07:00; dropped during a mute (logged) |
-| `info` | 2: silent, hidden until the drawer is pulled | everything else | never pushed on its own; one digest per working day at 08:00 |
+| `page` | 5: long vibration, sound, pop-over | a human must act now: production impact, data exposure, the team dead beyond self-heal, a delivery failure, an outbound message to a recipient outside the allow-list | a repeat for the same subject goes out again once 30 min have passed, for as long as the sender keeps reporting it; no "resolved" push is sent (nothing calls `notify_resolved`); ignores hours; during a mute it still goes, prefixed `[maintenance]` |
+| `action` | 4: vibration, sound, pop-over | a human must act today: only the operator holds the key, credential or decision | one push per subject per 6 h; queued outside Mon-Fri 07:00-19:00 Zurich and flushed by the next in-hours `--flush` or `--digest` (the 08:00 cron below); dropped during a mute (logged) |
+| `info` | 2: silent, hidden until the drawer is pulled | everything else | never pushed on its own; one digest per working day at 08:00 (the cron below); the digest file keeps at most `NOTIFY_DIGEST_MAX_LINES` lines |
 
 Deny by default. The daemons' old one-argument `notify "<emoji> text"` now goes through
 `notify_legacy`: a leading red circle is `action`, everything else is `info`. Nothing
@@ -36,16 +36,41 @@ pages unless the call site says `page`. The CLI `bin/notify-operator.sh TITLE ME
 [page|action|info]` maps the old priorities down: `urgent` and `high` are `action`.
 
 Every decision is one line in `$TEAM_DIR/reports/operator-pings.log`:
-`<utc> | SENT|LOG-ONLY|DEDUPE|MUTED|QUEUED|DIGEST|FLUSHED|RESOLVED|CLEARED <class> <subject> :: <body>`.
-A ping exists when the log says SENT; QUEUED and DIGEST mean the policy accepted it and
-will deliver it on its own schedule.
+`<utc> | <DECISION> <class> [<prio>] <subject> :: <body>`, where DECISION is SENT,
+LOG-ONLY (no `NTFY_URL`, or the push failed), DEDUPE, MUTED, QUEUED, DIGEST, DEMOTED or
+BAD-CLASS; the flush and digest steps log FLUSHED, FLUSH-FAILED, DIGEST-SENT,
+DIGEST-FAILED and DIGEST-EMPTY. A failed push adds a PUSH-FAIL line with curl's exit
+code and the HTTP status (curl runs with `-f`, so an HTTP 4xx or 5xx from ntfy is a
+failure, not a delivery). DIGEST-TRIMMED records info lines dropped at the digest cap, and
+LOCK-SKIPPED a queue or digest write made without its lock. A ping exists when the log says
+SENT; QUEUED and DIGEST mean the policy accepted it and will deliver it on its own schedule.
 
 ## Maintenance mute
 
 Before planned work an operator runs `bin/notify-operator.sh --mute '2026-09-07 08:30'`
-(or writes the instant to `$TEAM_DIR/health/maintenance-until`). Actions and info are held
-and logged MUTED; pages still go, prefixed. `--unmute` ends it early. A relaunch or reboot
+(or writes the instant to `$TEAM_DIR/health/maintenance-until`). `--mute` takes an epoch or
+any `date -d` string, resolves it once and stores the epoch; a value that does not parse, or
+is not in the future, is refused with exit 2 and nothing is written. Actions are dropped and
+logged MUTED (not queued, not delivered later); info still goes to the digest, which never
+pushes on its own; pages still go, prefixed. `--unmute` ends it early. A relaunch or reboot
 without a mute is the 07:31 row above.
+
+## Configuration (environment, read by bin/lib/notify.sh)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NTFY_URL` | unset | ntfy topic URL; unset = log only, every decision still logged |
+| `NOTIFY_ACTION_SOURCES` | unset (every sender) | space-separated `NOTIFY_SOURCE` names whose `action` pushes; any other sender's action is DEMOTED to the digest; `""` or `*` = every sender |
+| `NOTIFY_SOURCE` | unset | the calling daemon's name; checked against the list above, subject prefix for `notify_legacy` |
+| `NOTIFY_HOURS`, `NOTIFY_DAYS`, `NOTIFY_TZ` | `0700-1900`, `1-5`, `Europe/Zurich` | the push window for `action`; outside it actions are queued |
+| `NOTIFY_ACTION_COOLDOWN_SEC` | `21600` | one `action` push per subject per this many seconds |
+| `NOTIFY_PAGE_REPEAT_SEC` | `1800` | a repeated `page` for the same subject goes out again after this many seconds |
+| `NOTIFY_DIGEST_MAX_LINES` | `1000` | cap on the info digest: an append that takes it past the cap drops the oldest lines down to 90% of it and logs DIGEST-TRIMMED with the count; `0` = no cap |
+| `NOTIFY_MUTE_FILE` | `$TEAM_DIR/health/maintenance-until` | the maintenance mute (see above) |
+| `NOTIFY_LOG` | `$TEAM_DIR/reports/operator-pings.log` | the decision log |
+| `NOTIFY_STATE_DIR` | `$TEAM_DIR/health/notify` | dedupe stamps, the out-of-hours queue, the digest |
+| `NOTIFY_SINK` | unset | tests: append `prio\|title\|body` to this file instead of pushing; with it set, an unset `NOTIFY_LOG` and `NOTIFY_STATE_DIR` default to `${NOTIFY_SINK}.log` and `${NOTIFY_SINK}.state` |
+| `NOTIFY_NOW` | `date +%s` | tests: the current time as an epoch |
 
 ## Cron
 
@@ -93,12 +118,13 @@ and a production write once executed (the operator wants to see those in the dig
 ## Coverage that did not exist on 2026-09-07 and must be built (engine work)
 
 1. Production availability probe from the box, every 5 minutes, `page` on two consecutive
-   failures, `notify_resolved` on recovery. The laptop monitor probes dev and preprod only.
+   failures. The laptop monitor probes dev and preprod only.
 2. dev and preprod down in working hours: `action`, with the team's own declaration in
    `health/env-availability.json` quoted.
 3. TLS expiry, daily: `action` under 14 days, `page` under 3.
-4. `bin/backup-state.sh` every two hours in the crontab, and `action` when the backup repo
-   has not been pushed for 24 hours (it had not been pushed for 19 days).
+4. A state backup every two hours in the crontab (this repository contains no
+   backup script), and `action` when the backup repo has not been pushed for 24 hours (it had
+   not been pushed for 19 days).
 5. OAuth death: `page` when the token is past `expiresAt` and no session has answered in
    15 minutes.
 6. Delivery-monitor findings routed as `page` (quarantine, error file) or
@@ -110,8 +136,9 @@ and a production write once executed (the operator wants to see those in the dig
 
 ## Maintenance mute/unmute procedure
 
-Before a planned restart or maintenance window, mute action/info notifications so
-they queue instead of firing during the downtime:
+Before a planned restart or maintenance window, mute action notifications so they do
+not fire during the downtime. A muted action is dropped (logged MUTED), not queued; a
+condition that still holds after the window is pushed by its daemon's next check:
 
 ```bash
 bin/notify-operator.sh --mute "$(date -d '+2 hours' +%s)"   # mute for 2 hours
@@ -122,7 +149,7 @@ Pages still go through (prefixed `[maintenance]`). After the window:
 
 ```bash
 bin/notify-operator.sh --unmute
-bin/notify-operator.sh --flush    # push any actions queued during mute
+bin/notify-operator.sh --flush    # push actions queued OUT OF HOURS (a mute queues nothing)
 ```
 
-The daily cron (08:03 Zurich) flushes automatically on workday mornings.
+The daily `--digest` cron above (08:00 Mon-Fri) flushes the out-of-hours queue on workday mornings.

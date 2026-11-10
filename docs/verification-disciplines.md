@@ -1,6 +1,6 @@
 # Verification disciplines
 
-Four binding disciplines for any team that diagnoses and fixes real systems.
+Seven binding disciplines for any team that diagnoses and fixes real systems.
 The waste that dominates a run is not slow work but REWORK from wrong premises:
 a fix built on a wrong diagnosis costs the build, the review, the verify, and
 the re-diagnosis. Each discipline below exists because its absence produced
@@ -136,9 +136,9 @@ habit. The corrected form, `<login> (<name from the profile>)`, keeps the identi
 so the next reader can check it in one call.
 
 The same discipline applies to agreement: "the vendor knows and agreed" is not a
-record; "<engineer>, message <id>, 12:57: finish manually" is. The
-authority model's quoted-OK rule (docs/authority-model.md) is this discipline
-applied to consent.
+record; "<engineer>, message <id>, 12:57: finish manually" is. Consent counts
+only when it is quoted with the identifier, the time and the words of the
+person who gave it.
 
 ## 7. Guard-exit reading
 

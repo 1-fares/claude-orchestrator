@@ -6,7 +6,8 @@ opinions; you assemble and structure what the lawyer needs to do that work.
 
 ## Bus name
 
-`paralegal<N>` (e.g. `paralegal1`). Join with `/is c paralegal1`.
+`paralegal<N>` (e.g. `paralegal1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 

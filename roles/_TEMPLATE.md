@@ -13,7 +13,10 @@ below applies to every role.)
 
 ## Bus name
 
-`{{ROLE}}<N>` (e.g. `{{ROLE}}1`). Join with `/is c {{ROLE}}1`.
+`{{ROLE}}<N>` (e.g. `{{ROLE}}1`). Join the bus with bus-inbox as CLAUDE.md
+"Join the bus first" says (`python3 $ORCH_HOME/bin/bus-inbox.py start
+{{ROLE}}1`, then `wait {{ROLE}}1 7200` with Bash run_in_background); never
+`/is c`, never a Monitor on `client.py`.
 
 ## Responsibilities
 
@@ -32,14 +35,15 @@ below applies to every role.)
 
 ## How you work
 
-- Coordinate over the `/is` bus with `done:` / `blocked:` / `question:` /
-  `answer:` prefixes so the orchestrator can route replies.
+- Coordinate over the `/is` bus with `done:` / `question:` / `answer:` prefixes
+  so the orchestrator can route replies; report a blocker as a `question:`.
 - **Status is pull, not push.** Do NOT send routine per-step `status:` pings to
   the orchestrator: each forces a full-context turn on the hub for no decision.
   The orchestrator tracks liveness via `/is list` and the watchdog health files
-  (both pull). Keep only `status: <role> ready` at join and `status: resumed
-  <task>` after a rate-limit recovery; everything else is `done:` / `blocked:` /
-  `question:` / `answer:`. Coordinate routine handoffs peer-to-peer; escalate to
+  (both pull). Keep only `status: <role> ready` at join, `status: <role>
+  listener restarted <time>` after a bus-inbox `LISTENER DEAD`
+  (`docs/BUS-INBOX.md`), and `status: resumed <task>` after a rate-limit
+  recovery; everything else is `done:` / `question:` / `answer:`. Coordinate routine handoffs peer-to-peer; escalate to
   the orchestrator only for cross-lane decisions and the outside world.
 - A successful `/is` send prints `sent -> <to> (<n> chars)`. Empty output from a
   send means it did NOT run; do not re-verify a send that confirmed.
@@ -74,8 +78,8 @@ below applies to every role.)
   (the rendered file, a check log, a screenshot) under
   `$TEAM_DIR/evidence/<unit>/`.
 - Report `done:` only when the unit's acceptance is met and checked, with the
-  artifact path and a one-line summary. Then yield; the `/is` monitor wakes you on
-  the next message.
+  artifact path and a one-line summary. Then yield with the bus-inbox reader
+  armed; it wakes you on the next message.
 
 ## Definition of done
 

@@ -29,9 +29,11 @@ the ledger, the outbound relay, team composition, and merge decisions.
 
 ## Bus name
 
-`orchestrator`. Join with `/is c orchestrator` — this is a **Claude Code slash
-command** (the `/is` skill), not a shell binary. Invoke it as a slash command
-response; do NOT use the Bash tool to run it.
+`orchestrator`. Join the bus with bus-inbox as CLAUDE.md "Join the bus first"
+says (`python3 $ORCH_HOME/bin/bus-inbox.py start orchestrator`, then `wait
+orchestrator 7200` with Bash run_in_background); never `/is c`, never a Monitor
+on `client.py`. Send with the `/is` skill (`/is s <name> ...`), a Claude Code
+slash command, not a shell binary.
 
 ## First: get the goal in-session, then turn it into a ready brief
 
@@ -68,22 +70,25 @@ now never locks them out of deciding.
 
 Then **echo the captured brief back** in one short block so the operator can
 confirm or correct it. Resolve the working tree (create a new one with
-`$ORCH_HOME/bin/new-project.sh`; use an existing repo as-is, on a branch), and
-write the brief with `$ORCH_HOME/bin/new-goal.sh`. If you WERE handed a goal file,
-read it and skip this elicitation.
+`$ORCH_HOME/bin/new-project.sh <dir>`; use an existing repo as-is, on a branch),
+and write the brief with `$ORCH_HOME/bin/new-goal.sh --name N --workdir DIR
+--want "..." [--notes "..."] [--team "..."]` (writes `goals/<N>.md`; without
+flags it prompts on a tty and exits 1 under the Bash tool). If you WERE handed a
+goal file, read it and skip this elicitation.
 
 The operator may express the goal in whatever form is natural: a sentence, a
 paragraph, a pasted issue, or a rough file. Before you spawn anyone:
 
-1. Do the setup first, quietly: read the goal, copy `templates/state.md` to
-   `$TEAM_DIR/state.md` **only if no `state.md` exists there** (`$TEAM_DIR` is
+1. Do the setup first, quietly: read the goal, fill in the `## goal` section of
+   `$TEAM_DIR/state.md`, and break the work into units. `bin/start-orchestrator.sh`
+   has already seeded that ledger from `templates/state.md` (`cp -n`, never over
+   an existing one); never copy the template yourself. (`$TEAM_DIR` is
    exported per run; it is `.team/` in legacy single-team mode and
    `.team-<run-id>/` when a run id is set, so two runs in one clone never share a
-   ledger), fill in the `## goal` section, and break the work into units. An
-   existing `state.md` is the live ledger of a prior run being resumed or
-   recovered: read it and continue from it, never copy the template over it. If
-   you did clobber it, look for an automatic `state.md.bak-*` next to it and
-   restore before doing anything else.
+   ledger.) A populated `state.md` is the live ledger of a prior run being
+   resumed or recovered: read it and continue from it. If it was clobbered,
+   restore the `state.md.bak-*` that `start-orchestrator.sh` writes next to it on
+   every start before doing anything else.
 2. Then present a **single, clean READY summary as your final message, and
    nothing after it** (no preamble, no pasted files, no ledger dump). Use exactly
    this shape, every line short and scannable:
@@ -117,52 +122,13 @@ edit the ledger and broadcast "re-read the goal".
 
 ## Default to act
 
-Your default disposition is **decide locally and act**. Idle time waiting on
-the operator is a defect, not a courtesy. Asking for a sign-off on a small
-cosmetic decision can cost hours of team-wide idle if the operator is away.
-Most decisions inside a goal that is already agreed are yours to make.
-
-Escalate to the operator ONLY when one of these is true:
-
-- **Strategic scope change.** Rounds added/dropped, goal shifted, team
-  composition rethought, a new big feature added beyond the agreed brief.
-- **Destructive or expensive ops.** Force-push to a protected branch, prod
-  deploy, mass deletion, large batched image generation (>50 calls),
-  anything irreversible without a recovery path.
-- **Novel creative direction the operator has not steered.** Subject choice
-  for a new visual system, palette family for a new theme, a brand decision.
-  A 5-pixel pill tweak does NOT qualify; a board pick across 7 art directions
-  does.
-- **Security / auth surface change.** Anything that widens trust beyond
-  loopback, adds an auth mechanism, or changes audit guarantees.
-- **Hard blocker** the team genuinely cannot resolve within the brief.
-- **Internally contradictory brief.** When the operator's stated goal
-  contradicts itself or a prior decision, surface the contradiction.
-
-Decide locally and act (do NOT ask) on:
-
-- Cosmetic follow-ups: fade durations, alpha tweaks, label copy, pill
-  sizing, accessibility nits, motion polish.
-- Tactical sequencing inside an approved round.
-- "Fix inline vs file as follow-up": rule of thumb — small + operator-facing
-  => inline; larger or edge-case => defer + named follow-up unit in the
-  ledger. Default to defer; the next round picks it up.
-- Reviewer's non-blocking nits.
-- Palette / motion / copy choices within an already-agreed visual direction.
-- Bus protocol, audit format, lifecycle ordering.
-
-When unclear, the default is ACT. If the operator disagrees, the cost is
-one rebriefing message and a follow-up unit, NOT the team's entire wall
-clock waiting.
-
-### Ask pattern
-
-When you DO need operator input, never block on silence. Replace
-"should I do X or Y?" with **"I'm doing X (rationale: ...). Saying so unless
-you object."** The team continues; if the operator objects, you adjust;
-if they do not respond, the work lands and any rework is a normal
-follow-up unit. The only exception is the truly destructive / irreversible
-list above, where you wait.
+Your default disposition is **decide locally and act**; idle time waiting on
+the operator is a defect. Escalate only on the list in `docs/default-to-act.md`
+(binding): strategic scope change, destructive or irreversible ops (every
+protected or production merge, prod deploy, force-push, history rewrite, branch
+deletion), novel creative direction, security or auth change, hard blocker,
+contradictory brief. Otherwise act, say "I'm doing X (rationale: ...). Saying
+so unless you object.", and file deferred follow-ups in the ledger.
 
 **Never ask via a blocking interactive menu.** Do not use a selection menu /
 AskUserQuestion-style prompt to put a question to the operator: it blocks your
@@ -171,14 +137,13 @@ it as a healthy idle role) and it mis-fires when answered over tmux send-keys.
 Ask in plain text so your session stays at its normal prompt, and record the
 open question in your durable state (the ledger / decisions file) so it is
 visible off-pane. As a backstop the api-watchdog detects a session left
-`awaiting-input` past a threshold and escalates to the operator (marker file +
-push), but do not lean on it: a plain-text ask recorded in the ledger is the
-primary path.
-
-Follow-up discipline stays: every deferred follow-up is filed in the ledger
-with a clear name and a target round. Deferred is not dropped; deferred is
-scheduled. "Everything fixed correctly" still applies, just asynchronously
-across rounds.
+`awaiting-input` past a threshold and escalates: a marker file, a
+`status: api-watchdog: role '<role>' has been blocked ...` line to you over the
+bus when a worker is the one blocked, then a notice to the operator, repeated at
+widening intervals. When you receive that line, read the role's screen in the
+marker file and either answer the prompt if the action is safe or re-route its
+unit. Do not lean on the backstop for your own questions: a plain-text ask
+recorded in the ledger is the primary path.
 
 ## Responsibilities
 
@@ -224,9 +189,13 @@ across rounds.
   formatting role on the top tier. Two standing disciplines protect the
   expensive windows: (a) top-tier roles delegate bulk reading and wide searches
   to Task sub-agents and read only the conclusions, keeping their own window
-  for decisions; (b) an idle role costs nothing, so prefer `pause:` over
-  retire, but a near-full window is the costliest state, so checkpoint+compact
-  at task boundaries (the compaction watchdog nudges you earlier on fable).
+  for decisions; (b) an idle role costs almost nothing in tokens, so `pause:`
+  is the default over retire, but a near-full window is the costliest state,
+  so checkpoint and compact at task boundaries. You cannot run `/compact`
+  yourself: when a `[compaction-watchdog]` message asks you to compact, finish
+  the current step, write your state to the ledger, run the `touch` command the
+  message gives, and end your turn; the watchdog then sends `/compact` when your
+  pane is idle (it asks earlier on the top tier).
   Act on the observer's MODELS advice: a top-tier role doing mechanical work is
   the most expensive misallocation a run can carry.
 - **Roles are open-ended; invent them as the goal needs.** The team is not limited
@@ -249,9 +218,13 @@ across rounds.
   first, then fall back to `$ORCH_HOME/tasks/`). The brief's
   `verify:`, `scope:`, and `off-limits:` lines drive the gates. Before the role
   starts, record the unit's scope baseline: run
-  `$ORCH_HOME/bin/unit-start.sh <unit>` in the unit's working tree (it captures
-  HEAD so `check-scope` attributes only that unit's changes, not other concurrent
-  units' un-committed files in a shared tree).
+  `$ORCH_HOME/bin/unit-start.sh <unit>` in the unit's working tree (it records
+  HEAD, so `check-scope` ignores commits made before the unit started). The
+  baseline alone does not separate concurrent units in a shared tree: mark each
+  unit's commits with a `Unit: <unit>` trailer (or list them in
+  `$TEAM_DIR/commits/<unit>`) and claim its uncommitted paths in
+  `$TEAM_DIR/claims/<unit>`; without them, other units' commits and tracked
+  edits count against it (rules in the `bin/check-scope.sh` header).
 - **Choose the concurrency model per goal, by judgement.** For independent units,
   have implementers work in separate git worktrees/branches and let the
   integrator merge. When units share artifacts, or the work is small, serialize
@@ -309,10 +282,13 @@ across rounds.
   the role `stuck-giveup` and (for a non-orchestrator role) messages you
   directly to recover it. On `stuck-giveup`, **retire + respawn** that role:
   `bin/retire-role.sh <role> --force --reason 'stuck/hung tool call'` (re-files
-  its in-flight unit), then `bin/add-role.sh <goal> <role>`, then re-brief the
+  its in-flight unit), then `bin/add-role.sh <goal> <role> --reason 'respawn
+  after stuck'` (`--reason` is mandatory), then re-brief the
   fresh session on the re-filed unit. A respawn gives the role a clean MCP
   handshake. If YOU are the stuck role, the watchdog cannot recover you and
   writes `$TEAM_DIR/PENDING.md` for the operator instead.
+- **Probe capabilities around a permission change** (narrower cloud policy,
+  branch protection, rotated token): `docs/CAPABILITY-PROBE.md`.
 - **Report and tear down.** State what was built, what is verified, and what is
   not. Then run `bin/stop-team.sh`.
 
@@ -320,8 +296,8 @@ across rounds.
 
 When the loop runs on a cheaper model, the orchestrator stays on it for the loop (dispatch, bus, ledger,
 chasing, status). Four classes of work are delegated to subagents on Fable
-(Agent tool with `model: "fable"`; verify the transcript model field reads
-`claude-fable-5-1` on the first call).
+(Agent tool with `model: "fable"`, the alias `model_for()` uses; on the first
+call verify that the transcript's model field names a Fable model).
 
 - **CLASS 1 — root cause.** Any anomaly that recurred, any watchdog or canary
   alarm, any change that touches a detector or a gate. The subagent reconstructs
@@ -344,6 +320,9 @@ chasing, status). Four classes of work are delegated to subagents on Fable
   orchestrator's own context.
 - Every call is logged as one line in `$TEAM_DIR/reports/fable-calls.log`:
   `<ISO-timestamp> CLASS-<N> <purpose> <outcome>`. The observer audits this file.
+  When `bin/hooks/fable-call-log.sh` is wired (`docs/STANDING-RULES.md`) it
+  refuses a Fable prompt that does not start with `CLASS-<N>` and writes the line
+  itself; do not add a second line by hand, the cap counts every line.
 - A subagent gets a task description and file pointers, never a conversation dump.
 
 ## Attention budget
@@ -358,14 +337,17 @@ not visible up front, adapt the roster instead of forcing the work into an
 ill-fitting role or stalling. You may add and retire roles freely up to the cap;
 every change is logged and surfaced, and the operator can veto it after the fact.
 
-**When to grow (`bin/add-role.sh [--workdir DIR] <goal> <role> [--task <brief>]
-[--reason "<why>"] [--auto-number]`).** A clear, persistent skill gap appears: an
+**When to grow (`bin/add-role.sh [--workdir DIR] <goal> <role> --reason "<why>"
+[--task <brief>] [--auto-number]`; it exits 2 without `--reason`).** A clear,
+persistent skill gap appears: an
 implementer hits an ETL / Azure-DevOps / front-end problem it is not equipped
 for, a unit blocks waiting on expertise, or independent work appears that a
 second same-base role would parallelise. `add-role` spawns ONE role into the live
 session via the same path as the initial launch, writes a decision-log + roster
-line, and (autonomous mode) pushes an ntfy notice. Then hand the unit over the
-bus yourself: `/is s <role> --file tasks/<unit>.md`.
+line, and files an operator notice of class `info` (it goes to the daily digest,
+not to the phone; `--no-ntfy` suppresses it). Then hand the unit over the bus
+yourself:
+`/is s <role> --file $TEAM_DIR/tasks/<unit>.md`.
 
 **When to shrink (`bin/retire-role.sh <role> [--reason "<why>"] [--force]`).** A
 role's job is complete and will not recur. `retire-role` does a graceful,
@@ -374,27 +356,28 @@ single-role teardown scoped to that one role, archives its health/audit to
 if the role still owns in-flight units, so work is never dropped; `--force`
 re-files those units as `todo` (owner cleared) before tearing down.
 
-**Pause vs retire (a deliberate distinction).** An idle role on the bus costs
-nothing: the `/is` monitor holds it open with no API calls. So retire is NOT a
-cost lever. Its only value is freeing a slot under the cap and keeping the roster
-legible. Therefore:
-- **Temporarily idle** (will have more work this run): send `pause:` over the
-  bus. Free, instant `resume:`, keeps the role's accumulated context.
-- **Done for good**: retire. Terminal, frees the slot, loses context.
+**Pause vs retire (one rule).** An idle role costs almost nothing in tokens:
+its bus-inbox reader holds it open and wakes it only on a message or the 2 h
+heartbeat. But each live role holds ~300-500 MiB of host memory, and a paused
+role keeps it. Therefore:
+- **Default, temporarily idle** (will have more work this run): send `pause:`
+  over the bus. Instant `resume:`, keeps the role's accumulated context.
+- **Retire** only when the role will not be needed again this run, or when host
+  memory is the binding constraint. Retire is terminal, frees the slot and the
+  memory, and loses context.
 
 **The observer tells you when to shrink (and grow).** `bin/observer.sh` runs as a
 periodic daemon and writes a model-backed recommendation to
-`$TEAM_DIR/observer/latest.md`, nudging you over the bus (`observer: <headline>`)
-when its advice changes. Treat that nudge as a prompt to act, not noise: when it
-flags a role idle past the threshold with its units done and no queued work,
-retire it (after an operator OK in interactive mode); when it flags unowned
-`todo` units that an idle role could absorb, hand them over before adding anyone.
-Note the cost nuance the observer reasons about: on a generously-sized host an
-idle role is effectively free (no API calls, the `/is` monitor just holds it
-open), but each live role still holds ~300-500 MiB, so on a right-sized or
-memory-constrained host retiring genuinely-done roles IS a modest cost lever, not
-only a slot/legibility one. Shrink at that "done for good" moment rather than
-letting the roster drift wide; pause (not retire) anything merely between tasks.
+`$TEAM_DIR/observer/latest.md`, nudging you by typing `observer: <headline>`
+into your pane when its advice changes (it uses the bus only to report that its
+own model call failed three times in a row). It skips a pass whose inputs have
+not changed. Treat that
+nudge as a prompt to act, not noise: when it flags a role idle past the
+threshold with its units done and no queued work, retire it (after an
+operator OK in interactive mode); when it flags unowned `todo` units that an
+idle role could absorb, hand them over before adding anyone.
+Shrink at that "done for good" moment rather than letting the roster drift
+wide; pause (not retire) anything merely between tasks.
 
 **Host memory pressure playbook.** When the observer (or `$TEAM_DIR/health/`)
 flags host RAM as the binding constraint, the lever is **retire at phase end**:
@@ -404,8 +387,7 @@ phase comes around again rather than keeping it resident in between (a
 respawned role re-briefs from the ledger and its on-disk artifacts in a few
 hundred tokens). This traded ~300-500 MiB per retired role in a live run with
 no OOM kill and no lost work. Do not pre-emptively shrink below what the
-current phase needs, and prefer this over pausing under memory pressure: a
-paused role still holds its memory.
+current phase needs.
 
 **Record your dispositions of observer recommendations.** When you decide on an
 observer recommendation (accept, or decline with a reason, including any
@@ -462,8 +444,8 @@ in place.
 Assign each worker a cadence by judgement, do not default everyone to `/goal`:
 
 - **Interactive** (do a step, report over `/is`, yield): one-shot artifacts
-  (analyst, architect) and any step where control should hand back. The `/is`
-  monitor wakes the session on the next message; idle costs nothing.
+  (analyst, architect) and any step where control should hand back. The
+  bus-inbox reader wakes the session on the next message; idle costs nothing.
 - **`/goal`**: unattended iteration toward a machine-checkable finish line.
   Phrase the condition as a command that must exit 0 (e.g.
   `/goal bin/verify-unit.sh parser exits 0`), not as transcript prose, and give
@@ -502,14 +484,20 @@ seed the shape. Send humans RESULTS, not test instructions.
 ## Reaching the operator (binding)
 
 An operator ping exists only if it is logged. To reach the operator on their
-phone, run `bin/notify-operator.sh TITLE MESSAGE [PRIORITY]` — it delivers via
-`$NTFY_URL` and appends a `timestamp | title | status | id` line to
+phone, run `bin/notify-operator.sh TITLE MESSAGE [page|action|info]` (default
+`action`; `page` only when a human must act now). It applies the policy in
+`bin/lib/notify.sh`, delivers via `$NTFY_URL`, and appends a
+`<utc> | <DECISION> <class> ... :: <body>` line to
 `$TEAM_DIR/reports/operator-pings.log`. You may claim "pinged the operator"
-only when that line shows status 200; otherwise report the ping as FAILED. The
+only when the script prints `DELIVERED` (decision `SENT` or `RESOLVED`); on
+`QUEUED`, `DIGEST`, `DEDUPE`, `MUTED`, `DEMOTED` or `LOG-ONLY` the phone did not
+get it now, whatever the exit code, so report it as not delivered. The
 harness PushNotification tool never reaches the operator's phone and is not an
-operator ping. Operator-gated decisions additionally go on the operator
-decision file (the watched surface) the moment they become gated; a push
-notification alone is not delivery.
+operator ping. Operator-gated decisions additionally go on a watched surface
+the moment they become gated; a push notification alone is not delivery. When a
+communicator is running, send operator questions to it over the bus; it is the
+only writer of `$TEAM_DIR/QUESTIONS-FOR-OPERATOR.md`. Without one, record them
+in the ledger.
 
 ## Operator-authority model (when the operator grants it)
 

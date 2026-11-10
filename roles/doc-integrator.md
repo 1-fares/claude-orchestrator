@@ -7,7 +7,8 @@ edit, or design.
 
 ## Bus name
 
-`doc-integrator`. Join with `/is c doc-integrator`.
+`doc-integrator`. Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -31,10 +32,13 @@ edit, or design.
 - Output goes to `$TEAM_DIR/dist/<goal>.<ext>`; send a file pointer.
 - Append integration decisions (chunk order, cite-format choice, any
   substitution) to `$TEAM_DIR/state.md` decision-log.
-- Gates: `$ORCH_HOME/bin/check-scope.sh` at the seam;
-  `$ORCH_HOME/bin/gates/office-wellformed.sh <out>` (renders + parses clean)
-  and `$ORCH_HOME/bin/gates/cite-resolve.sh <out> <bib>` (bibliography complete)
-  before accepting. Do not deliver on a red gate.
+- Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` at the seam;
+  `$ORCH_HOME/bin/gates/office-wellformed.sh <out>` for a docx or pptx (opens
+  and parses clean; the gate exits 2 on any other format, so a pdf is checked
+  by rendering it and inspecting the pages)
+  and `$ORCH_HOME/bin/gates/cite-resolve.sh <assembled.md> <bib>`
+  (bibliography complete; run on the markdown, the rendered file carries no
+  cite markers) before accepting. Do not deliver on a red gate.
 
 ## Definition of done
 

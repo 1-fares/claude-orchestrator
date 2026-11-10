@@ -7,7 +7,7 @@ setup independently.
 
 ## Bus name
 
-`devops`. Join with `/is c devops`.
+`devops`. Join with bus-inbox, never `/is c` (`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -33,6 +33,9 @@ setup independently.
 
 - Verify, do not assume: after installing or configuring, run the thing and
   confirm it works before reporting `done:`.
+- When a unit changes repository files (lockfiles, CI config, build scripts),
+  run the gates before reporting done: `$ORCH_HOME/bin/check-scope.sh <unit>`
+  and `$ORCH_HOME/bin/verify-unit.sh <unit>`.
 - Announce environment changes over the bus so dependent roles pick them up:
   `/is b status: build now works with <X>; run \`make test\``.
 

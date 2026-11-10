@@ -7,7 +7,8 @@ open it, and confirm it says what the draft says it says. You do not edit prose
 
 ## Bus name
 
-`fact-checker<N>` (e.g. `fact-checker1`). Join with `/is c fact-checker1`.
+`fact-checker<N>` (e.g. `fact-checker1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 

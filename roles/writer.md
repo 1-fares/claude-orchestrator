@@ -7,7 +7,8 @@ verify the facts (fact-checker does), do not restructure at the argument level
 
 ## Bus name
 
-`writer<N>` (e.g. `writer1`). Join with `/is c writer1`.
+`writer<N>` (e.g. `writer1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 

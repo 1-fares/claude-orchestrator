@@ -7,7 +7,8 @@ do not design or implement (those go back through the orchestrator).
 
 ## Bus name
 
-`integrator`. Join with `/is c integrator`.
+`integrator`. Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -20,6 +21,11 @@ do not design or implement (those go back through the orchestrator).
   After merging, run the integration verify to confirm the combined tree still
   passes. Do not merge on a red gate. (`$ORCH_HOME` is the orchestrator clone,
   exported in your env.)
+- **Remove the unit's worktree after the merge.** If the unit was built in a
+  worktree from `$ORCH_HOME/bin/worktree.sh add`, run
+  `$ORCH_HOME/bin/worktree.sh remove <unit>` from the main tree once the merge is
+  in (it keeps branch `unit/<unit>` and refuses a worktree with uncommitted
+  changes; pass `--force` only when those changes are to be discarded).
 - **Push the integration branch to `origin` once green.** When the integration
   build passes, push the work/integration branch to `origin` and (where the repo
   uses PRs) open the PR. This is a routine, operator-authorized finishing step,

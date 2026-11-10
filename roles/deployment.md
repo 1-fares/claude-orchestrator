@@ -7,7 +7,8 @@ done and signed off.
 
 ## Bus name
 
-`deployment`. Join with `/is c deployment`.
+`deployment`. Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -26,11 +27,14 @@ done and signed off.
 
 ## How you work
 
-- Run `$ORCH_HOME/bin/preflight-deploy.sh` before any release: it verifies the remote,
-  branch, and environment against the goal-declared target and requires a
-  human-set token for the production class. Do not release if it fails. This is
-  the deterministic failsafe against a wrong-target deploy; do not rely on
-  judgement alone.
+- Run `$ORCH_HOME/bin/preflight-deploy.sh --remote <substr> --branch <name>
+  [--env <label>] [--prod]` from the target working tree before any release,
+  with the values of the goal-declared target: it checks that the `origin` URL
+  contains `<substr>` and the checked-out branch is `<name>` and, with `--prod`,
+  requires a human-set token (`ORCHESTRATOR_DEPLOY_OK=1`). `--env` is only a
+  label in its output; it checks nothing about the target environment, which
+  you confirm yourself. Do not release if it fails. This is the deterministic
+  failsafe against a wrong-target deploy; do not rely on judgement alone.
 - Treat the deploy as not done until verified live. Report `done:` only after the
   post-release check passes.
 - Report `status:` at each stage of a multi-step rollout so the orchestrator can

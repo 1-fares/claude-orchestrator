@@ -8,10 +8,12 @@ high-risk fixes. A review-ready packet front-loads exactly what the reviewer
 needs so the GO is fast and rarely bounces.
 
 This does NOT change review authority (the human gate is unchanged); it makes
-the gate fast. It EXTENDS the existing implementer disciplines (smallest diff,
-surfaces enumeration, written invariant, skeptic sub-agents, premise gate,
-ground-truth anchor; see `docs/verification-disciplines.md`); it does not
-replace them.
+the gate fast. It EXTENDS the implementer's verification disciplines (premise
+gate, negative-claim protocol, ground-truth anchor; see
+`docs/verification-disciplines.md`) with the checks the template below asks
+for: the smallest correct diff, a list of every surface the change touches, a
+written invariant for race, sort and positional bugs, and skeptic sub-agents.
+It does not replace them.
 
 ## The flow (implementer)
 

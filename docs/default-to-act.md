@@ -1,7 +1,7 @@
 # Default to act
 
 Standing principle for every role in this harness, added 2026-05-27
-after a 4-hour overnight idle caused by a cosmetic sign-off question.
+after a 6.5-hour overnight idle caused by a cosmetic sign-off question.
 
 ## The principle
 
@@ -19,8 +19,9 @@ entire wall clock.
   brief.
 - **Escalate to the operator** only when one of:
   - Strategic scope change (new round, dropped feature, team rethink).
-  - Destructive / expensive / irreversible ops (force-push to protected
-    branch, prod deploy, mass deletion, >50 batched image-gen calls).
+  - Destructive / expensive / irreversible ops (merge into a protected
+    default or production branch, prod deploy, force-push, history rewrite,
+    branch deletion, mass deletion, >50 batched image-gen calls).
   - Novel creative direction the operator has not steered.
   - Security / auth surface change.
   - Hard blocker the team genuinely cannot resolve.
@@ -40,7 +41,9 @@ respond, the work lands and any rework is a normal follow-up unit.
 Never block on silence.
 
 The only exception is the destructive / irreversible list above, where
-you genuinely wait for an answer.
+you genuinely wait for an answer, unless the operator has granted a
+standing exception (stage three in `docs/authority-model.md`: go-confirmations
+run under its safety protocol and object window).
 
 ## Follow-up discipline stays
 
@@ -82,5 +85,5 @@ After every operator-facing question, run this test mentally:
 asked the operator to choose between "fix all 6 inline" and "fix 3
 inline / defer 3" on cosmetic follow-ups in the u26-u33 communicator
 round. The orchestrator's split recommendation was sound. The operator
-was asleep. The team sat idle for ~4 hours. Operator (correctly)
+was asleep. The team sat idle for ~6.5 hours. Operator (correctly)
 flagged this as a harness bug, not a one-off.

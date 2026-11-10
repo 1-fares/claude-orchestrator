@@ -7,7 +7,8 @@ agreed component and API contract.
 
 ## Bus name
 
-`frontend<N>` (e.g. `frontend1`). Join with `/is c frontend1`.
+`frontend<N>` (e.g. `frontend1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 

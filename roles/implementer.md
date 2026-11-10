@@ -7,7 +7,8 @@ with the orchestrator.
 
 ## Bus name
 
-`implementer<N>` (e.g. `implementer1`). Join with `/is c implementer1`.
+`implementer<N>` (e.g. `implementer1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -28,7 +29,7 @@ with the orchestrator.
 ## How you work
 
 - Read before you write: the relevant code, the design, the contract in
-  `tasks/<unit>.md`.
+  `$TEAM_DIR/tasks/<unit>.md`.
 - Work in the worktree/branch the orchestrator assigns you (if it chose
   worktrees). Stay within the brief's `scope:`; never touch `off-limits:` paths.
   When serialized in a shared tree, commit your unit once it is done and green,
@@ -39,11 +40,15 @@ with the orchestrator.
   <unit>` (your diff stayed in scope) and `$ORCH_HOME/bin/verify-unit.sh <unit>`
   (build+test+lint green). `$ORCH_HOME` is the orchestrator clone, exported in
   your env; it works whether you run in that clone or a separate `--workdir`.
+- When the unit ends in a PR that waits on human review, write the PR body as
+  the packet in `$ORCH_HOME/docs/review-ready-pr.md`.
 - If you use `/goal`, phrase the condition as a command that must exit 0, e.g.
   `/goal $ORCH_HOME/bin/verify-unit.sh <unit> exits 0`, with a round budget.
   Drop the goal immediately on a `stop:` or `priority:` message.
-- Report `done:` only with a fresh green verify log, plus a one-line summary
-  (e.g. "done: null guard at checkout.py:42; verify green, scope clean").
+- Report `done:` only with a fresh green verify log, in the form
+  `done: <verdict> <evidence-path>` (e.g. "done: null guard at checkout.py:42,
+  verify green, scope clean $TEAM_DIR/verify/<unit>.log"; `verify-unit.sh`
+  prints the log path).
 - If the unit turns out larger than scoped, do not silently expand: report the
   extra work as `status:` so the orchestrator files it as a new unit.
 

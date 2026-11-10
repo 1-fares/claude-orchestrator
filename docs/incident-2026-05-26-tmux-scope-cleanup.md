@@ -1,6 +1,7 @@
 # Incident: 2026-05-26 — tmux server cleaned up by systemd, team lost
 
-**Status:** mitigated. Investigation + safeguards landed same day.
+**Status:** mitigated. Safeguards committed 2026-05-27 (`setsid`) and
+2026-05-28 (tmux watchdog and its lifecycle wiring).
 
 ## Summary
 
@@ -65,7 +66,7 @@ ledger and health JSON, both of which kept saying "OK" because no one was
 updating them. The first sign of the crash, from the operator side, was a
 `tmux capture-pane` failing with `no server running on /tmp/tmux-1000/orchestrator`.
 
-## Mitigations (landed same day)
+## Mitigations (committed 2026-05-27 and 2026-05-28)
 
 1. **`bin/tmux-watchdog.sh`** (new). Polls
    `tmux -L $TEAM_TMUX has-session -t $TEAM_SESSION` every 15 s. If the
@@ -104,12 +105,12 @@ updating them. The first sign of the crash, from the operator side, was a
 Same run-id resume worked:
 
 ```bash
-export TEAM_RUN_ID=r1779813443481305   # same id => same TEAM_DIR/state.md
+export TEAM_RUN_ID=<run-id>            # same id => same TEAM_DIR/state.md
 rm -f /tmp/tmux-1000/orchestrator      # remove the dead socket file
 mv $TEAM_DIR/active $TEAM_DIR/active.crashed-$(date +%s)
 touch $TEAM_DIR/active
 # append a "RECOVERY" line to $TEAM_DIR/state.md decision-log
-bin/start-orchestrator.sh goals/b11-redesign.md
+bin/start-orchestrator.sh goals/<goal>.md
 # then nudge the newly-spawned orchestrator with a recovery prompt explaining
 # it is a resume, naming the last in-flight unit, and listing the surviving
 # roles to relaunch via bin/launch-team.sh
@@ -127,5 +128,6 @@ unit in a few hundred tokens.
 - **Decide whether auto-restart should be added** behind an explicit
   `--auto-recover` flag. Today's choice is conservative (operator gates the
   decision). A B2-style autonomous run might want the opposite default.
-- **Snapshot rotation.** The snapshot dir grows unbounded over a long run.
-  Cap at the last N snapshots or rotate hourly.
+- **Snapshot rotation.** Not needed: each pass overwrites
+  `$TEAM_DIR/snapshots/<window>.txt` (`snapshot()` in `bin/tmux-watchdog.sh`),
+  so the directory holds one file per window name, not one per pass.

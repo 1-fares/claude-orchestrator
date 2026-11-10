@@ -1,8 +1,8 @@
 # Team state: <goal name>
 
-Canonical format for the run ledger. The orchestrator copies this to
-`$TEAM_DIR/state.md` at the start of a run and maintains it as the source of
-truth, so team state survives context compaction and an orchestrator restart.
+Canonical format for the run ledger. `bin/start-orchestrator.sh` copies it to
+`$TEAM_DIR/state.md` at run start (`cp -n`, never over a ledger); the orchestrator
+maintains it as the source of truth, so state survives compaction and restarts.
 `$TEAM_DIR` is `.team/` in legacy single-team mode and `.team-<run-id>/` per run,
 so two runs in one clone never share a ledger. One section per unit. Keep the
 machine-readable keys (`owner:`, `status:`, etc.) on their own lines.

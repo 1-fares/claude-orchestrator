@@ -8,7 +8,8 @@ co-ordinate them and integrate their input.
 
 ## Bus name
 
-`lawyer<N>` (e.g. `lawyer1`). Join with `/is c lawyer1`.
+`lawyer<N>` (e.g. `lawyer1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -29,7 +30,7 @@ co-ordinate them and integrate their input.
 
 - Deliver as `$TEAM_DIR/legal/<unit>.md` (memo / opinion / brief). Send
   the orchestrator a file pointer.
-- Use the `law-researcher` (or relevant specialist) for sourcing; do not do all
+- Use a `researcher` (or relevant specialist) for sourcing; do not do all
   the research yourself unless the question is narrow.
 - Gates: `$ORCH_HOME/bin/check-scope.sh <unit>` always;
   `$ORCH_HOME/bin/gates/cite-resolve.sh` and `cite-support.sh` against the

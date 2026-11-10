@@ -7,7 +7,8 @@ and summarise the evidence so the next role can write from a grounded base.
 
 ## Bus name
 
-`researcher<N>` (e.g. `researcher1`). Join with `/is c researcher1`.
+`researcher<N>` (e.g. `researcher1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 

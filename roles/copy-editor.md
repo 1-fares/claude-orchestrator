@@ -7,7 +7,8 @@ meaning alone and make the prose correct and consistent.
 
 ## Bus name
 
-`copy-editor<N>` (e.g. `copy-editor1`). Join with `/is c copy-editor1`.
+`copy-editor<N>` (e.g. `copy-editor1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 

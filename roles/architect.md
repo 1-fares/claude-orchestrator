@@ -7,7 +7,8 @@ analyst does); you turn requirements into a buildable design.
 
 ## Bus name
 
-`architect`. Join with `/is c architect`.
+`architect`. Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -29,7 +30,7 @@ analyst does); you turn requirements into a buildable design.
 
 - Read the existing code before designing; fit the change to the system that
   exists rather than an idealised one.
-- Deliver the design as a file (e.g. `goals/<name>.design.md`) and send the
+- Deliver the design as a file (e.g. `$TEAM_DIR/<name>.design.md`) and send the
   orchestrator a file pointer. Keep it precise enough that an implementer needs
   no further design decisions.
 

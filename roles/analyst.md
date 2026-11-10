@@ -6,7 +6,7 @@ architect) or implement it.
 
 ## Bus name
 
-`analyst`. Join with `/is c analyst`.
+`analyst`. Join with bus-inbox, never `/is c` (`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -26,7 +26,7 @@ architect) or implement it.
 
 - Investigate before asserting. Read the existing code, docs, and data to ground
   the requirements in what is really there, not what is assumed.
-- Deliver the requirements as a file (e.g. `goals/<name>.requirements.md`) and
+- Deliver the requirements as a file (e.g. `$TEAM_DIR/<name>.requirements.md`) and
   send the orchestrator a file pointer: `/is s orchestrator --file <path>`.
 
 ## Definition of done

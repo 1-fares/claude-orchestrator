@@ -28,8 +28,9 @@ second listener for this session is refused ("another monitor for this session i
 6. Delivery is AT-LEAST-ONCE: after a crash between print and cursor update, the next reader shows the
    same lines again. A message you have already acted on (same msg= id) is not acted on twice.
 7. Sending is unchanged: `/is s <peer> ...` (send.py), file pointers for anything over a sentence.
-   A send to a name that is briefly off the bus is retried for up to 30 s (`bin/bus-send.py`,
-   `BUS_SEND_RETRY_S`).
+   send.py does not retry: `error: unknown_peer: no agent matches` means the message was NOT sent;
+   send it again once the peer is back. Only daemons, which send through `bin/bus-send.py`, retry a
+   name that is briefly off the bus, for up to 30 s (`BUS_SEND_RETRY_S`).
 
 8. A launch prompt, a role file or a `/clear` rebrief may still say `/is c <your-name>`. Do this section
    instead. If `/is c` already armed a Monitor, TaskStop it first, then run step 1. After a `/clear` or a
@@ -47,3 +48,22 @@ second listener for this session is refused ("another monitor for this session i
 ```json
 "Stop": [{"hooks": [{"type": "command", "command": "$HOME/<engine>/bin/hooks/stop-bus-reader.sh", "timeout": 10}]}]
 ```
+
+### Skill steps this document replaces
+
+The bus skill's own prompt (the `/is` skill) describes a session that listens through a `Monitor`. A
+team role listens through bus-inbox instead, so where the two differ, this document wins:
+
+- Connecting: never `/is`, `/is c` or `/is <name>`, and never the skill's Monitor re-arm on expiry.
+  Run step 1 and step 2 above.
+- An `already running` line from the skill names a `listener_pid`. That is this session's own
+  bus-inbox listener: never kill it.
+- Rename (`/is r <new>`): TaskStop the reader, disconnect (`/is d`), then step 1 and step 2 with
+  `<new>`, then `/is s orchestrator 'status: <old> is now <new>'`.
+- Disconnect (`/is d`): only when the orchestrator says so. TaskStop the reader first. The
+  `LISTENER DEAD` that follows a deliberate disconnect is expected: do not restart the listener.
+  After the disconnect, run `touch "${BUS_INBOX_DIR:-$TEAM_DIR/bus-inbox}/<name>.disconnected"`:
+  the Stop hook (`bin/hooks/stop-bus-reader.sh`) then lets a turn end while the listener is down,
+  until the listener is back.
+- `not connected; run /is` from a send means the listener is dead: run step 1 (not `/is`), then
+  re-arm step 2.

@@ -1,10 +1,13 @@
-# Claude Code version pin
+# Claude Code version: auto-update block and minimum version
 
-A long-running team runs on a **pinned** Claude Code version. Upgrades are
-deliberate, never automatic. This doc records why, how the pin works, and the
-upgrade procedure (canary-green first).
+A long-running team should not change Claude Code version mid-run. The
+mechanism is not a pin: it is an auto-update block (`DISABLE_AUTOUPDATER`)
+plus the CLI's own `minimumVersion` setting. Nothing in `bin/` checks which
+version a role runs, so a manual `claude install` or `claude update` still
+changes it. This doc records why, how the block works, and the upgrade
+procedure (canary-green first).
 
-## Why pin
+## Why block auto-update
 
 Claude Code's **native** install auto-updates in the background of any running
 session and silently repoints `~/.local/bin/claude` to the newest version. In
@@ -16,25 +19,26 @@ mid-run; several supervisors parse the live pane (the compaction probe, the
 api-watchdog busy/stall detectors), and that surface is not a stable API.
 Upgrades become a deliberate step gated on a working-probe canary.
 
-## How the pin is enforced (two layers)
+## The mechanism (two layers)
 
 1. **Host-wide (authoritative):** `~/.claude/settings.json`
    - `env.DISABLE_AUTOUPDATER = "1"` stops the background auto-updater for every
      session under that user. `claude install <version>` still works, so a
      deliberate upgrade is unaffected.
-   - `minimumVersion = "<pinned>"` is a downgrade floor; a stray
-     `claude update` will not drop below the pinned version.
+   - `minimumVersion = "<verified>"` is a downgrade floor; a stray
+     `claude update` will not drop below the version the team was verified on.
 2. **Team-process belt:** `bin/team-env.sh` exports `DISABLE_AUTOUPDATER=1`, so
-   every team-spawned session inherits the pin even if the host setting is ever
-   reverted. `${DISABLE_AUTOUPDATER:-1}` lets an operator override per
-   invocation.
+   every team-spawned session inherits the auto-update block even if the host
+   setting is ever reverted. `${DISABLE_AUTOUPDATER:-1}` lets an operator
+   override per invocation.
 
 `"autoUpdates": false` in `~/.claude.json` is a legacy/undocumented key and is
 NOT the lever that stops the native background updater; `DISABLE_AUTOUPDATER`
 is.
 
-Record the pinned version somewhere durable on the host (the settings
-`minimumVersion` doubles as that record).
+Record the verified version somewhere durable on the host (the settings
+`minimumVersion` doubles as that record). Nothing compares a running session's
+version with it; check `claude --version` after any install.
 
 ## Deliberate-upgrade procedure (canary-green first)
 
@@ -56,30 +60,32 @@ the new version still parses:
    `canary: probe healthy at startup (read NN%)` vs `CANARY-FAIL`; the
    api-watchdog logs a canary verdict on pane readability and recognised
    Claude Code chrome.
-3. **If the canary is GREEN:** update the pin (`minimumVersion` and the host's
-   pin record), restart the watchdogs (`kill -TERM` the recorded pids; the
-   daemons trap TERM and free their locks at once, and `bin/tmux-watchdog.sh`
-   re-ensures them within its scan interval, or re-run the launcher), and
-   confirm the new start logs show the canaries green.
+3. **If the canary is GREEN:** update `minimumVersion` and the host's version
+   record, restart the watchdogs (`kill -TERM` the recorded pids, freeing the
+   lock as the next section describes; `bin/tmux-watchdog.sh` re-ensures them
+   within its scan interval, or re-run the launcher), and confirm the new start
+   logs show the canaries green.
 4. **If the canary is RED:** the new version changed the `/context` format.
-   Repoint the symlink back to the pinned version
-   (`ln -sfn ~/.local/share/claude/versions/<pinned> ~/.local/bin/claude`),
+   Repoint the symlink back to the verified version
+   (`ln -sfn ~/.local/share/claude/versions/<verified> ~/.local/bin/claude`),
    then update `parse_context_pct` (and `bin/tests/compaction-probe-test.sh`
    with a captured sample of the new format) BEFORE retrying the upgrade.
 
 ## Restarting the compaction watchdog cleanly
 
 The daemon's `sleep $INTERVAL` is an external child that inherits the flock fd.
-The daemon traps TERM/INT and reaps that child on exit, so `kill -TERM <pid>`
-frees the lock at once and a relaunch is not blocked. A bare `kill -9` (no trap)
-can leave an orphaned `sleep` holding `$TEAM_DIR/compaction-watchdog.lock` for
-up to INTERVAL seconds; `fuser` the lock file and kill the holder before
-relaunching if that happens.
+The daemon traps TERM/INT and reaps that child on exit, but bash runs the trap
+only after the foreground `sleep` returns, so `kill -TERM <pid>` alone holds
+`$TEAM_DIR/compaction-watchdog.lock` for up to INTERVAL seconds
+(`COMPACT_CHECK_INTERVAL`, default 180). To free it at once, also end that
+child: `kill -TERM <pid>; pkill -TERM -P <pid> sleep`. A bare `kill -9` (no
+trap) leaves an orphaned `sleep` holding the lock for the same time; `fuser`
+the lock file and kill the holder before relaunching if that happens.
 
 ## Version skew inside a team
 
-Even with the pin, a team restarted role-by-role can end up with sessions on
-different Claude Code versions (an orchestrator started before the upgrade,
-workers after). Pane-parsing tools key on the rendered format of whichever
+Even with the auto-update block, a team restarted role-by-role can end up with
+sessions on different Claude Code versions (an orchestrator started before the
+upgrade, workers after). Pane-parsing tools key on the rendered format of whichever
 version a pane runs, so prefer upgrading the whole team in one restart over a
 rolling mix.

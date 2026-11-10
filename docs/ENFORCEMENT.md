@@ -23,7 +23,7 @@ names, in the same change. A check left measuring the old rule reports breaches 
 |---|---|---|---|---|
 | A credential, gate URL or value leaves the box only after a live measurement in the same turn | Gate | `bin/hooks/gate-outbound-reply.sh` check 1: every gate value and shared-login password in the body must be in `$TEAM_DIR/health/env-logins.json` (written by the deployment's login probe) and under 15 min old | `bin/tests/gate-outbound-reply.test.sh` 1-3 | send blocked |
 | The right connector tool for the id (chat reply tools that never work, channel ids on chat tools) | Gate | same hook, check 0a | test 11 | send refused, right tool named |
-| Outbound only to the operator's recipient list | Gate | same hook, check 0b. The list is `$OUTBOUND_ALLOWLIST`, else `$DEPLOY_DIR/outbound-allowlist.txt` inside the repo (`DEPLOY_DIR` names the deployment's own directory, default `local/`), else `config/outbound-allowlist.txt`; a missing file blocks everything. `gate-outbound.conf` (check 1 patterns) resolves the same way | tests 10, 12, 13 | send blocked |
+| Outbound only to the operator's recipient list | Gate | same hook, check 0b, before any body check (an empty body, or a `mail_forward` with no text of its own, is still checked). The list is `$OUTBOUND_ALLOWLIST`, else `$DEPLOY_DIR/outbound-allowlist.txt` inside the repo (`DEPLOY_DIR` names the deployment's own directory, default `local/`), else `config/outbound-allowlist.txt`; a missing file blocks everything. `gate-outbound.conf` (check 1 patterns) resolves the same way | tests 10, 12, 13 | send blocked |
 | Never ask the requester to re-check a step the team can test; no "will follow up" without a clock time | Gate | same hook, check 2 | tests 4-6 | send blocked |
 | One reply per request, as one message | Gate | same hook, check 3, on the last SUCCESSFUL send recorded by the PostToolUse hook `bin/hooks/record-outbound-send.sh` (a failed attempt is not a message) | test 7 | send blocked |
 | A message longer than a status line has a draft pass by the stronger model | Gate | `bin/hooks/gate-outbound-draft.sh` | UNENFORCED test; owner: the deployment | send blocked |
@@ -31,10 +31,11 @@ names, in the same change. A check left measuring the old rule reports breaches 
 | Phone pushes: page = act now, action = today, all else digest; audible actions only from listed senders | Gate | `bin/lib/notify.sh` classes and `NOTIFY_ACTION_SOURCES` | `bin/tests/notify.test.sh` | demoted to the digest, logged |
 | A "wedged" page needs the session transcript to agree | Gate | `bin/api-watchdog.sh` transcript veto (`bin/lib/watchdog-detect.sh`) | `bin/tests/watchdog-detect-test.sh`, `watchdog-stuck-integration-test.sh` | no nudge, no page, STUCK-VETO logged |
 | Daemons run the code on disk | Gate | `bin/lib/self-reload.sh` | `bin/tests/daemons-self-reload.test.sh` | re-exec |
-| No private data in a push | Gate | `bin/privacy-scan.sh` (pre-push) | in-hook | push refused |
-| Whole-file reads over 200 lines in the engine tree | Gate | `bin/hooks/gate-read-size.sh` | none (UNENFORCED test) | read refused |
-| No `rm`, `unlink`, `xargs rm` or `find -delete` with a wildcard or a variable in the path | Gate | `bin/hooks/gate-rm-glob-var.sh` (PreToolUse Bash), rule in `bin/lib/gate_rm_glob_var.py`: the path must be literal, through wrappers, `bash -c`, `eval`, `$(...)`, a heredoc a shell reads, and inline interpreter code. Known gaps, all requiring the command to be written to evade rather than carelessly: a script written then run, a command name the guard cannot resolve (`$R -f /tmp/*`, `$(which rm)`), substitutions nested more than four deep, code read from a file | `bin/tests/gate-rm-glob-var.test.sh` (36 rows, all red without the guard) | command refused, the message names the move-aside alternative |
-| Rules with only a reminder (routing to the stronger model, observer cadence, units in the state table) | Rule + Check | `bin/hooks/standing-rules.sh` deviations; observer audits | none | **UNENFORCED**; owner: orchestrator |
+| No private data in a push | Gate | git hook `bin/hooks/pre-push` (installed per clone, see Hook wiring): `bin/privacy-scan.sh` over every commit the destination does not have yet (content, file names, message, and author and committer name and address) and every annotated tag object it lacks (message, tagger), then a refusal if a pushed ref moved while it ran. "Does not have" is read from the destination itself (`git ls-remote <url>` plus the remote sha git passes), not from remote-tracking refs; a destination that cannot be listed refuses the push. `git show` is forced to a prefixed text diff with the message (`--text`, no textconv or external diff, no color, medium format, UTF-8), so binary files are scanned as text too: an image whose bytes happen to match a pattern blocks the push, and there is no binary exemption. A commit reviewed and accepted is listed by full id in `config/privacy-known-history.txt`, which skips its content scan, not its identity scan. A deny-list line that does not compile stops the scan | `bin/tests/privacy-scan.test.sh` (sections "pre-push", "deny line validation", "allowlist anchoring") | push refused |
+| Whole-file reads over 200 lines in the engine tree | Gate | `bin/hooks/gate-read-size.sh` | `bin/tests/gate-read-size-binary.test.sh` | read refused |
+| No `rm`, `unlink`, `xargs rm` or `find -delete` with a wildcard or a variable in the path | Gate | `bin/hooks/gate-rm-glob-var.sh` (PreToolUse Bash), rule in `bin/lib/gate_rm_glob_var.py`: the path must be literal, through wrappers (with their options and values: `sudo -u x`, `timeout -s KILL 5`, `flock <file>`, `env -u X`, `env -S`, `flock -c`), `bash -c`, `eval`, `$(...)`, a command continued over lines with a backslash, a heredoc a shell reads, and inline interpreter code. Known gaps, all requiring the command to be written to evade rather than carelessly: a script written then run, a command name the guard cannot resolve (`$R -f /tmp/*`, `$(which rm)`), substitutions nested more than four deep, code read from a file | `bin/tests/gate-rm-glob-var.test.sh` (91 rows: 65 must be refused, 26 must pass) | command refused, the message names the move-aside alternative |
+| A team role does not end its turn with its bus reader unarmed or its listener dead | Gate | Stop hook `bin/hooks/stop-bus-reader.sh`; a deliberate disconnect is marked with `<name>.disconnected` in the bus-inbox directory (hook header) | `bin/tests/stop-bus-reader.test.sh` | turn end blocked once, the command to run named |
+| Rules with only a reminder (routing to the stronger model, observer cadence, overdue units) | Rule + Check | `bin/hooks/standing-rules.sh` deviations (`bin/hooks/hooks-common.sh`); observer audits | `bin/tests/standing-rules-hooks.test.sh` | **UNENFORCED**; owner: orchestrator |
 
 ## A check reads a machine-written field, never model prose
 
@@ -78,9 +79,21 @@ missing field, not a parsing problem. Add the field.
 
 ## Hook wiring (see `docs/STANDING-RULES.md` for the JSON)
 
-- PreToolUse on the connector send tools: `gate-outbound-draft.sh`, then `gate-outbound-reply.sh`.
-- PostToolUse on the same tools: `record-outbound-send.sh`.
+- PreToolUse on the connector send tools: `gate-outbound-draft.sh`, then `gate-outbound-reply.sh`
+  (its matcher includes `mail_forward`).
+- PostToolUse on the Teams send tools: `record-outbound-send.sh`.
 - PreToolUse `Read`: `gate-read-size.sh`. PreToolUse/PostToolUse `Agent`: `fable-call-log.sh`.
 - PreToolUse `Bash`: `gate-rm-glob-var.sh`. Wire it at user level too, or a sub-agent's shell is ungated.
 - SessionStart, UserPromptSubmit: `standing-rules.sh`.
 - Stop: `stop-bus-reader.sh` (`docs/BUS-INBOX.md`).
+- `hooks-common.sh` is not a hook: the hooks above source it.
+- git `pre-push`: `bin/hooks/pre-push`, once per clone (git clone copies no hooks). Either
+  `ln -sfn ../../bin/hooks/pre-push .git/hooks/pre-push`, which leaves every other hook in
+  `.git/hooks` running, or `git config core.hooksPath bin/hooks`, which replaces `.git/hooks`
+  as a whole: a hook kept there (a pre-commit, say) silently stops running, so move such hooks
+  into `bin/hooks` first. Optional per clone: `.git/privacy-public-identities`, one ERE per line
+  for an author or committer name or address that may appear on a public commit
+  (`PRIVACY_PUBLIC_IDENTITIES` overrides the path). The hook opens a second connection to the
+  destination (`git ls-remote`), so a push needs read access there as well. A first push of this
+  history to a new remote scans all of it; the commits listed in `config/privacy-known-history.txt`
+  (reviewed hits: prose fixtures, PNG bytes, a vendor noreply address) are why it passes.

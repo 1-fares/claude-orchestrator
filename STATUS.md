@@ -65,32 +65,42 @@ single-team mode (no `TEAM_RUN_ID`, state in `.team/`) is unchanged. Covered by
 
 **Safety.** Minimal deny-list (verified enforced under
 `--dangerously-skip-permissions`), `preflight-deploy.sh`, `panic.sh`,
-`watchdog.sh`, `worktree.sh`, Claude Code version pin (`team-env.sh`, deliberate
-upgrades only).
+`watchdog.sh`, `worktree.sh`, a Claude Code auto-update block (`DISABLE_AUTOUPDATER`
+in `team-env.sh`; deliberate upgrades only, [docs/cc-version-pin.md](./docs/cc-version-pin.md)),
+`privacy-scan.sh` with the `bin/hooks/pre-push` hook (content and author/committer
+identity of every outgoing commit).
 
 **Dynamic team scaling (B9).** `add-role.sh` / `retire-role.sh` (grow or shrink a
 live team by one role, operator-chosen soft cap, no double-spawn, decision-log +
-roster line, ntfy), shared spawn/teardown in `bin/lib/team-spawn.sh` +
+roster line, an operator notice of class `info`), shared spawn/teardown in `bin/lib/team-spawn.sh` +
 `bin/lib/roster.sh`, the `## roster` ledger section. Scoping mirrors `cleanup.sh`
 (this run's session only, pid-is-claude guard, never touch the bus server).
 
 **Supervisor daemons.** Pure-shell, no Claude API call, so none can be
 rate-limited. Lifecycle: started at launch, re-ensured on every orchestrator
-(re)start and role add, self-healed by the tmux-watchdog.
+(re)start and role add; the tmux-watchdog also restarts the api, compaction,
+permission-mode, host-RAM and disk/tmp watchdogs, the observer and the intake
+poller if one dies.
 - `api-watchdog.sh`: recovers API rate-limit / network stalls (exponential
   backoff, episode-scoped retry count so repeated same-error stalls reach
   give-up and escalate to the orchestrator instead of looping), usage-limit
   outages (indefinite auto-retry, plus one orchestrator wake nudge when a role
-  recovers so the team re-dispatches after an outage), and detects wedged
-  roles (busy but no token/pane liveness).
+  recovers so the team re-dispatches after an outage), detects wedged roles
+  (busy but no token/pane liveness), and reports a role blocked on an
+  interactive prompt to the orchestrator, then the operator.
 - `tmux-watchdog.sh`: detects tmux-server crash, snapshots panes, self-heals the
-  other daemons.
+  daemons named above.
 - `compaction-watchdog.sh`: compacts the orchestrator and top-tier roles early at
   idle boundaries; multi-target, probe-blind backstop if `/context` parsing
   breaks; passive ceiling guard on every window, so a worker wedged at the
   terminal "Compaction failed" state is escalated for retire+respawn.
+- `permission-mode-watchdog.sh`: holds every pane in its launch permission mode
+  and cancels the auto-mode classifier gate; never confirms a prompt.
 - `chrome-supervisor.sh`: un-wedges roles hung on a chrome MCP call.
-- Resource guards: host-RAM OOM watchdog + heavy-work gate, disk/tmp guard.
+- Resource guards: host-RAM OOM watchdog and disk/tmp guard (which also rotates
+  the run logs). `bin/gates/heavy-work-gate.sh` reads their bands; nothing calls
+  it automatically, it is available for a role or a brief's `verify:` line to call
+  before heavy local work.
 
 **Tiered model policy + token economy.** `model_for()` is a judgment-density tier
 table (top tier for orchestrator / communicator / reviewers / testers /
@@ -102,9 +112,32 @@ Rationale: [docs/model-policy.md](./docs/model-policy.md).
 
 **Operator surfaces.** The `communicator` role (two-way operator liaison, TUI)
 and the B4 remote-control escape-hatch helpers (`inbox.sh`, `approve.sh`,
-`team-status.sh --mobile`, the signed notify-hook). B11, the read-only visual
+`team-status.sh --mobile`). B11, the read-only visual
 dashboard, was built in May 2026 and removed on 2026-10-19: unmaintained,
 unread, about 4 MB of sprite art, and a public HTTP surface to keep closed.
+
+**Operator paging.** `bin/lib/notify.sh` and `bin/notify-operator.sh`: three
+classes (`page`, `action`, `info`), maintenance mute, one log line per decision
+([docs/OPERATOR-PAGING.md](./docs/OPERATOR-PAGING.md)).
+
+**Bus for roles and daemons.** `bin/bus-inbox.py` (one listener and a blocking
+reader per role, [docs/BUS-INBOX.md](./docs/BUS-INBOX.md)) and `bin/bus-send.py`
+(bus messages from daemons and cron jobs).
+
+**Observer and capability probe.** `bin/observer.sh` (model-backed adviser and run
+audit, recommends only) and `bin/capability-probe.sh` (privileged-action check,
+[docs/CAPABILITY-PROBE.md](./docs/CAPABILITY-PROBE.md)).
+
+**Nightly maintenance.** `bin/dreamer.sh` (quiescence-gated ledger consolidation)
+and `bin/night-janitor.sh` (deterministic expiry), both from cron
+([docs/dreaming.md](./docs/dreaming.md)).
+
+**Standing rules and tool gates.** The rules card and the hooks in `bin/hooks/`
+([docs/STANDING-RULES.md](./docs/STANDING-RULES.md),
+[docs/ENFORCEMENT.md](./docs/ENFORCEMENT.md)).
+
+**Role helpers.** `bin/tools/` (`probe-env.sh`, `impact-scan.sh`, `red-green.sh`,
+`diff-summary.sh`) and `bin/gh-attachments.sh` (issue and PR attachments).
 
 **Non-code substrate.** A reference role library (`researcher`, `writer`,
 `editor`, `fact-checker`, `copy-editor`, `peer-reviewer`, `doc-integrator`, plus

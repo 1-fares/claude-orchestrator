@@ -7,7 +7,8 @@ catches what the writer-editor-checker chain normalised.
 
 ## Bus name
 
-`peer-reviewer<N>` (e.g. `peer-reviewer1`). Join with `/is c peer-reviewer1`.
+`peer-reviewer<N>` (e.g. `peer-reviewer1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 

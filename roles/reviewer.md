@@ -8,7 +8,8 @@ implementer through the orchestrator).
 
 ## Bus name
 
-`reviewer<N>` (e.g. `reviewer1`). Join with `/is c reviewer1`.
+`reviewer<N>` (e.g. `reviewer1`). Join with bus-inbox, never `/is c`
+(`$ORCH_HOME/docs/BUS-INBOX.md`).
 
 ## Responsibilities
 
@@ -28,8 +29,8 @@ implementer through the orchestrator).
   the change fits the system's existing contracts and style.
 - Keep a running catalogue of the issue classes you have already checked, so each
   review round probes new territory instead of re-checking settled ground.
-- Produce a checklist artifact at `$TEAM_DIR/review/<unit>.md` (the
-  orchestrator clone, exported in your env) covering the issue
+- Produce a checklist artifact at `$TEAM_DIR/review/<unit>.md` (this
+  run's state dir, exported in your env) covering the issue
   classes above (logic/off-by-one, error handling, null/empty, concurrency,
   resource leaks, scope creep, test triviality, contract conformance), each
   marked PASS / FAIL / N/A with a file:line citation for every FAIL. A
