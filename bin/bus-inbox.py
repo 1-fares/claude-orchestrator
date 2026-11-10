@@ -17,6 +17,7 @@ cursor, so a line that lands between two readers is returned by the next one.
 
 Layout under $BUS_INBOX_DIR (default $TEAM_DIR/bus-inbox): <name>.log inbox, <name>.cursor bytes
 consumed, <name>.pid "<pump pid> <client pid>", <name>.lock flock shared by writer and reader.
+<name>.disconnected marks a deliberate disconnect for bin/hooks/stop-bus-reader.sh; `start` removes it.
 
 Process shape: `start` runs a detached PUMP (this file, `_pump`), which runs client.py with its stdout
 on a pipe and appends each line to the inbox under the lock. The client gets PDEATHSIG, so it cannot
@@ -162,7 +163,7 @@ _INH = ("--inherited-listener-fd", "--inherited-listener-pid")
 def _sr_stat():
     try:
         st = os.stat(os.path.abspath(__file__))
-        return (st.st_size, st.st_mtime_ns)
+        return (st.st_size, st.st_ctime_ns)
     except OSError:
         return None
 
@@ -286,8 +287,34 @@ def _start_failure_lines(new: bytes) -> str:
     return "\n".join(bad)
 
 
+def _stop_failed_start(p: P, name: str):
+    """A `start` that reports failure leaves no listener behind. After a name collision client.py
+    renames itself to <name>-2 and stays on the bus, while its argv still says --name <name>; a retried
+    `start` then reported it "already running" and every message to <name> went to the other session.
+    Stop the pump (its SIGTERM handler stops the client) and wait until it is gone, so its exit line is
+    in the inbox before the next `start` takes its mark."""
+    live = _alive(p, name)
+    if not live:
+        return
+    try:
+        os.kill(live[0], signal.SIGTERM)
+    except OSError:
+        return
+    deadline = time.monotonic() + START_WAIT_S
+    while time.monotonic() < deadline and _argv(live[0]) is not None:
+        time.sleep(0.1)
+
+
 def start(name: str) -> int:
     p = P(name)
+    # A start ends a deliberate disconnect: the <name>.disconnected marker (bin/hooks/stop-bus-reader.sh)
+    # is removed first, so a start that fails, or a new role that takes a retired role's name, is not
+    # covered by an old marker and the Stop hook blocks on its dead listener again.
+    try:
+        p.inbox.with_name(f"{name}.disconnected").unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"bus-inbox: cannot remove the disconnect marker for {name} ({exc!r}); the Stop hook "
+              f"will not report this listener dead", file=sys.stderr)
     with Locked(str(p.lock) + ".start"):          # two concurrent starts give ONE listener
         live = _alive(p, name)
         if live:
@@ -317,6 +344,7 @@ def start(name: str) -> int:
             bad = _start_failure_lines(new)
             if bad:
                 print(f"bus-inbox: listener for {name} did not start:\n{bad}", file=sys.stderr)
+                _stop_failed_start(p, name)
                 return 1
         live = _alive(p, name)
         if not live:
@@ -426,10 +454,11 @@ def main() -> int:
     if len(a) < 2 or a[0] not in ("start", "wait", "status"):
         print(__doc__, file=sys.stderr)
         return 64
-    # A name is what the bus accepts, nothing else: `bus-inbox.py start --help`
-    # once wrote state files for a role called "--help".
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", a[1]):
-        print(f"[bus-inbox] invalid name {a[1]!r}: must match ^[a-z0-9][a-z0-9-]{{0,39}}$", file=sys.stderr)
+    # A name is a role name the launch scripts accept, nothing else: `bus-inbox.py start --help`
+    # once wrote state files for a role called "--help". The bus itself also takes a trailing
+    # hyphen; a role name may not end in one (a typo such as "impl-" would start a real listener).
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?", a[1]):
+        print(f"[bus-inbox] invalid name {a[1]!r}: must match ^[a-z0-9]([a-z0-9-]{{0,38}}[a-z0-9])?$", file=sys.stderr)
         print(__doc__, file=sys.stderr)
         return 64
     if a[0] == "start":

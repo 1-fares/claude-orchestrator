@@ -40,12 +40,28 @@ onbus "$OBS" && ok "PRECONDITION: observer $OBS lists the private bus" || { no "
 send() { BUS_SEND_NAME=ibx-sender "$PY" "$BS" --name ibx-sender --to "${2:-$N}" --text "$1"; }
 nmsg() { /usr/bin/grep -c '^\[inter-session msg=' "$1" 2>/dev/null || true; }
 procs_for() {  # pids whose cmdline is client.py --name $1 or bus-inbox.py _pump $1 (scan /proc, no pgrep -f)
-  for d in /proc/[0-9]*; do c="$( { tr '\0' ' ' < "$d/cmdline"; } 2>/dev/null)"
+  # Builtins only: a fork per process made each scan cost about a second. Each argument is joined
+  # with a trailing space, as `tr '\0' ' '` did, so "--name $1 " does not match a longer name.
+  local d c a
+  for d in /proc/[0-9]*; do
+    { mapfile -d '' -t a < "$d/cmdline"; } 2>/dev/null || continue
+    [ "${#a[@]}" -gt 0 ] || continue
+    printf -v c '%s ' "${a[@]}"
     case "$c" in *"client.py --name $1 "*|*"bus-inbox.py _pump $1 "*) echo "${d#/proc/}";; esac; done; }
 orphan_listeners() {  # a client.py listener for $1 whose parent is init (re-parented, owner gone)
   for p in $(procs_for "$1"); do c="$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null)"
     case "$c" in *"/skills/is/bin/client.py --name "*) :;; *) continue;; esac
     s="$(cat /proc/$p/stat 2>/dev/null)"; s="${s##*) }"; [ "$(echo "$s" | awk '{print $2}')" = 1 ] && echo "$p"; done; }
+
+# TN names: a trailing hyphen (a typo such as "impl-"), a leading hyphen and 41 characters are refused
+#    with 64 and leave no state; one character, an inner hyphen and 40 characters are valid names.
+a40="$(printf 'a%.0s' $(seq 1 39))b"; nok=1; gok=1
+for nm in "ibx-x-" "-x" "${a40}c"; do "$PY" "$IB" status "$nm" >/dev/null 2>&1; r=$?
+  [ $r -eq 64 ] && [ ! -e "$W/inbox/$nm.lock.reader" ] || { nok=0; echo "    refused? '$nm' rc=$r"; }; done
+for nm in "a" "ibx-a-b" "$a40"; do "$PY" "$IB" status "$nm" >/dev/null 2>&1; r=$?
+  [ $r -eq 2 ] || { gok=0; echo "    valid? '$nm' rc=$r"; }; done
+[ $nok = 1 ] && [ $gok = 1 ] && ok "TN name check: trailing/leading hyphen and 41 chars refused (64); 1, inner hyphen, 40 chars valid" \
+  || no "TN name check"
 
 # T0 start + positive control
 out="$("$PY" "$IB" start "$N" 2>&1)"; rc=$?
@@ -195,7 +211,7 @@ printf '[inter-session msg=c3c3c3c3 from="peer"] cur-reader-d\n' > "$W/inbox/$N.
 E="$W/eng"; mkdir -p "$E/bin" "$W/team"
 cp "${BUS_INBOX_SRC:-$IB}" "$E/bin/bus-inbox.py"
 N2="ibx-rl-$$"; SRLOG="$W/team/audit/watchdog/self-reload.log"
-rl_count() { /usr/bin/grep -c " re-exec $E/bin/bus-inbox.py\$" "$SRLOG" 2>/dev/null || true; }
+rl_count() { local n; n="$(/usr/bin/grep -c " re-exec $E/bin/bus-inbox.py\$" "$SRLOG" 2>/dev/null)"; echo "${n:-0}"; }   # 0 before the log exists
 inh_count() { tr '\0' '\n' < "/proc/$1/cmdline" | /usr/bin/grep -c -- '--inherited-listener-fd'; }
 # its OWN stand-in CC: client.py allows one listener per CC session key (one role per CC in real life)
 sleep 100000 & CC2=$!

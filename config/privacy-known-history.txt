@@ -1,0 +1,23 @@
+# privacy-known-history.txt: commits whose content was reviewed and accepted.
+#
+# Read by bin/hooks/pre-push. A commit listed here is skipped by the content scan
+# (git show | bin/privacy-scan.sh) and still meets the author and committer scan.
+# One full 40-character commit id per line, then optionally a # comment. A line
+# that is not a full id refuses the push. Add a commit only after reading every
+# hit the scan reports for it; say in the comment what the hits are.
+#
+# Why the list exists: the hook scans what the destination lacks, so a first push
+# of this history to a new remote scans all of it, and these commits block it.
+
+# Message quotes the two invented fixtures of a scanner finding (an ad-hoc home path and a keyword assignment).
+1e30152731d3fcf4b1cae5ced5ac987a2666528f
+# PNG bytes of a theme image match the email pattern; no hit in any text file.
+45a1ad9892c32d7985e3f139e547c0095332cae7
+# PNG bytes of a theme image match the long-hex pattern; no hit in any text file.
+47ac7e24a1a145cca9d2daca6065c08b282df79c
+# Message trailer carries a vendor's public noreply address; no other hit.
+a20f3009e975904a29877c93222f8e9bca6d425f
+# Message trailer carries a vendor's public noreply address; no other hit.
+a8f4d24bbebf923c68a082bf52d88ffa6dc22cd7
+# Message trailer carries a vendor's public noreply address; no other hit.
+4b0d029531932b5529f9eea68c945c8b25a3eff4

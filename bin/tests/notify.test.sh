@@ -160,4 +160,72 @@ NOTIFY_SINK=/dev/null NOTIFY_NOW=$(at "2026-09-07 10:01") notify_operator info "
 [ "$rc" = 0 ] && ok "/dev/null sink does not crash" || bad "/dev/null sink failed (rc=$rc)"
 export NOTIFY_LOG="$TD/log" NOTIFY_STATE_DIR="$TD/st" NOTIFY_SINK="$TD/sink"
 
+# A stand-in curl for the push path (sections 13 and 14). It answers HTTP $FAKE_CURL_HTTP and, like
+# curl, exits 22 on a status >= 400 only when -f is given. It never opens a connection, and NTFY_URL
+# points at the local discard port, so nothing leaves the machine. FAKE_CURL_HOOK runs in the
+# background while the push "takes" FAKE_CURL_SLEEP seconds (its pid goes to FAKE_CURL_HOOK_PID).
+mkdir -p "$TD/bin"
+cat > "$TD/bin/curl" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_CURL_CALLS:-/dev/null}"
+f=0; for a in "$@"; do case "$a" in -f|-fsS|-fs|-sf|-sSf) f=1 ;; esac; done
+# The hook closes every inherited fd above 2 first: one of them is the caller's lock, which the hook
+# would otherwise hold itself and then wait on (a real curl starts no such child).
+if [ -n "${FAKE_CURL_HOOK:-}" ]; then
+  ( for p in /proc/self/fd/*; do n="${p##*/}"; case "$n" in 0|1|2) ;; *) eval "exec $n>&-" 2>/dev/null ;; esac; done
+    exec bash -c "$FAKE_CURL_HOOK" ) </dev/null >/dev/null 2>&1 &
+  echo $! > "$FAKE_CURL_HOOK_PID"
+fi
+sleep "${FAKE_CURL_SLEEP:-0}"
+code="${FAKE_CURL_HTTP:-200}"; printf '%s' "$code"
+[ "$f" = 1 ] && [ "$code" -ge 400 ] && exit 22
+exit 0
+SH
+chmod +x "$TD/bin/curl"
+OLDPATH="$PATH"
+
+# 13. a push the service refuses (HTTP 4xx or 5xx) is NOT delivered: curl runs with -f, so the policy
+#     logs PUSH-FAIL and LOG-ONLY and opens no cooldown. Without -f curl exits 0 on an HTTP error and
+#     the push counted as SENT.
+reset; unset NOTIFY_SINK; export PATH="$TD/bin:$OLDPATH" NTFY_URL="http://127.0.0.1:9/notify-test" FAKE_CURL_CALLS="$TD/curl.calls"
+FAKE_CURL_HTTP=500 NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator action "service down" "HTTP 503"
+grep -q 'PUSH-FAIL curl rc=22 http=500' "$TD/log" && ok "HTTP 500 from the push service logged as PUSH-FAIL" || bad "no PUSH-FAIL for HTTP 500: $(cat "$TD/log")"
+grep -q 'LOG-ONLY action service down' "$TD/log" && ! grep -q 'SENT action' "$TD/log" && ok "HTTP 500: LOG-ONLY, not SENT" || bad "HTTP 500 counted as delivered: $(cat "$TD/log")"
+[ ! -f "$TD/st/action.service_down" ] && ok "HTTP 500 opens no cooldown" || bad "HTTP 500 stamped the cooldown"
+grep -q -- '-fsS' "$TD/curl.calls" 2>/dev/null && ok "the push runs curl with -f" || bad "curl called without -f: $(cat "$TD/curl.calls" 2>/dev/null)"
+FAKE_CURL_HTTP=200 NOTIFY_NOW=$(at "2026-09-07 10:05") notify_operator action "service down" "HTTP 503"
+grep -q 'SENT action 4 service down' "$TD/log" && [ -f "$TD/st/action.service_down" ] && ok "HTTP 200: SENT and the cooldown opens (control)" || bad "HTTP 200 not SENT: $(tail -2 "$TD/log")"
+
+# 14. the queue is locked: an action queued while a flush is pushing survives the flush. The stand-in
+#     push takes 1 s and, meanwhile, another process queues an out-of-hours action. Before the lock the
+#     flush truncated the queue after the push and that line was lost while its cooldown stamp stayed.
+reset; mkdir -p "$TD/st"
+NOTIFY_NOW=$(at "2026-09-05 22:10") notify_operator action "backup not pushed" "19 days"
+late_cmd=". '$repo/bin/lib/notify.sh'; NOTIFY_NOW=$(at "2026-09-06 07:30") notify_operator action 'late arrival' 'queued during the push'"
+FAKE_CURL_HOOK="$late_cmd" FAKE_CURL_HOOK_PID="$TD/hook.pid" FAKE_CURL_SLEEP=1 NOTIFY_NOW=$(at "2026-09-07 07:00") notify_flush
+hp="$(cat "$TD/hook.pid" 2>/dev/null)"
+for _ in $(seq 1 100); do [ -n "$hp" ] && kill -0 "$hp" 2>/dev/null || break; sleep 0.1; done
+grep -q 'FLUSHED 1 queued actions' "$TD/log" && ok "flush pushed the one line queued before it" || bad "flush wrong: $(grep FLUSH "$TD/log")"
+[ "$(wc -l < "$TD/st/queue")" = 1 ] && grep -q 'late arrival' "$TD/st/queue" && ok "the action queued during the push is still queued" || bad "line queued during the push lost: queue=$(cat "$TD/st/queue" 2>/dev/null)"
+fl="$(grep -n 'FLUSHED' "$TD/log" | cut -d: -f1)"; ql="$(grep -n 'QUEUED action late arrival' "$TD/log" | cut -d: -f1)"
+[ -n "$fl" ] && [ -n "$ql" ] && [ "$ql" -gt "$fl" ] && ! grep -q LOCK-SKIPPED "$TD/log" && ok "the late enqueue waited for the flush's lock" || bad "not serialized by the lock: $(cat "$TD/log")"
+[ ! -e "$TD/st/queue.tmp" ] && ok "no temp file left after the flush" || bad "queue.tmp left behind"
+export PATH="$OLDPATH" NOTIFY_SINK="$TD/sink"; unset NTFY_URL FAKE_CURL_CALLS
+
+# 15. the digest is capped: past NOTIFY_DIGEST_MAX_LINES the oldest lines go, down to 90% of the cap,
+#     with a logged count. Without a --digest cron the file grew without bound.
+reset
+for i in $(seq 1 11); do NOTIFY_DIGEST_MAX_LINES=10 NOTIFY_NOW=$(at "2026-09-07 10:00") notify_operator info "event $i" "n$i"; done
+[ "$(wc -l < "$TD/st/digest")" = 9 ] && ok "digest trimmed to 90% of the cap" || bad "digest has $(wc -l < "$TD/st/digest") lines, want 9"
+grep -q 'event 11 :: n11' "$TD/st/digest" && ! grep -q 'event 2 :: n2$' "$TD/st/digest" && ok "the oldest lines dropped, the newest kept" || bad "wrong lines kept: $(head -2 "$TD/st/digest")"
+grep -q 'DIGEST-TRIMMED 2 oldest info line(s) dropped' "$TD/log" && ok "trim logged with the count" || bad "trim not logged: $(grep TRIM "$TD/log")"
+NOTIFY_DIGEST_MAX_LINES=10 NOTIFY_NOW=$(at "2026-09-07 10:01") notify_operator info "event 12" "n12"
+[ "$(wc -l < "$TD/st/digest")" = 10 ] && [ "$(grep -c DIGEST-TRIMMED "$TD/log")" = 1 ] && ok "at the cap: appended, no second trim" || bad "second trim or wrong length"
+
+# 16. notify_mute_epoch: the one parse behind notify_muted and --mute.
+v="$(notify_mute_epoch 1790000000)" && [ "$v" = 1790000000 ] && ok "mute: epoch accepted as is" || bad "mute epoch: '$v'"
+v="$(notify_mute_epoch '2026-09-07 08:30 UTC')" && [ "$v" = "$(date -u -d '2026-09-07 08:30' +%s)" ] && ok "mute: date string resolved" || bad "mute date string: '$v'"
+notify_mute_epoch 'next tuesdai' >/dev/null && bad "mute: a typo parsed" || ok "mute: a typo does not parse"
+notify_mute_epoch '' >/dev/null && bad "mute: empty parsed" || ok "mute: empty does not parse"
+
 [ "$fail" = 0 ] && echo "notify.test: PASS" || { echo "notify.test: FAIL"; exit 1; }

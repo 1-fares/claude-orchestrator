@@ -12,6 +12,8 @@
 #     signed with ORCH_HOME=<sandbox repo>, in no tmux pane;
 #   - a fake pump `python3 .../bus-inbox.py _pump <role> <claude pid>` whose child is a fake
 #     `python3 .../skills/is/bin/client.py --name <role>`.
+#   - an npm-installed twin: argv[0] `node`, its script in .../@anthropic-ai/claude-code/ (comm is not
+#     "claude"), signed; step 3 used to look for comm "claude" only and missed it.
 # Positive control both ways: the dry run must PLAN the reap, --force must kill the fake claude and the
 # pump, and an UNSIGNED twin (no ORCH_HOME of the sandbox) must be reported and left running. An
 # OTHER-RUN twin (this clone's ORCH_HOME, another TEAM_RUN_ID: a live team of another run) must also be
@@ -53,11 +55,16 @@ open(pre + ".pump", "w").write(str(os.getpid()))
 subprocess.Popen([sys.executable, os.environ["FAKE_CLIENT"], "--name", role, pre + ".client"])
 time.sleep(600)
 PY
+# the npm-installed shape: the same python code as a script inside the claude-code package, run as `node`
+NPMJS="$SB/fk/pkg/node_modules/@anthropic-ai/claude-code/cli.js"; mkdir -p "${NPMJS%/*}"
+printf 'import os, sys, time\nopen(sys.argv[1], "w").write(str(os.getpid()))\ntime.sleep(600)\n' > "$NPMJS"
 waitfile(){ local i; for i in $(seq 1 50); do [ -s "$1" ] && { cat "$1"; return 0; }; sleep 0.1; done; return 1; }
 
-# mk_role <role> <ORCH_HOME value or "-"> <TEAM_RUN_ID value> -> sets CL PUMP CLI
+# mk_role <role> <ORCH_HOME value or "-"> <TEAM_RUN_ID value> [npm] -> sets CL PUMP CLI
 mk_role(){ local role="$1" oh="$2" run="$3" pre="$SB/$1"
-  if [ "$oh" = - ]; then
+  if [ "${4:-}" = npm ]; then
+    env ORCH_HOME="$oh" TEAM_RUN_ID="$run" setsid --fork bash -c 'exec -a node "$0" "$@"' "$(readlink "$SB/fk/claude")" "$NPMJS" "$pre.cl" >/dev/null 2>&1 < /dev/null
+  elif [ "$oh" = - ]; then
     env -u ORCH_HOME TEAM_RUN_ID="$run" setsid --fork "$SB/fk/claude" -c 'import os,sys,time; open(sys.argv[1],"w").write(str(os.getpid())); time.sleep(600)' "$pre.cl" >/dev/null 2>&1 < /dev/null
   else
     env ORCH_HOME="$oh" TEAM_RUN_ID="$run" setsid --fork "$SB/fk/claude" -c 'import os,sys,time; open(sys.argv[1],"w").write(str(os.getpid())); time.sleep(600)' "$pre.cl" >/dev/null 2>&1 < /dev/null
@@ -73,6 +80,7 @@ run_cleanup(){ env -u TEAM_DIR -u TEAM_PORT -u INTER_SESSION_PORT TEAM_RUN_ID="$
 ROLE="cbio-orphan-$$"; mk_role "$ROLE" "$R" "$RID"; S_CL=$CL S_PUMP=$PUMP S_CLI=$CLI
 UROLE="cbio-other-$$"; mk_role "$UROLE" - "$RID"; U_CL=$CL U_PUMP=$PUMP U_CLI=$CLI
 OROLE="cbio-otherrun-$$"; mk_role "$OROLE" "$R" "other-live-run"; O_CL=$CL O_PUMP=$PUMP O_CLI=$CLI
+NROLE="cbio-npm-$$"; mk_role "$NROLE" "$R" "$RID" npm; N_CL=$CL N_PUMP=$PUMP
 
 # preconditions: the real shape (comm, re-parented pump, client under the pump, no claude above it)
 [ "$(ps -o comm= -p "$S_CL")" = claude ] && ok "fixture: fake claude's comm is 'claude'" || no "fixture comm" "$(ps -o comm= -p "$S_CL")"
@@ -85,10 +93,14 @@ ancestors(){ local p="$1" i; for i in $(seq 1 64); do p="$(awk '/^PPid:/ {print 
   || no "fixture pump detached" "sid $(ps -o sid= -p "$S_PUMP" | tr -d ' '), ancestors: $(ancestors "$S_PUMP" | tr '\n' ' ')"
 [ "$(ps -o ppid= -p "$S_CLI" | tr -d ' ')" = "$S_PUMP" ] && ok "fixture: the client is the pump's child" || no "fixture client ppid" ""
 /usr/bin/grep -qxF "ORCH_HOME=$R" <(tr '\0' '\n' < "/proc/$S_CL/environ") && ok "fixture: the role claude is signed with the sandbox ORCH_HOME" || no "fixture signature" ""
+[ "$(ps -o comm= -p "$N_CL")" != claude ] && [ "$(tr '\0' '\n' < "/proc/$N_CL/cmdline" | head -2 | tr '\n' ' ')" = "node $NPMJS " ] \
+  && ok "fixture: the npm twin runs as 'node .../@anthropic-ai/claude-code/cli.js', comm not 'claude'" || no "fixture npm shape" "$(tr '\0' ' ' < "/proc/$N_CL/cmdline")"
 
 echo "== dry run"
 out="$(run_cleanup)"
-printf '%s\n' "$out" | /usr/bin/grep -E "$ROLE|$UROLE|$OROLE" | sed 's/^/     | /'
+printf '%s\n' "$out" | /usr/bin/grep -E "$ROLE|$UROLE|$OROLE|$NROLE" | sed 's/^/     | /'
+/usr/bin/grep -qF "[would] reap orphaned role '$NROLE' (this clone; claude pid $N_CL" <<<"$out" \
+  && ok "dry run plans the reap of the npm-installed orphan (claude pid $N_CL)" || no "dry run did not find the npm-installed orphan" ""
 /usr/bin/grep -qF "[would] reap orphaned role '$ROLE' (this clone; claude pid $S_CL" <<<"$out" \
   && ok "dry run plans the reap of the bus-inbox orphan (claude pid $S_CL)" || no "dry run did not find the bus-inbox orphan" ""
 /usr/bin/grep -qE "pid $U_CL +role '$UROLE' +\(LEFT RUNNING\)" <<<"$out" \
@@ -102,6 +114,7 @@ echo "== --force"
 out="$(run_cleanup --force)"; sleep 1
 alive "$S_CL" && no "the orphan's claude is still alive after --force" "" || ok "the orphan's claude was killed"
 alive "$S_PUMP" && no "the orphan's pump is still alive after --force" "" || ok "the orphan's pump was killed"
+alive "$N_CL" || alive "$N_PUMP" && no "the npm-installed orphan's claude or pump is still alive after --force" "" || ok "the npm-installed orphan's claude and pump were killed"
 alive "$U_CL" && alive "$U_PUMP" && alive "$U_CLI" && ok "the unsigned twin's claude, pump and client are untouched" || no "the unsigned twin was touched" ""
 alive "$O_CL" && alive "$O_PUMP" && alive "$O_CLI" && ok "the other-run twin's claude, pump and client survive --force" || no "the other-run twin was reaped" ""
 

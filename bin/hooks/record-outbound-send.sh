@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PostToolUse on the ms365 Teams send tools: record the time of a SUCCESSFUL send per
+# PostToolUse on the Teams send tools (ms365 connector shape): record the time of a SUCCESSFUL send per
 # chat/channel, for check 3 (one message per reply) of bin/hooks/gate-outbound-reply.sh.
 #
 # WHY a separate PostToolUse hook: the PreToolUse gate cannot know whether the send
@@ -17,7 +17,8 @@ printf '%s' "$input" | python3 -c '
 import sys, json, re, os
 d = json.load(sys.stdin)
 name = d.get("tool_name", "")
-if not (name.startswith("mcp__ms365__teams_") and name.endswith(("_send", "_reply"))):
+# Any connector name, as the gate matches the tool by its suffix (mcp__<connector>__teams_*).
+if not re.match(r"mcp__.+__teams_[a-z_]+_(send|reply)$", name):
     sys.exit(0)
 t = d.get("tool_input", {}) or {}
 key = t.get("chat_id") or t.get("channel_id") or ""

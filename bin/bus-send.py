@@ -9,7 +9,10 @@ silently fail.
 This script bypasses the ancestor walk.  It reads the shared token from
 ~/.claude/data/inter-session/token, connects to the bus server directly,
 registers as a transient AGENT peer under --name, sends --text to --to,
-and disconnects.  Exit 0 on success, 1 on any failure.
+and disconnects.  The bus is the one on --port, else INTER_SESSION_PORT, else
+TEAM_PORT (bin/team-env.sh exports both); with none of them it refuses, since
+the skill's default port is not a team bus.  Every network step is bounded.
+Exit 0 on success, 1 on any failure, 2 on a usage error or no bus port.
 
 Runs under the inter-session venv (same bootstrap as send.py).
 """
@@ -34,7 +37,8 @@ import uuid
 try:
     import websockets
 except ImportError:
-    print("dependencies missing — run /inter-session install-deps", file=sys.stderr)
+    # `shared` (whose skill_command() names the installed command) is not imported yet here.
+    print("dependencies missing: run the inter-session skill's install-deps command", file=sys.stderr)
     sys.exit(1)
 
 _SKILL_DIR = Path(__file__).resolve().parent.parent / ".claude" / "skills" / "is" / "bin"
@@ -74,6 +78,15 @@ _RETRY_S = _parse_retry(os.environ.get("BUS_SEND_RETRY_S"))
 _RETRY_STEP = 2.0
 _last_refusal: dict = {}
 
+# Bounds. A bus that accepted the TCP connection and then said nothing (overloaded, half-open, a
+# squatter that passed the pidfile check) held the caller forever at the welcome recv, and the callers
+# are daemon loops. Each step (handshake, welcome, send, close) now has its own limit; a step that
+# times out sends nothing and exits 1 with one stderr line.
+_STEP_S = 5.0
+# The server sends no acknowledgement for a successful send. Until a `list_ok` (see _await_outcome)
+# or an `error` arrives, this is how long a send waits; nothing within it counts as sent, as before.
+_ACK_S = 2.0
+
 
 def _is_absent_refusal() -> bool:
     return (_last_refusal.get("code") == shared.ErrorCode.UNKNOWN_PEER
@@ -94,27 +107,61 @@ async def _run(args: argparse.Namespace) -> int:
         print("token file is empty", file=sys.stderr)
         return 1
 
-    port_str = os.environ.get("INTER_SESSION_PORT") or os.environ.get("TEAM_PORT")
-    port = int(port_str) if port_str else shared.DEFAULT_PORT
+    # No port given: refuse. The skill's DEFAULT_PORT is never a team bus (team-env derives the team's
+    # port from the clone and the run id), so a send there reached nobody while the caller saw rc 0.
+    # TEAM_RUN_ID alone does not name the port either.
+    port_str = (str(args.port) if args.port else "") or os.environ.get("INTER_SESSION_PORT") \
+        or os.environ.get("TEAM_PORT")
+    if not port_str:
+        print("bus-send: no bus port: pass --port or set INTER_SESSION_PORT (bin/team-env.sh exports it; "
+              f"TEAM_RUN_ID alone does not name the port). The skill's default port {shared.DEFAULT_PORT} "
+              "is not a team bus; nothing was sent.", file=sys.stderr)
+        return 2
+    port = int(port_str)
     host = "127.0.0.1"
 
     if not shared.verify_server_identity(host, port):
         print(f"server identity check failed ({host}:{port})", file=sys.stderr)
         return 1
 
+    try:
+        return await _session(args, host, port, bus_token)
+    except websockets.exceptions.ConnectionClosed as e:
+        # A bus that accepts and then closes (crashing, restarting): one line, never a traceback.
+        print(f"bus-send: bus at {host}:{port} closed the connection ({e.__class__.__name__}); "
+              "outcome unknown", file=sys.stderr)
+        return 1
+    except websockets.exceptions.WebSocketException as e:
+        print(f"bus-send: websocket error talking to {host}:{port} ({e.__class__.__name__}); "
+              "outcome unknown", file=sys.stderr)
+        return 1
+    except asyncio.TimeoutError:
+        # The bounded hello or payload send: the bus stopped taking frames. The connection is
+        # closed with the frame unfinished, so nothing is delivered.
+        print(f"bus-send: bus at {host}:{port} did not take a frame within {_STEP_S:g}s; nothing sent",
+              file=sys.stderr)
+        return 1
+
+
+async def _session(args: argparse.Namespace, host: str, port: int, bus_token: str) -> int:
     sid = str(uuid.uuid4())
     nonce = str(uuid.uuid4())
 
     try:
         ws = await websockets.connect(
             f"ws://{host}:{port}/", max_size=shared.WS_FRAME_CAP,
+            open_timeout=_STEP_S, close_timeout=2,
         )
+    except asyncio.TimeoutError:   # before OSError: TimeoutError is an OSError since Python 3.11
+        print(f"bus-send: no websocket handshake from {host}:{port} within {_STEP_S:g}s; nothing sent",
+              file=sys.stderr)
+        return 1
     except OSError as e:
         print(f"connect failed: {e}", file=sys.stderr)
         return 1
 
     try:
-        await ws.send(json.dumps({
+        await asyncio.wait_for(ws.send(json.dumps({
             "op": "hello",
             "session_id": sid,
             "name": args.name,
@@ -124,8 +171,13 @@ async def _run(args: argparse.Namespace) -> int:
             "role": shared.Role.AGENT.value,
             "nonce": nonce,
             "token": bus_token,
-        }))
-        welcome_raw = await ws.recv()
+        })), timeout=_STEP_S)
+        try:
+            welcome_raw = await asyncio.wait_for(ws.recv(), timeout=_STEP_S)
+        except asyncio.TimeoutError:
+            print(f"bus-send: bus at {host}:{port} accepted but sent no welcome within {_STEP_S:g}s; "
+                  "nothing sent", file=sys.stderr)
+            return 1
         welcome = json.loads(welcome_raw)
         if welcome.get("op") == "error":
             code = welcome.get("code", "")
@@ -137,28 +189,60 @@ async def _run(args: argparse.Namespace) -> int:
             return 1
 
         payload = {"op": "send", "to": args.to, "text": args.text}
-        await ws.send(json.dumps(payload))
-
-        try:
-            resp_raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
-            resp = json.loads(resp_raw)
-            if resp.get("op") == "error":
-                _last_refusal.clear()
-                _last_refusal.update(code=resp.get("code", ""), message=resp.get("message", ""))
-                err_msg = f"send error: {resp.get('code', '')}: {resp.get('message', '')}"
-                if "candidates" in resp:
-                    err_msg += f" (try: {', '.join(resp['candidates'])})"
-                _last_refusal["line"] = err_msg
-                if not _is_absent_refusal():
-                    print(err_msg, file=sys.stderr)   # an absent name is reported once, by main()
-                return 1
-        except asyncio.TimeoutError:
-            pass
+        await asyncio.wait_for(ws.send(json.dumps(payload)), timeout=_STEP_S)
+        resp = await _await_outcome(ws)
+        if resp is not None:
+            _last_refusal.clear()
+            _last_refusal.update(code=resp.get("code", ""), message=resp.get("message", ""))
+            err_msg = f"send error: {resp.get('code', '')}: {resp.get('message', '')}"
+            if "matches" in resp:   # ambiguous prefix; a send error never carries candidates
+                err_msg += f" (matches: {', '.join(resp['matches'])})"
+            _last_refusal["line"] = err_msg
+            if not _is_absent_refusal():
+                print(err_msg, file=sys.stderr)   # an absent name is reported once, by main()
+            return 1
     finally:
-        await ws.close()
+        try:
+            await asyncio.wait_for(ws.close(), timeout=2)
+        except Exception:
+            pass
 
     print(f"sent -> {args.to} ({len(args.text)} chars)")
     return 0
+
+
+async def _await_outcome(ws):
+    """The send's `error` frame, or None once it went through.
+
+    The server answers a successful send with nothing, so every success used to wait out the whole
+    _ACK_S. It handles one connection's frames in order, so a `list` sent right behind the send is
+    answered only after the send was handled: `list_ok` means sent, an `error` before it is the send's
+    refusal. Frames pushed to this peer meanwhile (peer_joined, msg) are skipped. No answer within
+    _ACK_S counts as sent, as before."""
+    try:
+        await asyncio.wait_for(ws.send(json.dumps({"op": "list"})), timeout=_STEP_S)
+    except asyncio.TimeoutError:
+        return None
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _ACK_S
+    while True:
+        left = deadline - loop.time()
+        if left <= 0:
+            return None
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=left)
+        except asyncio.TimeoutError:
+            return None
+        try:
+            frame = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(frame, dict):
+            continue
+        if frame.get("op") == "error":
+            return frame
+        if frame.get("op") == "list_ok":
+            return None
 
 
 def main() -> int:
@@ -172,6 +256,9 @@ def main() -> int:
                         help="target peer name")
     parser.add_argument("--text", required=True,
                         help="message text")
+    parser.add_argument("--port", type=int, default=0,
+                        help="bus port; default INTER_SESSION_PORT, else TEAM_PORT; with none of "
+                             "them the send is refused (exit 2)")
     args = parser.parse_args()
     if not args.name:
         parser.error("--name required (or set BUS_SEND_NAME env)")

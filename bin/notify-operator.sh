@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# notify-operator.sh TITLE MESSAGE [PRIORITY]
+# notify-operator.sh TITLE MESSAGE [CLASS]
 #
-# Send an ntfy push to the operator (the human running the team) and record a
-# machine-checkable success line. This is the ONE right way for the team to reach
-# the operator on their phone. The harness PushNotification tool is NOT a
-# substitute: it reaches only the terminal/desktop session, not mobile, so it must
-# never be used to "ping the operator".
+# Send a notice to the operator (the human running the team) through the paging
+# policy in bin/lib/notify.sh, and say in words whether the phone got it. This is
+# the ONE right way for the team to reach the operator on their phone. The harness
+# PushNotification tool is NOT a substitute: it reaches only the terminal/desktop
+# session, not mobile, so it must never be used to "ping the operator".
 #
-# Delivery target is $NTFY_URL (resolved by team-env.sh). ENGINE-GENERIC: no host,
-# topic, or operator identity is hardcoded here -- point NTFY_URL anywhere.
+# Delivery target is $NTFY_URL from the environment; unset = log only.
+# ENGINE-GENERIC: no host, topic, or operator identity is hardcoded here.
 #
 # Behaviour:
-#   - POST to $NTFY_URL with a Title and Priority header and MESSAGE as the body.
-#   - On a non-200 response, retry ONCE.
-#   - Append ONE line to $TEAM_DIR/reports/operator-pings.log:
-#       <ISO-8601 UTC timestamp> | <title> | <http-status> | <message-id>
-#   - Exit 0 only when a 200 was logged; non-zero otherwise, so a caller can
-#     machine-check that the ping actually left the machine.
+#   - CLASS is page | action | info (docs/OPERATOR-PAGING.md); the old ntfy
+#     priorities are accepted and mapped (below). Default: high, i.e. action.
+#   - The policy logs ONE decision line to $TEAM_DIR/reports/operator-pings.log
+#     (NOTIFY_LOG): <ISO-8601 UTC> | <DECISION> <class> ... <subject> :: <body>
+#   - Exit 0: SENT, or accepted for later delivery or covered by an earlier push
+#     (QUEUED, DIGEST, DEDUPE, MUTED). Exit 3: an action demoted to the digest.
+#     Any other non-zero: NOT delivered (LOG-ONLY: no NTFY_URL or the push
+#     failed; 2: bad class).
 #
-# Usage: bin/notify-operator.sh "Title" "Message body" [priority]
-#   priority: an ntfy priority (min|low|default|high|urgent, or 1..5). Default: high.
+# Usage: bin/notify-operator.sh "Title" "Message body" [page|action|info]
 
 set -uo pipefail
 
@@ -32,15 +33,28 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Maintenance modes (cron and operators):
 #   --digest            notify_flush, then one silent digest push of the info lines (08:00 Mon-Fri)
 #   --flush             push actions queued out of hours (call at the start of working hours)
-#   --mute <until>      write $TEAM_DIR/health/maintenance-until (epoch or a `date -d` string);
-#                       actions and info are held, pages go out prefixed [maintenance]
+#   --mute <until>      write $TEAM_DIR/health/maintenance-until; <until> is an epoch or a
+#                       `date -d` string, resolved ONCE here and stored as an epoch (a relative
+#                       string such as 'tomorrow' re-read later would never expire). A value
+#                       that does not parse, or is not in the future, is refused (exit 2) and
+#                       nothing is written. Actions are dropped (logged MUTED), info still
+#                       goes to the digest, pages go out prefixed [maintenance]
 #   --unmute            remove it
 case "${1:-}" in
   --digest) notify_digest; exit 0 ;;
   --flush)  notify_flush;  exit 0 ;;
   --mute)   [ -n "${2:-}" ] || { echo "usage: notify-operator.sh --mute <until>" >&2; exit 2; }
+            if ! until_s="$(notify_mute_epoch "$2")"; then
+              echo "notify-operator.sh: --mute: cannot parse '$2'; NOT muted. Give an epoch (date +%s) or a date(1) string such as '2026-09-07 16:00' or '2026-09-07T16:00:00+02:00'." >&2
+              exit 2
+            fi
+            if [ "$until_s" -le "$(_nt_now)" ]; then
+              echo "notify-operator.sh: --mute: '$2' ($(date -u -d "@$until_s" +%Y-%m-%dT%H:%M:%SZ)) is not in the future; NOT muted." >&2
+              exit 2
+            fi
             f="${NOTIFY_MUTE_FILE:-$TEAM_DIR/health/maintenance-until}"; mkdir -p "$(dirname "$f")"
-            printf '%s\n' "$2" > "$f"; echo "muted until $2 ($f)"; exit 0 ;;
+            printf '%s\n' "$until_s" > "$f"
+            echo "muted until $(date -u -d "@$until_s" +%Y-%m-%dT%H:%M:%SZ) (epoch $until_s, from '$2'; $f)"; exit 0 ;;
   --unmute) rm -f "${NOTIFY_MUTE_FILE:-$TEAM_DIR/health/maintenance-until}"; echo "unmuted"; exit 0 ;;
 esac
 
@@ -66,9 +80,12 @@ case "$priority" in
   action|urgent|max|high|5|4)  class=action ;;
   *)                           class=info ;;
 esac
-log_file="${NOTIFY_LOG:-$TEAM_DIR/reports/operator-pings.log}"
+# The decision of THIS call, from _nt_log. The log's last line was read here before: another
+# sender can write between the call and the read, and with NOTIFY_SINK set and NOTIFY_LOG unset
+# the policy logs to ${NOTIFY_SINK}.log, so a sent push read as "NOT DELIVERED".
+_NT_LAST=""
 notify_operator "$class" "$title" "$message"; rc=$?
-last="$(tail -1 "$log_file" 2>/dev/null)"
+last="$_NT_LAST"
 # 2026-09-11: say in words whether the phone got it, and FAIL (exit 3) when it did not.
 # The orchestrator reported "operator notified" after a DEMOTED decision it had not read;
 # a false delivery claim is worse than no push. DEDUPE and MUTED stay exit 0: the
@@ -76,11 +93,11 @@ last="$(tail -1 "$log_file" 2>/dev/null)"
 decision="${last#* | }"; decision="${decision%% *}"
 case "$decision" in
   SENT)     echo "notify-operator.sh: $class :: DELIVERED to the phone :: ${last#* | }"; exit 0 ;;
-  RESOLVED) echo "notify-operator.sh: $class :: DELIVERED (resolved) :: ${last#* | }"; exit 0 ;;
-  QUEUED)   echo "notify-operator.sh: $class :: ACCEPTED, NOT YET DELIVERED: queued for the 08:03 flush (outside the push window) :: ${last#* | }"; exit 0 ;;
-  DIGEST)   echo "notify-operator.sh: info :: in the daily 08:07 digest, no push :: ${last#* | }"; exit 0 ;;
+  QUEUED)   echo "notify-operator.sh: $class :: ACCEPTED, NOT YET DELIVERED: queued for the next in-hours flush (outside the push window) :: ${last#* | }"; exit 0 ;;
+  DIGEST)   echo "notify-operator.sh: info :: in the daily digest, no push :: ${last#* | }"; exit 0 ;;
   DEDUPE)   echo "notify-operator.sh: $class :: NOT PUSHED AGAIN: an earlier push for this subject is still within its cooldown :: ${last#* | }"; exit 0 ;;
   MUTED)    echo "notify-operator.sh: $class :: NOT PUSHED: maintenance mute is active :: ${last#* | }"; exit 0 ;;
   DEMOTED)  echo "notify-operator.sh: $class :: NOT DELIVERED TO THE PHONE. Demoted to the digest: sender [${NOTIFY_SOURCE:-unknown}] is not on the audible action list (NOTIFY_ACTION_SOURCES). Do not report the operator as notified. An item that needs the operator goes into the operator decisions file; the operator side relays it." >&2; exit 3 ;;
-  *)        echo "notify-operator.sh: $class :: NOT DELIVERED: $last" >&2; exit "${rc:-1}" ;;
+  # LOG-ONLY returns 0 from notify_operator; NOT DELIVERED must still fail the caller.
+  *)        echo "notify-operator.sh: $class :: NOT DELIVERED: $last" >&2; [ "${rc:-0}" -ne 0 ] || rc=1; exit "$rc" ;;
 esac

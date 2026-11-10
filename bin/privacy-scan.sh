@@ -41,8 +41,11 @@
 # 1e301527 (2026-07-11) documents the per-token allowlist finding by quoting
 # the two invented fixtures it was found with, an ad-hoc home path and a
 # keyword assignment, so `git log --all -p | bin/privacy-scan.sh` reports two
-# hits from that message. They are prose examples, not data, and they block
-# nothing: the pre-push gate reads only the commits being pushed. New messages
+# hits from that message. They are prose examples, not data. The pre-push gate
+# reads only the commits the destination remote does not have yet, so they would
+# block a push of that history to a remote that lacks it (a new mirror); the commit
+# is listed in config/privacy-known-history.txt, so the hook skips its content
+# scan (its author and committer are still scanned). New messages
 # should quote the documented placeholders (/home/user, user@example.com,
 # <angle-brackets>) so this does not grow, and this note deliberately does not
 # repeat the literals.
@@ -58,11 +61,20 @@
 #   git show <sha> | bin/privacy-scan.sh
 #   git log --all -p | bin/privacy-scan.sh           # the whole history
 #   bin/privacy-scan.sh --tree                       # every tracked file
+#   bin/privacy-scan.sh --identities                 # commit identities, one
+#       "<commit> <field>:<value>" line each on stdin (bin/hooks/pre-push)
 #
 # Env:
 #   PRIVACY_DENY_FILE   deny list path (default: config/privacy-deny.local,
 #                       gitignored). One POSIX ERE per line; '#' comments and
-#                       blank lines ignored. Absent file is not an error.
+#                       blank lines ignored. Absent file is not an error. A line
+#                       that does not compile stops the scan (exit 2).
+#   PRIVACY_PUBLIC_IDENTITIES  --identities only: identities allowed on a public
+#                       commit (default: privacy-public-identities in the git
+#                       directory, so it is per clone and never committed). One
+#                       POSIX ERE per line, matched against a WHOLE name or
+#                       address, case-insensitive. Absent file: every identity
+#                       field gets the normal patterns and the deny list.
 #
 # Wired as a pre-push gate by bin/hooks/pre-push (see that file to install).
 set -uo pipefail
@@ -73,8 +85,9 @@ DENY_FILE="${PRIVACY_DENY_FILE:-$repo/config/privacy-deny.local}"
 mode=diff
 case "${1:-}" in
   --tree) mode=tree ;;
+  --identities) mode=identities ;;
   --help|-h)
-    sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,78p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 0 ;;
   "") ;;
   *) echo "privacy-scan: unknown argument '$1' (expected --tree or a diff on stdin)" >&2; exit 2 ;;
@@ -138,7 +151,17 @@ private_re='(/home/[a-z_][a-z0-9_-]+|/Users/[A-Za-z][A-Za-z0-9_-]+|[A-Za-z0-9._%
 # a Python type annotation has the shape of a secret being set. A value that is
 # a bare built-in or typing name is now allowed; a quoted or random-looking
 # value is not.
-allow_re='(^token = token_file[[:punct:]]?$|^token": bus_token[[:punct:]]?$|<[a-z][a-z-]*>|@example\.(com|org|net)$|@[A-Za-z0-9.-]+\.(invalid|test|example|localhost)$|^noreply@|@users\.noreply\.github\.com$|^127\.0\.0\.1$|^0\.0\.0\.0$|^/home/user$|^docs\.ntfy\.sh|ntfy\.sh/orch-example$|cubic-bezier$|load_secret\(?$|^19:(a+|b+|c+|x+|y+|z+|0+|1+)@thread\.(tacv2|v2)$)'
+#
+# PLACEHOLDERS ARE ALLOWED ONLY WHERE THE PRIVATE PART WOULD BE (2026-11-10).
+# The entry was an unanchored <angle-bracket> marker, so any token that merely
+# CONTAINED one passed: a real ntfy topic or chat id with a marker appended
+# (the ntfy and chat id alternatives take < and > into the token). Two shapes
+# remain, both anchored at each end: an ntfy topic made of markers (with the
+# documented orch- prefix), and a chat id that is a marker. `^noreply@` is gone
+# too: it allowed a noreply address at any domain, a private one included. What
+# this repo's history carries is allowed exactly: the GitHub noreply form for
+# authors, and GitHub's own committer address on commits made in its web UI.
+allow_re='(^token = token_file[[:punct:]]?$|^token": bus_token[[:punct:]]?$|^ntfy\.sh/(orch-)?<[a-z][a-z-]*>(-<[a-z][a-z-]*>)*$|^19:<[a-z][a-z-]*>@thread\.(tacv2|v2)$|@example\.(com|org|net)$|@[A-Za-z0-9.-]+\.(invalid|test|example|localhost)$|@users\.noreply\.github\.com$|^noreply@github\.com$|^127\.0\.0\.1$|^0\.0\.0\.0$|^/home/user$|^docs\.ntfy\.sh|ntfy\.sh/orch-example$|^19:(a+|b+|c+|x+|y+|z+|0+|1+)@thread\.(tacv2|v2)$)'
 
 # Operator deny list: literal private names that no pattern can guess. Read
 # from a gitignored file so the public tree never has to carry them.
@@ -148,15 +171,54 @@ allow_re='(^token = token_file[[:punct:]]?$|^token": bus_token[[:punct:]]?$|<[a-
 # PRIVACY_DENY_FILE removes that guard, and every push still reports clean.
 # An ABSENT file stays silent, because "no deployment configured" is a real and
 # common state that cannot be told apart from a missing one.
-deny_re=""
-if [ -e "$DENY_FILE" ]; then
-  if [ ! -r "$DENY_FILE" ]; then
-    echo "privacy-scan: deny file exists but is not readable: $DENY_FILE" >&2
-    echo "privacy-scan: refusing to scan with the deny list silently disabled." >&2
+#
+# EVERY LINE IS COMPILED ON ITS OWN FIRST. The lines used to be joined into one
+# expression and the match ran as `grep ... || true`, so one line that did not
+# compile (an unbalanced parenthesis) made grep exit 2, the `|| true` read that
+# as "no hit", and the whole list was off while every push reported clean. A
+# bad line now stops the scan (exit 2) and is named by its line number only:
+# the file holds private names, and this message lands in terminals and logs.
+# EACH LINE IS ITS OWN -e PATTERN, never joined with |. GNU grep reads an
+# unmatched ) as a literal, so a line such as `qq)` compiles; joined into
+# `qq)|zz` and matched with -x (the public identity list), that ) closed the
+# anchoring group early and every value STARTING with qq matched, a private
+# address included. One -e per line keeps each line whole.
+# load_re <file> <array> <what>: the file's pattern lines as "-e <line>" pairs in <array>.
+load_re() {
+  local f="$1" n=0 l
+  local -n _pats="$2"
+  _pats=()
+  if [ ! -r "$f" ] || [ -d "$f" ]; then
+    echo "privacy-scan: $3 exists but is not readable: $f" >&2
+    echo "privacy-scan: refusing to scan with the $3 silently disabled." >&2
     exit 2
   fi
-  if ! deny_re="$(grep -vE '^[[:space:]]*(#|$)' "$DENY_FILE" | paste -sd'|' -)"; then
-    : # grep exits 1 when every line is a comment or blank; that is legitimate
+  while IFS= read -r l || [ -n "$l" ]; do
+    n=$((n + 1))
+    [[ "$l" =~ ^[[:space:]]*(#|$) ]] && continue
+    grep -E -e "$l" </dev/null >/dev/null 2>&1
+    if [ $? -eq 2 ]; then
+      echo "privacy-scan: $f line $n is not a valid extended regular expression." >&2
+      echo "privacy-scan: refusing to scan with the $3 disabled; fix or remove that line." >&2
+      exit 2
+    fi
+    _pats+=(-e "$l")
+  done < "$f"
+}
+deny_re=()
+if [ -e "$DENY_FILE" ] || [ -L "$DENY_FILE" ]; then
+  load_re "$DENY_FILE" deny_re "deny list"
+fi
+pub_re=()
+if [ "$mode" = identities ]; then
+  if [ -n "${PRIVACY_PUBLIC_IDENTITIES+x}" ]; then
+    PUB_FILE="$PRIVACY_PUBLIC_IDENTITIES"
+  else
+    PUB_FILE="$(cd "$repo" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    PUB_FILE="${PUB_FILE:+$PUB_FILE/privacy-public-identities}"
+  fi
+  if [ -n "$PUB_FILE" ] && { [ -e "$PUB_FILE" ] || [ -L "$PUB_FILE" ]; }; then
+    load_re "$PUB_FILE" pub_re "public identity list"
   fi
 fi
 
@@ -185,22 +247,54 @@ fi
 # bin/tests/privacy-scanXtestXsh inherited the exemption (measured the same
 # day). awk compares it with == inside the parse.
 fixture_file='bin/tests/privacy-scan.test.sh'
+#
+# BINARY CONTENT. The hook passes binary files as text (git show --text), so NUL
+# bytes and invalid UTF-8 reach the diff parser. NULs are deleted first (bash
+# drops them from a command substitution anyway, with a warning per commit;
+# deleting rather than splitting keeps the hunk line counts intact), and the
+# parser runs with LC_ALL=C: it reads only ASCII markers, and bytes are what git
+# wrote.
 
 if [ "$mode" = tree ]; then
   if ! (cd "$repo" && git rev-parse --git-dir >/dev/null 2>&1); then
     echo "privacy-scan: --tree needs a git repository at $repo" >&2
     exit 2
   fi
-  raw="$(cd "$repo" && git grep -nI '' -- . 2>/dev/null | awk -v fixture="$fixture_file" '
+  # Tracked paths are scanned as names too: an empty or binary file has no line
+  # for git grep to print, so its name was never read (measured 2026-11-10).
+  # THE FIXTURE IS EXCLUDED BY LITERAL PATHSPEC, not by splitting the output:
+  # git grep writes path:line:content, so a tracked file NAMED like the fixture
+  # plus ":1:x" split at its first colon into the fixture name and inherited the
+  # exemption. The split below now only labels a hit.
+  raw="$(cd "$repo" && { git grep -nI '' -- . ":(exclude,literal)$fixture_file" 2>/dev/null | awk '
     {
       i = index($0, ":"); if (i == 0) next
       f = substr($0, 1, i - 1)
       rest = substr($0, i + 1)
       j = index(rest, ":"); if (j == 0) next
-      if (f != fixture) print f ":" substr(rest, j + 1)
-    }')"
+      print f ":" substr(rest, j + 1)
+    }'; git ls-files 2>/dev/null | sed 's/^/(file name):/'; })"
+elif [ "$mode" = identities ]; then
+  # One "<commit> <field>:<value>" line per author or committer name or address.
+  # A value that is WHOLLY a listed public identity is skipped; anything else
+  # meets the same patterns and deny list as a diff line. The exemption is per
+  # whole value on purpose: a token-level one for a surname would also match
+  # inside that surname at a private mail domain.
+  raw=""
+  declare -A pub_seen=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *:*) ;; *) continue ;; esac
+    v="${line#*:}"
+    if [ "${#pub_re[@]}" -gt 0 ] && [ -n "$v" ]; then
+      if [ -z "${pub_seen[$v]+x}" ]; then
+        grep -aqxiE "${pub_re[@]}" <<<"$v"; pub_seen[$v]=$?
+      fi
+      [ "${pub_seen[$v]}" = 0 ] && continue
+    fi
+    raw="${raw}${line}"$'\n'
+  done
 else
-  raw="$(awk -v fixture="$fixture_file" '
+  raw="$(tr -d '\000' | LC_ALL=C awk -v fixture="$fixture_file" '
     function emit(line) { if (file != fixture) print file ":" line }
     BEGIN { old_rem = 0; new_rem = 0; file = "" }
     (old_rem > 0 || new_rem > 0) {
@@ -216,9 +310,15 @@ else
     # a pure rename, an empty new file or a binary file carried its name into a patch unscanned.
     # Every header that names a path is emitted as one "(file name)" line. These rules sit after
     # the hunk counter above, so only a real header position reaches them; content cannot forge one.
-    /^diff /               { print "(file name):" substr($0, 6); file = ""; prevminus = 0; seen_hunk = 0; next }
+    # NOPFX, MINUS_A, MINUS_DEV: the b/ prefix is stripped only from a PREFIXED diff. Stripping it
+    # always let `git show --no-prefix` of a file under a directory named b/ (b/bin/tests/...) come
+    # out as the exempt fixture path. A prefixed git diff line starts "diff --git a/"; a new file has
+    # "--- /dev/null", so its prefix is read from that diff line.
+    /^diff /               { print "(file name):" substr($0, 6); file = ""; prevminus = 0; seen_hunk = 0
+                             nopfx = ($0 ~ /^diff --git / && $0 !~ /^diff --git a\//); next }
     /^(rename|copy) (from|to) / && !seen_hunk { print "(file name):" $0; next }
-    /^--- /                { print "(file name):" substr($0, 5); prevminus = 1; next }
+    /^--- /                { print "(file name):" substr($0, 5); prevminus = 1
+                             minus_a = ($0 ~ /^--- a\//); minus_dev = ($0 ~ /^--- \/dev\/null/); next }
     # BOTH conditions guard a header: outside a hunk (above) AND paired with a
     # minus-minus-minus line. git always emits the pair, so requiring it costs
     # nothing, and it means a lone plus-plus-plus line cannot retarget the scan
@@ -236,7 +336,7 @@ else
       print "(file name):" substr($0, 5)
       file = substr($0, 5)
       sub(/\t.*$/, "", file)
-      sub(/^b\//, "", file)
+      if (minus_a || (minus_dev && !nopfx)) sub(/^b\//, "", file)
       prevminus = 0
       next
     }
@@ -255,17 +355,28 @@ else
   ')"
 fi
 
-candidates="$(printf '%s\n' "$raw" | grep -iE "$private_re" || true)"
+# -a ON EVERY GREP OF SCANNED TEXT. Under a UTF-8 locale GNU grep withholds a
+# matching line that holds a byte sequence that is not valid UTF-8 and prints
+# "binary file matches" on stderr instead, so a key on the same line as one
+# Latin-1 byte passed with exit 0 (measured 2026-11-10). The hook now feeds
+# binary files as text (git show --text), which makes such lines common.
+candidates="$(printf '%s\n' "$raw" | grep -aiE "$private_re" || true)"
 deny_hits=""
-if [ -n "$deny_re" ]; then
-  deny_hits="$(printf '%s\n' "$raw" | grep -iE "$deny_re" || true)"
+if [ "${#deny_re[@]}" -gt 0 ]; then
+  # -e per line (load_re): a deny line starting with '-' is a pattern, not an
+  # option. Exit 2 is an error, never "no hit".
+  deny_hits="$(printf '%s\n' "$raw" | grep -aiE "${deny_re[@]}")"; rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "privacy-scan: the deny list did not run (grep exit $rc); refusing to report clean." >&2
+    exit 2
+  fi
 fi
 
 hits=""
 if [ -n "$candidates" ]; then
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    toks="$(printf '%s' "$line" | grep -oiE "$private_re" | grep -ivE "$allow_re" || true)"
+    toks="$(printf '%s' "$line" | grep -aoiE "$private_re" | grep -aivE "$allow_re" || true)"
     if [ -n "$toks" ]; then
       file="${line%%:*}"
       while IFS= read -r t; do
@@ -282,7 +393,7 @@ fi
 if [ -n "$deny_hits" ]; then
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    toks="$(printf '%s' "$line" | grep -oiE "$deny_re" || true)"
+    toks="$(printf '%s' "$line" | grep -aoiE "${deny_re[@]}" || true)"
     if [ -n "$toks" ]; then
       file="${line%%:*}"
       while IFS= read -r t; do
@@ -299,6 +410,8 @@ fi
 if [ -n "$hits" ]; then
   if [ "$mode" = tree ]; then
     echo "privacy-scan: PRIVATE DATA in tracked files:" >&2
+  elif [ "$mode" = identities ]; then
+    echo "privacy-scan: PRIVATE DATA in a commit author or committer, push blocked:" >&2
   else
     echo "privacy-scan: PRIVATE DATA in added lines — push/commit blocked:" >&2
   fi

@@ -26,18 +26,20 @@ for a in "$@"; do case "$a" in
   *) break ;;
 esac done
 
+# Every tmux call goes through team-env's tmux(), which adds -L "$TEAM_TMUX" (default
+# 'orchestrator'); a hard-coded -L here overrode a team run on another socket.
 if [ "$list" = 1 ]; then
-  tmux -L orchestrator list-sessions -F '#{session_name}' 2>/dev/null | grep -E '^orch-' || echo "no live orchestrator sessions"
+  tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E '^orch-' || echo "no live orchestrator sessions"
   exit 0
 fi
 
 [ -z "$sess" ] && sess="$TEAM_SESSION"
 text="${1:-go}"
 
-if ! tmux -L orchestrator has-session -t "$sess" 2>/dev/null; then
+if ! tmux has-session -t "$sess" 2>/dev/null; then
   echo "no such session: '$sess' on socket '$TEAM_TMUX'" >&2
   echo "candidates:" >&2
-  tmux -L orchestrator list-sessions -F '  #{session_name}' 2>/dev/null | sed 's/^/  /' >&2
+  tmux list-sessions -F '  #{session_name}' 2>/dev/null | sed 's/^/  /' >&2
   echo >&2
   echo "set TEAM_RUN_ID or pass --session <name>." >&2
   exit 1
@@ -45,7 +47,7 @@ fi
 
 # The orchestrator window is named 'orchestrator' (window 0) by start-orchestrator.sh.
 target="$sess:orchestrator"
-if ! tmux -L orchestrator list-windows -t "$sess" -F '#{window_name}' 2>/dev/null | grep -qx orchestrator; then
+if ! tmux list-windows -t "$sess" -F '#{window_name}' 2>/dev/null | grep -qx orchestrator; then
   # Fallback: window 0.
   target="$sess:0"
 fi

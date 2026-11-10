@@ -148,6 +148,35 @@ run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
 [ ! -s "$W/err" ] && ok "a vanished pump leaves stderr empty" || no "stderr: $(cat "$W/err")"
 rm -f -- "$BUS_INBOX_DIR/gone.pid"
 
+echo "== 6e. a deliberate disconnect (marker file) is not a dead listener =="
+: > "$BUS_INBOX_DIR/rolex.disconnected"
+run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
+[ "$rc" = 0 ] && [ ! -s "$W/out" ] && ok "listener dead after a marked disconnect: allowed" || no "rc=$rc out=$(cat "$W/out")"
+grep -q 'rolex listener dead after a deliberate disconnect' "$LOGF" && ok "logged as a deliberate disconnect" || no "no disconnect log line"
+run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
+[ "$rc" = 0 ] && [ ! -s "$W/out" ] && [ -f "$BUS_INBOX_DIR/rolex.disconnected" ] \
+  && ok "the next turn end is allowed too; the marker stays while the listener is dead" || no "second turn end: rc=$rc out=$(cat "$W/out")"
+python3 "$W/fk/bus-inbox.py" _pump rolex "$CC" >/dev/null 2>&1 & PUMP2=$!; pids="$pids $PUMP2"
+python3 "$W/fk/client.py" --name rolex >/dev/null 2>&1 & CLI2=$!; pids="$pids $CLI2"
+echo "$PUMP2 $CLI2" > "$BUS_INBOX_DIR/rolex.pid"; sleep 0.5
+run_hook '{}'
+blocked && [ ! -e "$BUS_INBOX_DIR/rolex.disconnected" ] && [ -f "$BUS_INBOX_DIR/rolex.disconnected.cleared" ] \
+  && ok "listener back: reader=none blocks, the marker is cleared" || no "after reconnect: out=$(cat "$W/out"), marker $(ls "$BUS_INBOX_DIR" | tr '\n' ' ')"
+kill "$PUMP2" 2>/dev/null; wait "$PUMP2" 2>/dev/null; sleep 0.3
+run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
+[ "$rc" = 0 ] && blocked && ok "a later death with no new marker: decision=block" || no "rc=$rc out=$(cat "$W/out")"
+
+echo "== 6f. bus-inbox.py start removes the marker, so a failed start is blocked again =="
+# The real bus-inbox.py, refused before it spawns anything (no Claude Code owner): a reconnect that fails,
+# or a new role under a retired role's name, must not inherit the old marker. BUS_INBOX_SRC: red-first runs.
+: > "$BUS_INBOX_DIR/rolex.disconnected"
+sout="$(BUS_INBOX_CC_PID=-1 python3 "${BUS_INBOX_SRC:-$repo/bin/bus-inbox.py}" start rolex 2>&1)"; src=$?
+[ "$src" = 1 ] && [ ! -e "$BUS_INBOX_DIR/rolex.disconnected" ] \
+  && ok "a start that fails (rc 1) leaves no marker" || no "start rc=$src, marker $(ls "$BUS_INBOX_DIR" | tr '\n' ' '): $sout"
+run_hook '{}' STOP_BUS_READER_CC_PID="$DCC" "${W6[@]}"
+[ "$rc" = 0 ] && blocked && grep -q 'bus-inbox.py start rolex' "$W/out" \
+  && ok "the dead listener after that start: decision=block" || no "rc=$rc out=$(cat "$W/out")"
+
 echo "== 7. nothing reached a live channel =="
 [ ! -s "$NOTIFY_SINK" ] && [ ! -s "$WATCH_ALERT_SINK" ] && ok "sinks empty" || no "a sink was written"
 [ "$(wc -l < "$LIVE_MSGS" 2>/dev/null || echo 0)" -ge "$live0" ] && ! tail -n +"$((live0+1))" "$LIVE_MSGS" 2>/dev/null | /usr/bin/grep -q rolex \

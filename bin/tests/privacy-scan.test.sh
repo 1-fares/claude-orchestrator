@@ -171,6 +171,7 @@ cp "$SCAN" "$tree_repo/bin/privacy-scan.sh"
   git config user.email noreply@example.com
   git config user.name tester
   printf 'TARGET=i-0123456789abcdef0\n' > committed.sh
+  : > sg-0fedcba987654321f.txt
   git add -A && git commit -q -m "a resource id, already committed"
 ) >/dev/null 2>&1
 
@@ -179,6 +180,13 @@ if [ "$rc" -eq 1 ] && grep -q 'i-0123456789abcdef0' <<<"$out"; then
   echo "  ok       PLANTED POSITIVE: --tree finds data that is already committed"
 else
   echo "  FAIL     --tree missed an already-committed resource id (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+# An empty file has no line for git grep to print; its name must still be read.
+if [ "$rc" -eq 1 ] && grep -q 'sg-0fedcba987654321f' <<<"$out"; then
+  echo "  ok       PLANTED POSITIVE: --tree reads the name of an empty tracked file"
+else
+  echo "  FAIL     --tree missed a private-shaped name on an empty tracked file (exit $rc) -- $out"
   fail=$((fail + 1))
 fi
 
@@ -337,6 +345,242 @@ probe "CONTROL: a generic rename passes" 0 \
   'diff --git a/notes/x.txt b/notes/y.txt\nsimilarity index 100%%\nrename from notes/x.txt\nrename to notes/y.txt\n'
 probe "CONTROL: a removed line reading like a rename header is content, not a name" 0 \
   'diff --git a/s.sh b/s.sh\n--- a/s.sh\n+++ b/s.sh\n@@ -1,2 +1,2 @@\n a\n-rename to notes/i-0123456789abcdef0.txt\n+b\n'
+
+# --- a bad deny line must stop the scan, not switch the list off -----------------
+# The lines were joined into one expression and matched with `grep ... || true`, so one line that
+# did not compile made grep exit 2, read as "no hit": the whole list was off.
+echo "deny line validation"
+printf 'acmecorp\nwidget(co\n' > "$SCRATCH/deny-badline"
+out="$(diff_adding 'source "$repo/acmecorp/x.conf"' | PRIVACY_DENY_FILE="$SCRATCH/deny-badline" bash "$SCAN" 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ] && grep -q 'line 2 ' <<<"$out"; then
+  echo "  ok       PLANTED POSITIVE: a deny line that does not compile stops the scan and is named"
+else
+  echo "  FAIL     a bad deny line did not stop the scan (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+printf -- '--acme-secret-name\n' > "$SCRATCH/deny-dash"
+block "a deny line that starts with a dash" 'x --acme-secret-name y' "$SCRATCH/deny-dash"
+
+# --- b/ is a diff prefix only in a prefixed diff ---------------------------------
+echo "diff prefixes"
+probe "PLANTED: --no-prefix diff of a file under b/ is not the fixture" 1 \
+  'diff --git b/bin/tests/privacy-scan.test.sh b/bin/tests/privacy-scan.test.sh\nnew file mode 100644\n--- /dev/null\n+++ b/bin/tests/privacy-scan.test.sh\n@@ -0,0 +1 @@\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+probe "PLANTED: --no-prefix change to a file under b/ is not the fixture" 1 \
+  'diff --git b/bin/tests/privacy-scan.test.sh b/bin/tests/privacy-scan.test.sh\n--- b/bin/tests/privacy-scan.test.sh\n+++ b/bin/tests/privacy-scan.test.sh\n@@ -1 +1 @@\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+probe "CONTROL: a new fixture file in a prefixed diff is still exempt" 0 \
+  'diff --git a/bin/tests/privacy-scan.test.sh b/bin/tests/privacy-scan.test.sh\nnew file mode 100644\n--- /dev/null\n+++ b/bin/tests/privacy-scan.test.sh\n@@ -0,0 +1 @@\n+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n'
+
+# --- --tree: a file named like the fixture plus ":1:x" -------------------------
+echo "tree mode, colon in a name"
+tree2="$SCRATCH/treerepo2"
+mkdir -p "$tree2/bin/tests"
+cp "$SCAN" "$tree2/bin/privacy-scan.sh"
+(
+  cd "$tree2"
+  git init -q .
+  git config user.email noreply@example.com
+  git config user.name tester
+  printf 'TARGET=i-0123456789abcdef0\n' > 'bin/tests/privacy-scan.test.sh:1:x'
+  git add -A && git commit -q -m "a colon in a file name"
+) >/dev/null 2>&1
+out="$(cd "$tree2" && PRIVACY_DENY_FILE="$NO_DENY" bash bin/privacy-scan.sh --tree 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && grep -q 'i-0123456789abcdef0' <<<"$out"; then
+  echo "  ok       PLANTED POSITIVE: a name with the fixture path before a colon is not exempt"
+else
+  echo "  FAIL     a colon-split name borrowed the fixture exemption (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+
+# --- allowlist anchoring: a placeholder excuses only the part it stands for ------
+# The <angle-bracket> entry was unanchored, so a real topic or chat id with a
+# marker appended passed; `^noreply@` allowed a noreply address at any domain.
+echo "allowlist anchoring"
+block "a marker appended to a real ntfy topic"   'NTFY_URL=https://ntfy.sh/f7a3realtopic<x>'
+block "a marker appended to a real chat id"      'channel: 19:Q0hBTk5FTElERk9SVEVT<x>@thread.tacv2'
+block "a noreply address at a private domain"    'reply-to: noreply@acme-corp.ch'
+pass  "an ntfy topic that is one marker"         'POST to https://ntfy.sh/<topic>'
+pass  "a chat id that is one marker"             'chat 19:<chat-id>@thread.v2'
+pass  "GitHub's web-UI committer address"        'committer GitHub <noreply@github.com>'
+block "a noreply address under a lookalike domain" 'noreply@github.com.acme-corp.ch'
+
+# --- a byte that is not UTF-8 must not hide its line -------------------------------
+# GNU grep withheld a matching line holding such a byte ("binary file matches").
+echo "non-UTF-8 bytes"
+out="$(diff_adding "$(printf 'caf\351 AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE')" | LC_ALL=C.UTF-8 PRIVACY_DENY_FILE="$NO_DENY" bash "$SCAN" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && grep -q 'AKIAIOSFODNN7EXAMPLE' <<<"$out"; then
+  echo "  ok       PLANTED POSITIVE: a key on a line with a Latin-1 byte is blocked under a UTF-8 locale"
+else
+  echo "  FAIL     a key next to a non-UTF-8 byte passed (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+
+# --- the public identity list: one line, one whole-value pattern -------------------
+# Joined with |, a line with an unmatched ) broke the -x anchoring of the next one.
+echo "public identity list"
+printf 'qq)\njane\\.roe@acme-corp\\.ch\n' > "$SCRATCH/pub-paren"
+out="$(printf 'abc1234 author-email:qqxyz@acme-corp.ch\n' | PRIVACY_DENY_FILE="$NO_DENY" PRIVACY_PUBLIC_IDENTITIES="$SCRATCH/pub-paren" bash "$SCAN" --identities 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ]; then
+  echo "  ok       PLANTED POSITIVE: a stray ) in one line does not exempt every value starting with it"
+else
+  echo "  FAIL     a private address passed by prefix of a public identity line (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+out="$(printf 'abc1234 author-email:jane.roe@acme-corp.ch\n' | PRIVACY_DENY_FILE="$NO_DENY" PRIVACY_PUBLIC_IDENTITIES="$SCRATCH/pub-paren" bash "$SCAN" --identities 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && echo "  ok       CONTROL: the line after it is still a whole-value pattern of its own" \
+  || { echo "  FAIL     a listed identity was blocked (exit $rc) -- $out"; fail=$((fail + 1)); }
+
+# --- bin/hooks/pre-push: identity, per-remote selection, a ref that moved --------
+# A throwaway clone with two bare remotes; the hook is run directly with the
+# stdin git would give it. Nothing leaves the scratch directory.
+echo "pre-push"
+pp="$SCRATCH/pp"
+mkdir -p "$pp/bin/hooks"
+cp "$SCAN" "$pp/bin/privacy-scan.sh"
+cp "$repo/bin/hooks/pre-push" "$pp/bin/hooks/pre-push"
+z40=0000000000000000000000000000000000000000
+ppgit() { git -C "$pp" -c user.name=tester -c user.email=noreply@example.com "$@"; }
+pphook() { # pphook <name> <expected_exit> <remote> <stdin line>
+  local out rc
+  out="$(cd "$pp" && printf '%s\n' "$4" | PRIVACY_DENY_FILE="$NO_DENY" PRIVACY_PUBLIC_IDENTITIES="${PP_PUB:-$SCRATCH/pub-absent}" bash bin/hooks/pre-push "$3" "$SCRATCH/$3.git" 2>&1)"; rc=$?
+  if [ "$rc" -eq "$2" ]; then echo "  ok       $1"; else echo "  FAIL     $1: exit $rc, expected $2 -- $out"; fail=$((fail + 1)); fi
+}
+(
+  git init -q --bare "$SCRATCH/pub.git" && git init -q --bare "$SCRATCH/priv.git"
+  ppgit init -q -b master . && ppgit remote add pub "$SCRATCH/pub.git" && ppgit remote add priv "$SCRATCH/priv.git"
+  echo base > "$pp/base.txt" && ppgit add -A && ppgit commit -q -m base
+  ppgit push -q pub master && ppgit push -q priv master
+) >/dev/null 2>&1
+base="$(ppgit rev-parse HEAD)"
+
+# Identity: content and message clean, the author and committer are not.
+(
+  ppgit checkout -q -b ident "$base"
+  echo one > "$pp/one.txt" && git -C "$pp" add one.txt
+  GIT_AUTHOR_NAME='Jane Roe' GIT_AUTHOR_EMAIL='jane.roe@acme-corp.ch' \
+  GIT_COMMITTER_NAME='Jane Roe' GIT_COMMITTER_EMAIL='jane.roe@acme-corp.ch' git -C "$pp" commit -q -m clean
+) >/dev/null 2>&1
+ident="$(ppgit rev-parse ident)"
+pphook "PLANTED: a private author and committer address is refused" 1 pub "refs/heads/ident $ident refs/heads/ident $z40"
+printf '# public identities\nJane Roe\njane\\.roe@acme-corp\\.ch\n' > "$SCRATCH/pub-ids"
+PP_PUB="$SCRATCH/pub-ids" pphook "CONTROL: an identity listed as public passes" 0 pub "refs/heads/ident $ident refs/heads/ident $z40"
+printf 'Jane Roe\n' > "$SCRATCH/pub-name-only"
+PP_PUB="$SCRATCH/pub-name-only" pphook "PLANTED: listing the name does not exempt the address" 1 pub "refs/heads/ident $ident refs/heads/ident $z40"
+printf 'acme-corp\n' > "$SCRATCH/deny-acme"
+out="$(cd "$pp" && printf 'refs/heads/ident %s refs/heads/ident %s\n' "$ident" "$z40" | PRIVACY_DENY_FILE="$SCRATCH/deny-acme" PRIVACY_PUBLIC_IDENTITIES="$SCRATCH/pub-name-only" bash bin/hooks/pre-push pub "$SCRATCH/pub.git" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && grep -q 'author-email: acme-corp (deny list)' <<<"$out"; then
+  echo "  ok       PLANTED: the deny list applies to identities"
+else
+  echo "  FAIL     the deny list missed an identity (exit $rc) -- $out"
+  fail=$((fail + 1))
+fi
+
+# Selection: a commit already on remote priv is still outgoing to remote pub.
+(
+  ppgit checkout -q -b leak "$base"
+  printf 'TARGET=i-0123456789abcdef0\n' > "$pp/leak.sh" && ppgit add -A && ppgit commit -q -m leak
+  ppgit push -q priv leak
+) >/dev/null 2>&1
+leak="$(ppgit rev-parse leak)"
+pphook "PLANTED: a new branch already on another remote is scanned" 1 pub "refs/heads/leak $leak refs/heads/leak $z40"
+pphook "PLANTED: an update already on another remote is scanned" 1 pub "refs/heads/leak $leak refs/heads/master $base"
+pphook "CONTROL: nothing is outgoing to the remote that has it" 0 priv "refs/heads/leak $leak refs/heads/leak $leak"
+
+# Moved: the ref no longer points at what was scanned.
+(
+  ppgit checkout -q -b moving "$base"
+  echo a > "$pp/a.txt" && ppgit add -A && ppgit commit -q -m a
+) >/dev/null 2>&1
+scanned="$(ppgit rev-parse moving)"
+( echo b > "$pp/b.txt" && ppgit add -A && ppgit commit -q -m b ) >/dev/null 2>&1
+pphook "PLANTED: a ref that moved after git listed it is refused" 1 pub "refs/heads/moving $scanned refs/heads/moving $z40"
+pphook "CONTROL: an explicit-sha push sends what was scanned" 0 pub "$scanned $scanned refs/heads/moving $z40"
+pphook "CONTROL: a ref that did not move passes" 0 pub "refs/heads/moving $(ppgit rev-parse moving) refs/heads/moving $z40"
+ppgit tag -a -m t v1 "$base" >/dev/null 2>&1
+pphook "CONTROL: an annotated tag is not read as moved" 0 pub "refs/tags/v1 $(ppgit rev-parse v1) refs/tags/v1 $z40"
+pphook "CONTROL: an unknown sha fails closed" 1 pub "refs/heads/x 1111111111111111111111111111111111111111 refs/heads/x $z40"
+
+# pphook2 <name> <expected_exit> <arg1> <arg2> <stdin line> [text the output must hold]
+pphook2() {
+  local out rc
+  out="$(cd "$pp" && printf '%s\n' "$5" | PRIVACY_DENY_FILE="$NO_DENY" PRIVACY_PUBLIC_IDENTITIES="$SCRATCH/pub-absent" bash bin/hooks/pre-push "$3" "$4" 2>&1)"; rc=$?
+  if [ "$rc" -eq "$2" ] && { [ -z "${6:-}" ] || grep -qF -- "$6" <<<"$out"; }; then echo "  ok       $1"
+  else echo "  FAIL     $1: exit $rc, expected $2${6:+ and '$6'} -- $out"; fail=$((fail + 1)); fi
+}
+
+# Annotated tags: the tag object is sent too, and rev-list peels it away.
+ppgit tag -a -m 'release AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' t-msg "$base" >/dev/null 2>&1
+pphook "PLANTED: a key in an annotated tag message is refused" 1 pub "refs/tags/t-msg $(ppgit rev-parse t-msg) refs/tags/t-msg $z40"
+git -C "$pp" -c user.name='Jane Roe' -c user.email='jane.roe@acme-corp.ch' tag -a -m clean t-who "$base" >/dev/null 2>&1
+pphook "PLANTED: a private tagger address is refused" 1 pub "refs/tags/t-who $(ppgit rev-parse t-who) refs/tags/t-who $z40"
+ppgit tag -a -m 'inner AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' t-inner "$base" >/dev/null 2>&1
+ppgit tag -a -m outer t-outer t-inner >/dev/null 2>&1
+pphook "PLANTED: a key in a nested tag under a clean one is refused" 1 pub "refs/tags/t-outer $(ppgit rev-parse t-outer) refs/tags/t-outer $z40"
+ppgit push -q pub t-inner >/dev/null 2>&1
+pphook "CONTROL: a tag object the destination already has is not sent, so not scanned" 0 pub "refs/tags/t-outer $(ppgit rev-parse t-outer) refs/tags/t-outer $z40"
+
+# Content hidden by git settings: git show must always print a prefixed text diff and the message.
+(
+  ppgit checkout -q -b attr "$base"
+  printf 'notes.txt -diff\n' > "$pp/.gitattributes"; printf 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n' > "$pp/notes.txt"
+  ppgit add -A && ppgit commit -q -m attr
+) >/dev/null 2>&1
+pphook "PLANTED: a -diff attribute does not print the content away as binary" 1 pub "refs/heads/attr $(ppgit rev-parse attr) refs/heads/attr $z40"
+(
+  ppgit checkout -q -b noprefix "$base"
+  mkdir -p "$pp/a" && seq 1 30 > "$pp/a/foo" && ppgit add -A && ppgit commit -q -m foo
+  mkdir -p "$pp/b/bin/tests" && ppgit mv a/foo b/bin/tests/privacy-scan.test.sh
+  printf 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n' >> "$pp/b/bin/tests/privacy-scan.test.sh"
+  ppgit add -A && ppgit commit -q -m rename
+) >/dev/null 2>&1
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true \
+  pphook "PLANTED: diff.noprefix does not make a rename into b/ the exempt fixture" 1 pub "refs/heads/noprefix $(ppgit rev-parse noprefix) refs/heads/noprefix $z40"
+(
+  ppgit checkout -q -b msgkey "$base"
+  echo m > "$pp/m.txt" && ppgit add -A && ppgit commit -q -m 'probe AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE'
+  ppgit checkout -q -b colorkey "$base"
+  printf 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n' > "$pp/c.txt" && ppgit add -A && ppgit commit -q -m color
+) >/dev/null 2>&1
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=format.pretty GIT_CONFIG_VALUE_0=oneline \
+  pphook "PLANTED: format.pretty=oneline does not hide the message" 1 pub "refs/heads/msgkey $(ppgit rev-parse msgkey) refs/heads/msgkey $z40"
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=i18n.logOutputEncoding GIT_CONFIG_VALUE_0=UTF-16 \
+  pphook "PLANTED: a UTF-16 log output encoding does not hide the message" 1 pub "refs/heads/msgkey $(ppgit rev-parse msgkey) refs/heads/msgkey $z40"
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=color.ui GIT_CONFIG_VALUE_0=always \
+  pphook "PLANTED: color.ui=always does not hide added lines" 1 pub "refs/heads/colorkey $(ppgit rev-parse colorkey) refs/heads/colorkey $z40"
+
+# Selection rests on what the DESTINATION has, not on remote-tracking refs.
+(
+  ppgit checkout -q -b stale "$base"
+  printf 'TARGET=i-0123456789abcdef0\n' > "$pp/stale.sh" && ppgit add -A && ppgit commit -q -m stale
+  ppgit update-ref refs/remotes/pub/stale HEAD   # a tracking ref the destination does not back
+) >/dev/null 2>&1
+pphook "PLANTED: a stale tracking ref does not hide a commit the destination lacks" 1 pub "refs/heads/stale $(ppgit rev-parse stale) refs/heads/stale $z40"
+(
+  ppgit checkout -q -b oldhit "$base"
+  printf 'TARGET=i-0123456789abcdef0\n' > "$pp/old.sh" && ppgit add -A && ppgit commit -q -m oldhit
+  ppgit push -q pub oldhit
+  echo clean > "$pp/ontop.txt" && ppgit add -A && ppgit commit -q -m ontop
+) >/dev/null 2>&1
+pphook2 "CONTROL: a push to a bare URL skips what the destination already has" 0 "$SCRATCH/pub.git" "$SCRATCH/pub.git" \
+  "refs/heads/oldhit $(ppgit rev-parse oldhit) refs/heads/ontop $z40"
+pphook2 "PLANTED: a destination that cannot be listed refuses the push" 1 absent "$SCRATCH/absent.git" \
+  "refs/heads/master $base refs/heads/master $z40" "cannot list the refs of the destination"
+
+# config/privacy-known-history.txt: content skipped for a listed full id, identities still scanned.
+mkdir -p "$pp/config"
+(
+  ppgit checkout -q -b known "$base"
+  printf 'TARGET=i-0123456789abcdef0\n' > "$pp/known.sh" && ppgit add -A && ppgit commit -q -m known
+) >/dev/null 2>&1
+known="$(ppgit rev-parse known)"
+printf '# reviewed\n%s  # a planted fixture\n' "$known" > "$pp/config/privacy-known-history.txt"
+pphook "CONTROL: a listed commit's content is not scanned" 0 pub "refs/heads/known $known refs/heads/known $z40"
+printf '%s\n' "$ident" > "$pp/config/privacy-known-history.txt"
+pphook "CONTROL: a listed commit's author and committer still are" 1 pub "refs/heads/ident $ident refs/heads/ident $z40"
+pphook "CONTROL: a commit not listed is scanned" 1 pub "refs/heads/known $known refs/heads/known $z40"
+printf '%s\n' "${known:0:12}" > "$pp/config/privacy-known-history.txt"
+pphook2 "PLANTED: an abbreviated id in the list refuses the push" 1 pub "$SCRATCH/pub.git" \
+  "refs/heads/master $base refs/heads/master $z40" "not a full 40-character commit id"
+: > "$pp/config/privacy-known-history.txt"
 
 if [ "$fail" -eq 0 ]; then
   echo "RESULT status=ok key=privacy-scan failed=0"

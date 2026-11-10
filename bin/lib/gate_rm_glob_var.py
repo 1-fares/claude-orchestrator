@@ -8,6 +8,19 @@ RULING = ("BLOCKED (no-wildcard-rm ruling, operator 2026-10-17): {what}. A wildc
           "<exact path>.moved-aside-$(date +%F)), or leave it and report the leftover. Name exact literal paths.")
 WRAP = {"command", "sudo", "doas", "nohup", "time", "exec", "nice", "stdbuf", "builtin", "env", "timeout",
         "ionice", "setsid", "flock", "chrt", "taskset", "unbuffer"}
+# Wrapper options whose value is the next word (`sudo -u root rm` runs rm, not `root`), and wrappers
+# that take one operand before the command (`flock <file> rm`, `taskset <mask> rm`).
+# `--opt=value` is one word and needs no entry.
+WRAP_ARG = {"sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "-R", "--user", "--group", "--host",
+                     "--prompt", "--close-from", "--chdir", "--chroot", "--role", "--type", "--other-user",
+                     "--command-timeout"},
+            "doas": {"-u", "-C"}, "env": {"-u", "-C", "--unset", "--chdir"},
+            "timeout": {"-s", "-k", "--signal", "--kill-after"},
+            "flock": {"-w", "-E", "--wait", "--timeout", "--conflict-exit-code"},
+            "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
+            "nice": {"-n", "--adjustment"}, "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+            "time": {"-f", "-o", "--format", "--output"}, "exec": {"-a"}}
+WRAP_OPERAND = {"flock", "taskset"}
 KEYWORDS = {"do", "then", "else", "elif", "if", "{", "!", "while", "until", "done", "fi"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 REMOVERS = {"rm", "unlink"}
@@ -56,8 +69,11 @@ def strip_comments(text):
 def join_continuations(text):
     """Remove backslash-newline, as bash does while it reads a token. Without this a removal
     wrapped over two lines (the backslash ending the first) split into two segments: the first
-    carried no path and the second did not open with a remover, so its path was never judged."""
-    return re.sub(r"\\\n[ \t]*", "", text)
+    carried no path and the second did not open with a remover, so its path was never judged.
+    Only the backslash-newline goes: the next line's indentation stays a separator, so `rm\\` + newline +
+    `  -rf /tmp/*` reads `rm  -rf /tmp/*`, not the non-command `rm-rf`. A backslash that is itself
+    escaped (`x\\\\` + newline) is a literal character, and its newline still ends the command."""
+    return re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", text)
 
 
 def segments(text):
@@ -93,6 +109,31 @@ def heredocs(text):
             pending.append((m.group(3), m.group(1) == "-", keep))
     return "\n".join(out)
 
+def skip_wrapper(s):
+    # s[0] is a wrapper: return s from the command it runs (options, their values, VAR=value,
+    # durations and the wrapper's operand skipped), or [] when there is none.
+    w = s[0].rsplit("/", 1)[-1]; operand = w in WRAP_OPERAND; k = 1
+    while k < len(s):
+        t = s[k]
+        if w == "flock" and t in ("-c", "--command"):
+            return ["sh", "-c"] + s[k + 1:k + 2]   # flock runs the string with sh -c
+        if w == "env" and (t in ("-S", "--split-string") or t.startswith(("--split-string=", "-S"))):
+            # env -S splits its value into words and runs them; re-read them as env's arguments.
+            if t in ("-S", "--split-string"):
+                if k + 1 >= len(s): return []
+                v, rest = s[k + 1], s[k + 2:]
+            else:
+                v, rest = (t.split("=", 1)[1] if t.startswith("--") else t[2:]), s[k + 1:]
+            try: words = shlex.split(v)
+            except ValueError: words = v.split()
+            return ["env"] + words + rest
+        if t in WRAP_ARG.get(w, ()): k += 2; continue
+        if t.startswith("-"): k += 1; continue
+        if operand: operand = False; k += 1; continue
+        if "=" in t or re.match(r"^[0-9.]+[smhd]?$", t): k += 1; continue
+        return s[k:]
+    return []
+
 def paths(args):
     out, opts = [], True
     for a in args:
@@ -118,10 +159,7 @@ def scan(text, depth=0):
         s2 = list(sg)
         while s2 and s2[0] in KEYWORDS: s2 = s2[1:]
         while s2 and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", s2[0]): s2 = s2[1:]
-        while s2 and s2[0].rsplit("/", 1)[-1] in WRAP:
-            j = next((k for k, t in enumerate(s2[1:], 1) if not t.startswith("-") and "=" not in t
-                      and not re.match(r"^[0-9.]+[smhd]?$", t)), None)
-            s2 = s2[j:] if j else []
+        while s2 and s2[0].rsplit("/", 1)[-1] in WRAP: s2 = skip_wrapper(s2)
         return s2
 
     def reader_of(sg, names):
@@ -144,15 +182,12 @@ def scan(text, depth=0):
     for s in segs:
         while s and s[0] in KEYWORDS: s = s[1:]
         while s and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", s[0]): s = s[1:]
-        if s and s[0].rsplit("/", 1)[-1] == "xargs":
+        while s and s[0].rsplit("/", 1)[-1] in WRAP: s = skip_wrapper(s)
+        if not s: continue
+        if s[0].rsplit("/", 1)[-1] == "xargs":   # after the wrappers: `sudo xargs rm` is xargs too
             j = next((k for k, t in enumerate(s[1:], 1) if t.rsplit("/", 1)[-1] in REMOVERS), None)
             if j: hits.append(f"`xargs {s[j]}` removes paths read at run time")
             continue
-        while s and s[0].rsplit("/", 1)[-1] in WRAP:
-            j = next((k for k, t in enumerate(s[1:], 1) if not t.startswith("-") and "=" not in t
-                      and not re.match(r"^[0-9.]+[smhd]?$", t)), None)
-            s = s[j:] if j else []
-        if not s: continue
         base = s[0].rsplit("/", 1)[-1]
         if base in SHELLS:
             for k, t in enumerate(s[1:-1], 1):
@@ -174,8 +209,9 @@ def scan(text, depth=0):
             bad = [p for p in paths(s[1:]) if DYNAMIC.search(p)]
             if bad: hits.append(f"`{base}` with {bad[0]!r} in the path")
         elif base == "find":
-            deletes = "-delete" in s or any(t in ("-exec", "-execdir", "-ok", "-okdir") and k + 1 < len(s)
-                                             and s[k + 1].rsplit("/", 1)[-1] in REMOVERS for k, t in enumerate(s))
+            deletes = "-delete" in s or any(t in ("-exec", "-execdir", "-ok", "-okdir") and unwrap(s[k + 1:])
+                                             and unwrap(s[k + 1:])[0].rsplit("/", 1)[-1] in REMOVERS
+                                             for k, t in enumerate(s))
             bad = [t for t in s[1:] if DYNAMIC.search(t) and t not in ("{}", "{}+")]
             if deletes and bad: hits.append(f"`find ... -delete` with {bad[0]!r} in a path or name")
 

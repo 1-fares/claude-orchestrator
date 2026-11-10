@@ -5,7 +5,7 @@
 input="$(cat)"
 cwd="$(printf '%s' "$input" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("cwd",""))' 2>/dev/null)"
 [ "$cwd" = "$_repo" ] || exit 0
-read -r fp off lim <<<"$(printf '%s' "$input" | python3 -c 'import sys,json; d=json.load(sys.stdin); t=d.get("tool_input",{}); print(t.get("file_path",""), t.get("offset","-"), t.get("limit","-"))' 2>/dev/null)"
+read -r off lim fp <<<"$(printf '%s' "$input" | python3 -c 'import sys,json; d=json.load(sys.stdin); t=d.get("tool_input",{}); print(t.get("offset","-"), t.get("limit","-"), t.get("file_path",""))' 2>/dev/null)"
 [ -n "$fp" ] && [ -f "$fp" ] || exit 0
 [ "$off" != "-" ] || [ "$lim" != "-" ] && exit 0
 # Images and PDFs are rendered, not paged: newlines in their bytes are not lines (a small PNG counted as 278).

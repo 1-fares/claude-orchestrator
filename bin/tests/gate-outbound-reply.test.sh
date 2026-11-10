@@ -90,9 +90,10 @@ call mcp__ms365__teams_chat_send "$chat" "<p>#5062 covers adding crew code, assi
 out="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__ms365__mail_send", "tool_input": {"to": "someone@other.test", "body": "Login admin@example.com / NotMeasured-99"}}))' | bash "$GATE" 2>&1 >/dev/null)"; rc=$?
 [ "$rc" = 2 ] && ok "mail with an unmeasured password blocked" || bad "mail credential not blocked (rc=$rc)"
 
-echo "9. disabled switch and empty body -> allowed"
-out="$(printf '{"tool_name":"mcp__ms365__teams_chat_send","tool_input":{"chat_id":"x","body_html":""}}' | bash "$GATE" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && ok "empty body passes" || bad "empty body blocked (rc=$rc)"
+echo "9. disabled switch and empty body to a listed chat -> allowed"
+# An empty body ends the checks after the recipient check (rows in section 10 cover an unlisted one).
+out="$(printf '{"tool_name":"mcp__ms365__teams_chat_send","tool_input":{"chat_id":"%s","body_html":""}}' "$chat" | bash "$GATE" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ok "empty body to a listed chat passes" || bad "empty body blocked (rc=$rc)"
 out="$(GATE_OUTBOUND_REPLY_DISABLED=1 python3 -c 'import json; print(json.dumps({"tool_name":"mcp__ms365__teams_chat_send","tool_input":{"chat_id":"x","body_html":"<p>did you visit the gate</p>"}}))' | GATE_OUTBOUND_REPLY_DISABLED=1 bash "$GATE" 2>&1)"; rc=$?
 [ "$rc" = 0 ] && ok "disabled switch passes" || bad "disabled switch still blocks (rc=$rc)"
 
@@ -110,6 +111,20 @@ out="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__ms365__mail
 [ "$rc" = 2 ] && [[ "$out" == *"RULE 10"* ]] && ok "mail to an outside domain blocked" || bad "outside mail not blocked (rc=$rc): $out"
 out="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__ms365__mail_send", "tool_input": {"to": ["manager@example.com"], "cc": "vendor@other.test", "subject": "x", "body": "plain text"}}))' | bash "$GATE" 2>&1 >/dev/null)"; rc=$?
 [ "$rc" = 2 ] && ok "an outside cc is blocked too" || bad "outside cc not blocked (rc=$rc)"
+# An empty body used to exit before the recipient check, and a forward carries the forwarded mail.
+out="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__ms365__mail_send", "tool_input": {"to": ["someone@other.test"], "subject": "x", "body": ""}}))' | bash "$GATE" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" = 2 ] && [[ "$out" == *"RULE 10"* ]] && ok "mail with an empty body to an outside domain blocked" || bad "empty-body mail skipped the allow-list (rc=$rc): $out"
+out="$(printf '{"tool_name":"mcp__ms365__teams_chat_send","tool_input":{"chat_id":"19:cccccccccccccccccccccccccccccccc@thread.v2","body_html":""}}' | bash "$GATE" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" = 2 ] && [[ "$out" == *"RULE 10"* ]] && ok "empty body to an unlisted chat blocked" || bad "empty-body chat send skipped the allow-list (rc=$rc): $out"
+out="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__ms365__mail_forward", "tool_input": {"id": "m1", "to": ["someone@other.test"], "body_html": ""}}))' | bash "$GATE" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" = 2 ] && [[ "$out" == *"RULE 10"* ]] && ok "forward to an outside domain blocked" || bad "forward skipped the allow-list (rc=$rc): $out"
+out="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__ms365__mail_forward", "tool_input": {"id": "m1", "to": ["manager@example.com"], "body_html": "<p>FYI, see below.</p>"}}))' | bash "$GATE" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" = 0 ] && ok "forward to the listed domain passes" || bad "forward to the listed domain blocked (rc=$rc): $out"
+printf '*@Mixed-Case.example\nBoss@Upper.example\n' > "$TD/allow-case.txt"
+out="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__ms365__mail_send", "tool_input": {"to": ["Someone@MIXED-case.example", "boss@upper.example"], "body": "plain text"}}))' | OUTBOUND_ALLOWLIST="$TD/allow-case.txt" bash "$GATE" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" = 0 ] && ok "a mail entry matches regardless of letter case" || bad "mixed-case mail entry did not match (rc=$rc): $out"
+out="$(python3 -c 'import json; print(json.dumps({"tool_name": "mcp__ms365__mail_forward", "tool_input": {"id": "m1", "to": ["manager@example.com"], "body_html": "<p>did you visit the gate URL first?</p>"}}))' | bash "$GATE" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" = 2 ] && [[ "$out" == *"re-check"* ]] && ok "a forward's own text gets the body checks" || bad "forward text not checked (rc=$rc): $out"
 
 echo "11. the right tool for the id: teams_chat_reply refused; chat_send on a channel id refused; channel_reply on a chat id refused"
 rm -f "$TD"/health/outbound-last-send.*
@@ -154,5 +169,10 @@ cat > "$RH/config/outbound-allowlist.txt" <<'EOF4'
 EOF4
 dcall "" "$chat"; rc=$?
 [ "$rc" = 0 ] && ok "no deployment dir falls back to config/" || bad "config/ fallback not used (rc=$rc): $out"
+
+echo '14. the recorder and the gate agree on any connector name'
+record mcp__other__teams_chat_send "48:notes" '{"status":"sent","message_id":"9"}'
+call mcp__other__teams_chat_send "48:notes" "<p>a second message right after</p>"; rc=$?
+[ "$rc" = 2 ] && [[ "$out" == *"RULE 14"* ]] && ok "a send recorded under another connector name starts the gap" || bad "recorder ignored another connector name (rc=$rc): $out"
 
 [ "$fail" = 0 ] && echo "gate-outbound-reply.test: PASS" || { echo "gate-outbound-reply.test: FAIL"; exit 1; }

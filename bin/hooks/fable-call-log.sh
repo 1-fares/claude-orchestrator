@@ -14,7 +14,9 @@ print(ev, model or "-", cls, purpose)' 2>/dev/null)"
 case "$model" in fable|claude-fable*) ;; *) exit 0 ;; esac
 mkdir -p "$(dirname "$_fable_log")" 2>/dev/null
 if [ "$ev" = "PreToolUse" ]; then
-  n=$(grep "^$_today" "$_fable_log" 2>/dev/null | grep -E "CLASS-[1-4?]" | grep -vc SKIPPED)
+  # One line per call: the `subagent-fable` line written below. A summary line written by hand
+  # for the same call carries CLASS-<N> too, and counting it tripped the cap at half the calls.
+  n=$(grep "^$_today" "$_fable_log" 2>/dev/null | grep 'subagent-fable' | grep -vc SKIPPED)
   if [ "${n:-0}" -ge 20 ]; then echo "RULES IN FORCE 5: the Fable cap of 20 calls a day is reached ($n). Queue this to tomorrow and log SKIPPED-CAP in reports/fable-calls.log." >&2; exit 2; fi
   [ "$cls" = "CLASS-?" ] && echo "RULES IN FORCE 5: start the Fable prompt with CLASS-1, CLASS-2, CLASS-3 or CLASS-4 so the call is logged with its class." >&2 && exit 2
   exit 0

@@ -5,10 +5,16 @@
 set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 G="$repo/bin/hooks/gate-rm-glob-var.sh"
+# Scratch at one literal path, removed at entry and exit (a per-pid name renamed at the end
+# left one file in /tmp per run).
+rm -rf /tmp/gate-rm-glob-var-test
+mkdir -p /tmp/gate-rm-glob-var-test
+trap 'rm -rf /tmp/gate-rm-glob-var-test' EXIT
+ERR=/tmp/gate-rm-glob-var-test/err
 fail=0
-run() { python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" | bash "$G" 2>/tmp/.gate-rm-glob-var.err.$$; }
+run() { python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" | bash "$G" 2>"$ERR"; }
 block() { run "$1"; rc=$?; if [ "$rc" = 2 ]; then printf '  ok   BLOCK  %s\n' "$1"; else printf '  FAIL BLOCK  %s (rc=%s)\n' "$1" "$rc"; fail=1; fi; }
-allow() { run "$1"; rc=$?; if [ "$rc" = 0 ]; then printf '  ok   allow  %s\n' "$1"; else printf '  FAIL allow  %s (rc=%s: %s)\n' "$1" "$rc" "$(head -c 120 /tmp/.gate-rm-glob-var.err.$$)"; fail=1; fi; }
+allow() { run "$1"; rc=$?; if [ "$rc" = 0 ]; then printf '  ok   allow  %s\n' "$1"; else printf '  FAIL allow  %s (rc=%s: %s)\n' "$1" "$rc" "$(head -c 120 "$ERR")"; fail=1; fi; }
 
 echo "1. the incident and its relatives are refused"
 block 'rm -rf /tmp/tmp.* 2>/dev/null; echo ok'
@@ -68,6 +74,45 @@ allow 'rm -rf \
   /tmp/literal-dir'
 allow 'echo hi \
   there'
+# Only the backslash-newline goes: the indentation after it stays a word separator.
+block 'rm\
+  -rf /tmp/tmp.*'
+block 'rm \
+  -rf \
+  /tmp/tmp.*'
+block "find /tmp -name 'tmp.*' \\
+  -delete"
+# The hook's pre-filter must pass a verb split over two lines to the matcher.
+block 'r\
+m -rf /tmp/tmp.*'
+# An escaped backslash is a literal character: its newline still ends the command.
+block 'echo x\\
+rm -rf /tmp/tmp.*'
+
+echo "2g. wrapper options that take a value, a wrapper's operand, env -S and flock -c"
+block 'sudo -u nobody rm -rf /tmp/tmp.*'
+block 'sudo --user nobody rm -rf /tmp/tmp.*'
+block 'sudo --user=nobody rm -rf /tmp/tmp.*'
+block 'timeout -s KILL 5 rm -rf /tmp/tmp.*'
+block 'timeout --signal KILL 5 rm -rf /tmp/tmp.*'
+block 'flock /tmp/l rm -rf /tmp/tmp.*'
+block 'flock -w 5 /tmp/l rm -rf /tmp/tmp.*'
+block 'env -u FOO rm -rf $DIR'
+block 'taskset 0x1 rm -f /tmp/*.x'
+block 'nice -n 5 rm -f /tmp/*.x'
+block "env -S 'rm -rf /tmp/tmp.*'"
+block "flock /tmp/l -c 'rm -rf /tmp/tmp.*'"
+block "echo 'rm -rf /tmp/tmp.*' | sudo -u nobody bash"
+block "echo 'rm -rf /tmp/tmp.*' | timeout -s KILL 5 bash"
+block "echo 'rm -rf /tmp/tmp.*' | env -u X bash"
+block "echo 'rm -rf /tmp/tmp.*' | flock /tmp/l bash"
+block 'ls /tmp | sudo xargs rm -f'
+block "find /tmp -name 'tmp.*' -exec sudo rm -rf {} +"
+allow 'sudo -u nobody ls /tmp'
+allow 'timeout -s KILL 5 bash /tmp/script.sh'
+allow 'flock /tmp/l rm -f /tmp/one-literal-file'
+allow "env -S 'ls -l /tmp'"
+allow 'sudo apt list | grep rm'
 
 echo "2c. interpreters: heredoc, here-string, pipe, and a directory listing"
 block "python3 - <<'EOF'
@@ -107,9 +152,8 @@ block 'bash <<EOS
 rm -rf /tmp/tmp.*
 EOS'
 echo "5. message names the ruling and the alternative"
-run 'rm -rf /tmp/tmp.*'; grep -q 'no-wildcard-rm ruling' /tmp/.gate-rm-glob-var.err.$$ && grep -q 'move it aside' /tmp/.gate-rm-glob-var.err.$$ \
-  && echo "  ok   message names the ruling and mv-aside" || { echo "  FAIL message: $(cat /tmp/.gate-rm-glob-var.err.$$)"; fail=1; }
+run 'rm -rf /tmp/tmp.*'; grep -q 'no-wildcard-rm ruling' "$ERR" && grep -q 'move it aside' "$ERR" \
+  && echo "  ok   message names the ruling and mv-aside" || { echo "  FAIL message: $(cat "$ERR")"; fail=1; }
 echo "6. fails open on malformed input"
 printf 'not json' | bash "$G" >/dev/null 2>&1; [ $? = 0 ] && echo "  ok   malformed payload allowed" || { echo "  FAIL malformed payload blocked"; fail=1; }
-mv /tmp/.gate-rm-glob-var.err.$$ /tmp/.gate-rm-glob-var.err.$$.done 2>/dev/null
 [ "$fail" = 0 ] && echo "gate-rm-glob-var.test: PASS" || { echo "gate-rm-glob-var.test: FAIL"; exit 1; }

@@ -67,4 +67,17 @@ t0=$(date +%s); status_hook compact-stuck orchestrator "x"; t1=$(date +%s)
 wait
 grep -q 'FAIL rc=124 compact-stuck orchestrator' "$log" && ok "hung hook logged as FAIL after timeout" || bad "hung hook not logged as FAIL: $(tail -2 "$log")"
 
+# 7. The example hook: a webhook that answers HTTP 500 is a failed hook, not OK.
+# Stand-in curl: behaves like curl against a server returning 500 (exit 22 only with -f).
+mkdir -p "$TD/bin"
+cat > "$TD/bin/curl" <<'C'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in -f|-f?*) [[ "$a" == --* ]] || exit 22 ;; esac; done
+exit 0
+C
+chmod +x "$TD/bin/curl"
+PATH="$TD/bin:$PATH" STATUS_HOOK_WEBHOOK=http://127.0.0.1:9/hook bash "$repo/bin/status-hook.example.sh" wedged infra "hung" >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && ok "example hook: a refused webhook POST exits non-zero" || bad "example hook reported a refused POST as delivered"
+grep -q 'wedged infra: hung' "$TD/reports/team-availability.log" && ok "example hook: availability line written" || bad "example hook wrote no availability line"
+
 [ "$fail" = 0 ] && echo "status-hook.test: PASS" || { echo "status-hook.test: FAIL"; exit 1; }

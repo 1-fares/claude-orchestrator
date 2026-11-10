@@ -22,5 +22,8 @@ run "$TD/shot-no-extension"; [ "$rc" = 0 ] && ok "binary file without an image e
 run "$TD/doc.pdf"; [ "$rc" = 0 ] && ok "PDF passes" || bad "PDF refused (rc $rc)"
 run "$TD/long.md"; [ "$rc" = 2 ] && grep -q "RULES IN FORCE 7" "$TD/err" && ok "300-line .md still refused" || bad "300-line .md not refused (rc $rc)"
 run "$TD/short.md"; [ "$rc" = 0 ] && ok "150-line .md passes" || bad "short .md refused (rc $rc)"
+# The path is read last, so a space in it does not split it (it was cut at the space and the file not found).
+cp "$TD/long.md" "$TD/with space.md"
+run "$TD/with space.md"; [ "$rc" = 2 ] && ok "300-line file with a space in its path refused" || bad "path with a space not judged (rc $rc)"
 
 [ "$fail" = 0 ] && echo "gate-read-size-binary: PASS" || { echo "gate-read-size-binary: FAIL"; exit 1; }

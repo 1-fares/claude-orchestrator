@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # PreToolUse on the ms365 send tools (teams_chat_send, teams_chat_reply,
-# teams_channel_send, teams_channel_reply, mail_send, mail_reply): rules 13 and 14
-# as a GATE, not a reminder. Exit 2 blocks the send and hands the reason to the model.
+# teams_channel_send, teams_channel_reply, mail_send, mail_reply, mail_forward):
+# rules 13 and 14 as a GATE, not a reminder. Exit 2 blocks the send and hands the
+# reason to the model. A forward is gated like a send: its to/cc by check 0b, its
+# own text by checks 1 and 2.
 #
 # WHY (2026-09-11 08:19-08:27 CEST, a manager's chat). Four outbound messages in eight
 # minutes: a credential quoted from a document (401), "Quick question: did you visit
@@ -52,7 +54,7 @@ import sys, json, re, html
 d = json.load(sys.stdin)
 t = d.get("tool_input", {}) or {}
 name = d.get("tool_name", "")
-body = t.get("body_html") or t.get("body") or t.get("text") or t.get("message") or ""
+body = t.get("body_html") or t.get("body") or t.get("text") or t.get("message") or t.get("comment") or ""
 # strip tags, unescape entities, collapse whitespace
 txt = re.sub(r"<[^>]+>", " ", body)
 txt = html.unescape(txt)
@@ -69,7 +71,6 @@ print(json.dumps({"name": name, "txt": txt, "key": key, "gates": gates, "pws": p
 [ -n "$parsed" ] || exit 0
 get() { printf '%s' "$parsed" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('$1'); print(' '.join(v) if isinstance(v,list) else (v or ''))"; }
 txt="$(get txt)"; key="$(get key)"; gates="$(get gates)"; pws="$(get pws)"
-[ -n "$txt" ] || exit 0
 
 block() { printf '%s\n' "$1" >&2; printf '%s\n' "$1"; exit 2; }
 
@@ -119,6 +120,9 @@ if [ -n "$targets" ]; then
     ok=0
     while IFS= read -r line; do
       pat="${line%%#*}"; pat="${pat//[[:space:]]/}"; [ -n "$pat" ] || continue
+      # A mail target is lowercased above; compare a mail entry the same way. Chat and
+      # channel ids (they contain ':') stay exact.
+      case "$tgt" in *:*) ;; *) pat="${pat,,}" ;; esac
       case "$pat" in
         \*@*) [[ "$tgt" == *"@${pat#\*@}" ]] && { ok=1; break; } ;;
         *)    [ "$tgt" = "$pat" ] && { ok=1; break; } ;;
@@ -127,6 +131,9 @@ if [ -n "$targets" ]; then
     [ "$ok" = 1 ] || block "RULE 10 (gate): '$tgt' is not in the recipient allow-list ${allow#$_repo/} (the operator decides who the team may write to). If the operator decided otherwise, add the line there with the date and the words; do not send around the list."
   done <<< "$targets"
 fi
+# An empty body skips the body checks below, never the recipient check above: a
+# forward with no text of its own still delivers the forwarded mail.
+[ -n "$txt" ] || exit 0
 
 # --- 1. credential freshness ----------------------------------------------------
 if [ -n "$gates$pws" ]; then

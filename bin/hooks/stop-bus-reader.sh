@@ -11,6 +11,17 @@
 #   listener alive, reader=none  -> block: arm the reader
 #   listener dead (status rc 2)  -> block: start the listener, then arm the reader
 #   reader armed / not a role    -> allow
+#   listener dead, marker present -> allow: a deliberate disconnect (below)
+# DELIBERATE DISCONNECT. docs/BUS-INBOX.md lets a role disconnect (`/is d`) when the orchestrator says so,
+# and the dead listener that follows is expected. The role marks it, after the disconnect, with
+#   touch "${BUS_INBOX_DIR:-$TEAM_DIR/bus-inbox}/<name>.disconnected"
+# While that file exists and the listener is dead, every turn end is allowed (a marker honoured once
+# would block the next turn end and ask for the restart the orchestrator ruled out). The first time this
+# hook sees the role's listener alive again, it renames the marker to <name>.disconnected.cleared, so a
+# later accidental death is blocked as usual. `bus-inbox.py start <name>` removes the marker on entry:
+# a reconnect whose start fails, or a new role added under a retired role's name, must not inherit it
+# (the old .pid and .log files still let the window fallback name the role, so the dead listener would
+# otherwise be allowed at every turn end).
 # Never blocks twice in a row (stop_hook_active). FAIL OPEN: a status call that hangs past
 # STOP_BUS_READER_TIMEOUT (5 s) or errors is logged and allowed; a broken hook must never wedge a role.
 # Race, on purpose: a background wait armed this turn that has ALREADY returned holds no reader lock, so it
@@ -90,6 +101,13 @@ except Exception: print("0")' 2>/dev/null)" = 1 ]; then
 fi
 
 out="$(timeout "$TMO" python3 "$BI" status "$role" 2>&1)"; rc=$?
+mark="$INBOX/$role.disconnected"
+if [ -f "$mark" ]; then
+  case "$rc" in
+    0) mv -f -- "$mark" "$mark.cleared" 2>/dev/null && log "$role listener alive again: disconnect marker cleared" ;;
+    2) log "$role listener dead after a deliberate disconnect (marker): allowed"; exit 0 ;;
+  esac
+fi
 if [ "$via" = window ] && [ "$rc" = 0 ]; then
   log "$role named by window only, but its listener is alive (another claude owns it): allowed"; exit 0
 fi

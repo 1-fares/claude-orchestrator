@@ -35,6 +35,7 @@ esac
 
 if [ -n "${STATUS_HOOK_WEBHOOK:-}" ]; then
   payload="$(printf '{"event":"%s","role":"%s","text":"%s (%s)"}' "$event" "$role" "$human" "$detail")"
-  curl -sS -m 10 -X POST -H 'Content-Type: application/json' --data-raw "$payload" "$STATUS_HOOK_WEBHOOK" -o /dev/null || exit 1
+  # -f: without it curl exits 0 on an HTTP 4xx or 5xx, and the caller logs a refused POST as OK.
+  curl -fsS -m 10 -X POST -H 'Content-Type: application/json' --data-raw "$payload" "$STATUS_HOOK_WEBHOOK" -o /dev/null || exit 1
 fi
 exit 0

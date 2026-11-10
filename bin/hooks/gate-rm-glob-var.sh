@@ -4,7 +4,8 @@
 # 2026-10-17 06:50:45Z a skeptic sub-agent's `rm -rf /tmp/tmp.*` deleted a live push's gate files.
 # Bash tool commands only: scripts the command runs are not read. An unparseable command containing a removal is refused.
 input="$(cat)"   # read stdin before any early exit, or the caller gets a broken pipe
-case "$input" in *rm*|*unlink*|*-delete*|*remove*|*delete*) ;; *) exit 0 ;; esac
+# A backslash-newline (JSON `\\\n`) can split a verb over two lines (`r\` + newline + `m`): always judge it.
+case "$input" in *rm*|*unlink*|*-delete*|*remove*|*delete*|*'\\\n'*) ;; *) exit 0 ;; esac
 printf '%s' "$input" | python3 "$(dirname "$0")/../lib/gate_rm_glob_var.py"
 [ $? = 2 ] && exit 2
 exit 0
